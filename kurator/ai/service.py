@@ -94,7 +94,7 @@ class AIService:
         key = self._model_key()
         with self._con() as c:
             n = c.execute("SELECT COUNT(*) FROM emb WHERE model = ?", (key,)).fetchone()[0]
-        images = self.db.cat.execute("SELECT COUNT(DISTINCT hash) FROM files WHERE status = 1 AND kind = 'image' AND hash IS NOT NULL "
+        images = self.db.cat.execute("SELECT COUNT(DISTINCT hash) FROM files WHERE status = 1 AND kind IN ('image', 'model') AND hash IS NOT NULL "
                                      "AND root_id IN (SELECT id FROM roots WHERE kind='library') AND " + REAL_PREVIEW).fetchone()[0]
         pending = self.db.cat.execute("SELECT COUNT(*) FROM suggestions").fetchone()[0]
         return {"status": status(), "settings": self.settings(), "models": {k: v[2] for k, v in MODELS.items()},
@@ -149,7 +149,7 @@ class AIService:
         return image_from_bytes(data)
 
     def _image_rows(self, ids: list[int] | None) -> list[tuple]:
-        sql = ("SELECT id, hash, path FROM files WHERE status = 1 AND kind = 'image' AND hash IS NOT NULL "
+        sql = ("SELECT id, hash, path FROM files WHERE status = 1 AND kind IN ('image', 'model') AND hash IS NOT NULL "
                "AND root_id IN (SELECT id FROM roots WHERE kind='library') AND " + REAL_PREVIEW)
         if ids is None:
             return self.db.cat.execute(sql).fetchall()
@@ -253,7 +253,7 @@ class AIService:
         return self._rank(v, limit)
 
     def similar(self, file_id: int, limit: int = 500) -> list[tuple[int, float]]:
-        row = self.db.cat.execute(f"SELECT hash, kind = 'image' AND {REAL_PREVIEW} FROM files WHERE id = ?", (file_id,)).fetchone()
+        row = self.db.cat.execute(f"SELECT hash, kind IN ('image', 'model') AND {REAL_PREVIEW} FROM files WHERE id = ?", (file_id,)).fetchone()
         if not row:
             raise AIError("No such file")
         if not row[1]:

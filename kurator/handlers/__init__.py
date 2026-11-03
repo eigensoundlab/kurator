@@ -6,7 +6,7 @@ A handler knows how to turn one kind of file into:
   * embedded creation dates  ({'exif-original': ts, 'xmp': ts, ...})
 
 Adding support for a new format = adding a module here and registering it.
-Audio (waveforms instead of thumbnails) and 3D handlers will plug in the same way.
+Audio handlers return a waveform, 3D handlers a rendered preview (see kurator/mesh3d).
 """
 
 from __future__ import annotations
@@ -32,13 +32,14 @@ GROUPS = [
     ("vector", "Vector"),
     ("document", "Documents"),
     ("texture", "Game textures"),
+    ("3d", "3D models"),
     ("audio", "Audio"),
 ]
 
 
 @dataclass(frozen=True)
 class Handler:
-    kind: str                       # "image" or "audio" (what the thumbnail shows / how it plays)
+    kind: str                       # "image", "audio" or "model" (what the thumbnail shows / how it opens)
     extensions: tuple[str, ...]     # lower-case, with dot
     load: Callable[[bytes, str, int | None], Loaded]  # (data, path, thumb_target_px) -> Loaded
     browser_viewable: bool = False  # can the browser show / play the original file directly?
@@ -68,7 +69,9 @@ def supported_types() -> dict:
         by_group.setdefault(h.group, []).append(ext.lstrip("."))
     return {"groups": [{"key": k, "label": label, "exts": by_group.get(k, [])} for k, label in GROUPS if by_group.get(k)],
             "viewable": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.browser_viewable),
-            "audio": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.kind == "audio")}
+            "audio": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.kind == "audio"),
+            "models": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.kind == "model"),
+            "meshes": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.load.__name__ == "load_mesh_file")}
 
 
 # Built-in handlers register themselves on import.
@@ -77,4 +80,5 @@ from . import krita as _krita  # noqa: E402,F401
 from . import artapps as _artapps  # noqa: E402,F401
 from . import vector as _vector  # noqa: E402,F401
 from . import audio as _audio  # noqa: E402,F401
+from . import model3d as _model3d  # noqa: E402,F401
 from . import placeholder as _placeholder  # noqa: E402,F401

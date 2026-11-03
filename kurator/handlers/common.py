@@ -59,12 +59,12 @@ def placeholder(ext: str, note: str = "") -> Image.Image:
     d = ImageDraw.Draw(img)
     d.rounded_rectangle((136, 96, 376, 416), radius=18, outline=(110, 120, 140), width=6)
     d.polygon([(316, 96), (376, 156), (316, 156)], fill=(110, 120, 140))
+    label = ext.lstrip(".").upper()[:7]
     try:
-        font = ImageFont.load_default(size=64)
+        font = ImageFont.load_default(size={1: 72, 2: 72, 3: 72, 4: 64, 5: 52, 6: 44}.get(len(label), 38))
         small = ImageFont.load_default(size=26)
     except TypeError:  # very old Pillow
         font = small = ImageFont.load_default()
-    label = ext.lstrip(".").upper()[:6]
     d.text((256, 280), label, fill=(200, 210, 230), font=font, anchor="mm")
     if note:
         d.text((256, 460), note[:40], fill=(140, 150, 170), font=small, anchor="mm")

@@ -4,11 +4,11 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.6 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.7 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
-> (Google Drive and others via rclone), vector/document/art-app previews, sound files, and optional
-> local AI (search by description, find similar, tag suggestions from a pool you choose) work.
-> 3D is next (see [Roadmap](#roadmap)).
+> (Google Drive and others via rclone), vector/document/art-app previews, sound files, **3D models**
+> (previews and a 3D viewer), and optional local AI (search by description, find similar, tag
+> suggestions from a pool you choose) work. See the [Roadmap](#roadmap).
 
 **Author:** Daniel Sandner. See [eigensound.com](https://eigensound.com/) (sound research) and
 [sandner.art](https://sandner.art/) (AI/ML techniques for art and science).
@@ -66,6 +66,10 @@ from the sidebar. Upgrading keeps your catalog: it is migrated automatically, no
 - Network shares and some file systems don't report changes. Use *Rescan* there. The ⚙ Settings
   dialog shows which folders are watched.
 
+**Quitting:** close the window, or press Ctrl+C in it. Kurator stops within a second or two, even in
+the middle of indexing: what's done is saved, the rest continues at the next start. (Windows then
+asks *Terminate batch job (Y/N)?*; either answer is fine.)
+
 **Your files are never modified** by indexing, browsing or tagging. Files only change place when you
 use **Move to…**, which shows a preview first and can be undone. Removing a library folder only
 removes it from the catalog.
@@ -114,6 +118,7 @@ Nothing ticked means all types. The choice is remembered.
 | Vector | **svg svgz** (resvg), **ai** (PDF-based Illustrator files), **eps** (embedded preview; Ghostscript if installed), **cdr** (embedded thumbnail), afdesign, fig, sketch, xd | rendered or embedded |
 | Documents | **pdf** (first page, pdfium), **indd** (XMP thumbnail), afpub, sla | first page / embedded |
 | Game textures | tga, dds, blp | full |
+| 3D models | **glb gltf obj fbx stl ply dae 3mf 3ds off usda usdz vox**, **blend** (also .blend1), usd usdc ma mb max c4d ztl zpr abc 3dm skp lwo hip spp sbs sbsar | rendered by Kurator / Blender's saved thumbnail / embedded (3MF, SketchUp) / Windows |
 | Audio | wav, mp3, ogg, oga, opus, flac, m4a, aac, aif/aiff/aifc, caf, w64, rf64, wma | waveform |
 
 - **Licences:** everything is permissively licensed (pdfium BSD/Apache, resvg MIT, libheif via
@@ -131,10 +136,16 @@ RMS level**, tags (ID3, Vorbis, MP4), **Broadcast WAV** (bext: description, orig
 time reference) and **iXML**. A UCS category in the file name (`DOORWood_Creak…`) is recognised.
 The BWF origination date counts as the file's date.
 
-| Key | |
+**Sounds play when you click them or move onto them with the arrow keys**, like in sound-library
+apps, so you can audition a folder quickly. The **♪ Auto-play** switch in the status bar (shown when
+the view has sounds) or **P** turns this off; then Space plays.
+
+| Key / mouse | |
 |---|---|
-| Space (on a sound) | play / stop |
-| P | auto-play: the focused sound plays as you move with the arrow keys |
+| Click, arrow keys | select and play |
+| ▶ on a waveform | play / stop without changing the selection |
+| Space | play / stop the focused sound |
+| P | auto-play on / off |
 | O | open in your audio editor |
 
 Formats the browser cannot play (AIFF, CAF, WMA…) are still indexed and shown; *Open* plays them in
@@ -177,6 +188,52 @@ the models run on your computer. The first use of a model downloads it once from
 Embeddings are stored in `embeddings.db` (one per image content and model; duplicates share one),
 next to the catalog.
 
+### 3D models
+
+3D files are catalogued like images: tag them, move them, back them up, filter with the **3D models**
+group of the type filter.
+
+- **Previews** are rendered by Kurator itself (no Blender or other 3D software needed): a 3/4 view with
+  flat shading and outlines, using the materials' colours (glTF base colour and embedded textures,
+  OBJ `.mtl` colours, vertex colours, MagicaVoxel palettes). A million triangles take a few seconds,
+  once.
+- **Blender** files show the thumbnail Blender saved with the file (Blender 2.5 to 5.x, also
+  compressed files and `.blend1` backups), plus the number of objects, meshes and materials.
+- **3MF** files from slicers and CAD keep their own thumbnail; **SketchUp** files their embedded
+  preview. Maya, 3ds Max, Cinema 4D, ZBrush, Alembic, Rhino and Substance files show the thumbnail
+  Windows has for them (when the application is installed), or a card.
+- **3D viewer:** Enter or double-click opens a live view: drag to turn, right-drag (or Shift+drag) to
+  move, wheel to zoom, 0 or double-click to reset. ← → go to the next file as usual.
+- **Side panel:** triangles, vertices, dimensions and units, meshes, materials, animations, the
+  application that wrote the file, and the **texture files** the model uses. FBX, COLLADA and 3MF
+  creation dates count as the file's date.
+- Draco- or meshopt-compressed glTF files and binary USD (`.usdc`) can't be read yet; they are
+  listed with a card or the Windows thumbnail.
+
+### Folders, tags and projects: how they combine
+
+The sidebar has **places** (library folders, pinned and browsed folders) and **tags** (subjects,
+projects, status, source). The path bar above the grid always shows what you're looking at.
+
+| Action | Result |
+|---|---|
+| Click a folder | That folder (and its subfolders if *Subfolders* is on). Tag filters stay. |
+| Click a tag or project | **Everything with it, in the whole library**, like opening an album |
+| Ctrl+click a tag | Narrow the current view: *Game A* within this folder, *Icons* within *Game A* |
+| Alt+click a tag | Hide items with it: everything **except** what's already in *Game A* |
+| *No project*, *Untagged*… | What's left to sort in the whole library (Ctrl+click: in this folder) |
+| × on a chip in the path bar | Remove just that filter; *Clear filters* removes all |
+
+**Adding to and removing from a project:**
+
+- **Drag** selected images onto a project (or any tag) in the sidebar or the tag bar.
+- Or use the project's **hotkey (1–9)**, or click it in the **tag bar**: it adds, or removes it when
+  all selected images already have it.
+- In a project's view, select images and click **− Remove N from Game A** in the path bar. They stay
+  visible (dimmed) until you press **R**, and Ctrl+Z puts them back.
+- A typical round: open a folder of new work → *No project* (Ctrl+click) → select → drag onto the
+  project → R.
+
 ### Tags
 
 - **Tag groups** keep different kinds of information apart:
@@ -188,7 +245,8 @@ next to the catalog.
   | **Status** | concept, WIP, final | one (setting *final* replaces *WIP*) |
   | **Source** | own, reference, AI-generated | one |
 
-  - Filters combine across groups: Ctrl+click *Game A* and *Icons* to get the icons used in Game A.
+  - Filters combine across groups: click *Game A*, then Ctrl+click *Icons* to get the icons used in
+    Game A (see [Folders, tags and projects](#folders-tags-and-projects-how-they-combine)).
   - Each group has its own "none" view: *Untagged*, *No project*, *No status*.
   - Finished projects can be **archived**: hidden from the tag bar, still searchable.
   - Folder layouts use the Subjects group. Projects, status and source are available as the
@@ -327,6 +385,7 @@ by filter"*.
 |---|---|
 | Click · Ctrl+click · Shift+click | select one · toggle · range |
 | Drag on the grid | rectangle select (Ctrl/Shift = add); auto-scrolls at the edges |
+| Drag selected images | drop them on a tag or project to add it |
 | Arrows, PgUp/PgDn, Home/End | move focus; the selection follows only if it's a single item |
 | Ctrl+arrows | move focus without touching the selection |
 | Shift+arrows | extend selection |
@@ -396,8 +455,12 @@ kurator/
     artapps.py     Procreate, Clip Studio, CorelDRAW (embedded previews)
     vector.py      SVG (resvg), PDF/AI (pdfium), EPS, InDesign
     audio.py       sound: tags, BWF/iXML, levels, waveform (soundfile)
+    model3d.py     3D: rendered previews, Blender thumbnails, embedded/Windows previews
     placeholder.py formats without a readable preview (Windows thumbnail or a card)
     common.py      embedded XMP/zip previews, Windows shell thumbnails, cards
+  mesh3d/          3D geometry without a 3D library
+    formats.py     readers: glTF/GLB, OBJ, FBX, STL, PLY, DAE, 3MF, 3DS, OFF, USDA, VOX
+    render.py      numpy z-buffer rasteriser for thumbnails
   ai/              optional (install.bat ai)
     embed.py       SigLIP 2 / open_clip image+text embeddings, lazy load, GPU fp16, idle unload
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
@@ -425,8 +488,10 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
 - Only files in the catalog can be served. Size limits protect against decompression bombs (Pillow,
   400 MP) and zip bombs (`.kra`).
 - **Dependencies:** FastAPI, Starlette, Uvicorn, Pillow (13.0+), h11, watchdog, numpy, pypdfium2,
-  resvg-py, pi-heif, soundfile and tinytag (plus PyTorch and open_clip for the AI add-on), at their
+  resvg-py, pi-heif, soundfile, tinytag and zstandard (plus PyTorch and open_clip for the AI add-on), at their
   newest versions as of November 2026; `pip-audit` reports no known vulnerabilities.
+- 3D files are parsed by Kurator's own readers with size limits; XML-based formats with a DTD are
+  refused, and a model may only pull extra files (glTF buffers, OBJ materials) from its own folder.
 - PDFs are rendered by pdfium without JavaScript; SVGs by resvg (no scripts, no external
   resources). The AI add-on talks only to Ollama on your own computer, and downloads model weights
   from Hugging Face on first use. The frontend has
@@ -471,8 +536,12 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
    OpenAI-compatible endpoints (llama.cpp, LM Studio).
 9. ~~Audio: waveforms, player, auto-play, tags, BWF/iXML, UCS, levels~~ ✅
    Next: LUFS, BPM and key; CLAP text-to-sound search; region export.
-10. **3D/textures:** `.blend` previews, glTF/FBX/OBJ renders, texture-set grouping.
-11. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+10. ~~3D: previews for glTF/FBX/OBJ/STL/3MF/VOX and more, Blender thumbnails, 3D viewer~~ ✅
+    Next: texture sets (albedo/normal/roughness grouped with their model), Draco glTF, turntable
+    on hover, Blender-rendered previews when Blender is installed.
+11. **Video (optional, needs ffmpeg):** frame thumbnails, hover scrubbing, duration/codec/resolution,
+    playback of browser-friendly formats (MP4/WebM).
+12. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 Other ideas: version stacks (sketch → lineart → colour), near-duplicate finder, compare mode (2–4 up),
 timeline scrubber, colour/aspect/transparency filters, contact sheets / PureRef export.

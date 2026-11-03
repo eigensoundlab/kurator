@@ -3,7 +3,7 @@
 // so 100k items cost the same as 100. Layout is pure arithmetic - no image has to load first.
 
 import { originalUrl, thumbUrl } from './api.js';
-import { el, extOf, fmtMonth, VIEWABLE } from './util.js';
+import { AUDIO, el, extOf, fmtMonth, VIEWABLE } from './util.js';
 
 const PAD = 12;
 const GAP = 8;
@@ -146,7 +146,8 @@ export class Grid {
     img.onload = () => img.classList.add('loaded');
     img.onerror = () => { if (img.getAttribute('src')) cell.classList.add('broken'); };
     const th = el('div', { class: 'th' }, img);
-    cell = el('div', { class: 'cell' }, th, el('div', { class: 'ext' }), el('div', { class: 'check' }), el('div', { class: 'label' }), el('div', { class: 'dots' }));
+    cell = el('div', { class: 'cell' }, th, el('div', { class: 'ext' }), el('div', { class: 'check' }), el('div', { class: 'label' }), el('div', { class: 'dots' }),
+      el('button', { class: 'play', type: 'button', title: 'Play / stop (Space)', tabindex: '-1' }));
     cell._img = img; cell._th = th; cell._ext = cell.children[1]; cell._label = cell.children[3]; cell._dots = cell.children[4];
     this.layer.append(cell);
     return cell;
@@ -189,6 +190,7 @@ export class Grid {
     const anim = it.f?.[i];
     cell._ext.textContent = anim ? `▶ ${ext.toUpperCase()}` : BADGE_EXT.has(ext) ? ext.toUpperCase() : '';
     cell._ext.style.display = cell._ext.textContent ? '' : 'none';
+    cell.classList.toggle('audio', AUDIO.has(ext) && VIEWABLE.has(ext));   // ▶ only where the browser can play it
     if (this.labels) cell._label.textContent = name;
     cell.title = name;
     this.paintState(cell, i);
@@ -200,6 +202,7 @@ export class Grid {
     cell.classList.toggle('sel', app.selected.has(id));
     cell.classList.toggle('focus', i === app.focusIndex);
     cell.classList.toggle('dim', !app.matchesFilter(i));
+    cell.classList.toggle('playing', id === app.playingId);
     this.paintTags(cell, i);
   }
 

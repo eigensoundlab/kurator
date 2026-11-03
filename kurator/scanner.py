@@ -14,6 +14,11 @@ from .db import Database
 from .handlers import handler_for
 from .processing import GRID_SIZE, process_file
 
+
+def _ignore_sigint() -> None:
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
 SKIP_DIRS = {"$recycle.bin", "system volume information", "__pycache__", "node_modules", ".git", ".svn"}
 BATCH = 500
 
@@ -55,10 +60,10 @@ class Scanner:
             self._thread = threading.Thread(target=self._run, args=(full,), name="kurator-scan", daemon=True)
             self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 10) -> None:
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=10)
+            self._thread.join(timeout=timeout)
 
     def status(self) -> dict:
         return dict(self.state)
@@ -210,14 +215,25 @@ class Scanner:
         remaining = list(todo)
         try:
             # Processes: true parallelism for decoding/encoding. "spawn" behaves the same on every OS.
-            with ProcessPoolExecutor(max_workers=self.workers, mp_context=mp.get_context("spawn")) as pool:
+            # Workers ignore Ctrl+C: the console sends it to every process, and quitting is the
+            # parent's job (it cancels the queue instead of letting the pool break mid-file).
+            pool = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp.get_context("spawn"),
+                                       initializer=_ignore_sigint)
+            try:
                 remaining = self._run_pool(pool, remaining)
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)  # only files already being decoded finish
         except (BrokenProcessPool, OSError) as e:
+            if self._stop.is_set():
+                return
             # e.g. a worker killed by the OS on a gigantic file, or process creation not allowed.
             self._set(warning=f"process pool failed ({type(e).__name__}); continuing in threads")
             remaining = getattr(self, "_leftover", remaining)
-            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            pool = ThreadPoolExecutor(max_workers=self.workers)
+            try:
                 self._run_pool(pool, remaining)
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)  # only files already being decoded finish
 
     def _run_pool(self, pool, paths: list[str]) -> list[str]:
         """Process paths; returns the ones not finished (empty unless stopped)."""

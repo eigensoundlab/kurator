@@ -290,8 +290,15 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         missing: str | None = None,
         suggested: bool = False,
         profile: int | None = None,
+        exclude: str | None = None,
     ):
         where, args = [], []
+        for t in (exclude or "").split(","):   # "everything except ..." (Alt+click a tag)
+            if t.strip().isdigit():
+                ids = tags.descendant_ids(db, int(t))
+                if ids:
+                    where.append(f"id NOT IN (SELECT file_id FROM file_tags WHERE tag_id IN ({','.join('?' * len(ids))}))")
+                    args += ids
         if tag:
             for t in tag.split(","):
                 if not t.strip().isdigit():
@@ -763,6 +770,50 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             return Response(status_code=304, headers={"ETag": etag})
         cache = "private, max-age=31536000, immutable" if v and h.startswith(v) else "private, no-cache"
         return Response(data, media_type="image/webp", headers={"Cache-Control": cache, "ETag": etag})
+
+    mesh_cache: dict = {}
+
+    @app.get("/api/mesh/{item_id}")
+    def mesh(item_id: int):
+        """Geometry for the 3D viewer: 'KMSH', u32 JSON length, JSON, then float32 positions,
+        uint32 indices and uint8 RGB per vertex (each part padded to 4 bytes)."""
+        from .mesh3d import MeshError, read_mesh, thin
+        row = db.cat.execute("SELECT path, ext, size, mtime_ns FROM files WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(404)
+        h = handler_for(row[1])
+        if not (h and h.load.__name__ == "load_mesh_file"):
+            raise HTTPException(415, "no 3D view for this format")
+        if not os.path.isfile(row[0]):
+            raise HTTPException(404, "file is missing on disk")
+        key = (row[0], row[2], row[3])
+        body = mesh_cache.get(key)
+        if body is None:
+            with open(row[0], "rb") as f:
+                data = f.read()
+            try:
+                m = thin(read_mesh(data, row[0]), 2_000_000)
+            except MeshError as e:
+                raise HTTPException(422, str(e)) from None
+            import numpy as np
+            v = np.ascontiguousarray(m.vertices, np.float32)
+            fidx = np.ascontiguousarray(m.faces, np.uint32)
+            col = np.full((len(v), 3), 190, np.uint8)
+            if m.colors is not None:
+                col[fidx.reshape(-1)] = np.repeat(m.colors, 3, axis=0)
+            used = np.unique(fidx) if len(fidx) else np.zeros(0, np.int64)
+            lo = v[used].min(axis=0) if len(used) else np.zeros(3)
+            hi = v[used].max(axis=0) if len(used) else np.zeros(3)
+            head = json.dumps({"vertices": len(v), "triangles": len(fidx), "colors": m.colors is not None,
+                               "min": lo.tolist(), "max": hi.tolist()}).encode()
+            head += b" " * (-len(head) % 4)
+            cb = col.tobytes()
+            body = (b"KMSH" + len(head).to_bytes(4, "little") + head + v.tobytes() + fidx.tobytes()
+                    + cb + b"\0" * (-len(cb) % 4))
+            if len(mesh_cache) >= 2:
+                mesh_cache.pop(next(iter(mesh_cache)))
+            mesh_cache[key] = body
+        return Response(body, media_type="application/octet-stream", headers={"Cache-Control": "private, no-cache"})
 
     @app.get("/f/{item_id}")
     def original(item_id: int):

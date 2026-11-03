@@ -64,6 +64,7 @@ export class Tags {
   renderSidebar() {
     const box = this.app.sidebar.tagContainer;
     const active = new Set((this.app.query.tag || '').split(',').filter(Boolean).map(Number));
+    const excluded = new Set((this.app.query.exclude || '').split(',').filter(Boolean).map(Number));
     const rows = [];
     for (const f of this.facets) {
       const mine = this.list.filter((t) => t.facet === f.key);
@@ -75,15 +76,16 @@ export class Tags {
         rows.push(el('div', { class: 'p-hint small', text: `e.g. ${EXAMPLES[f.key] || ''}` }));
         continue;
       }
-      rows.push(el('div', { class: 'node' + (this.app.query.missing === f.key ? ' active' : ''), title: `Images without any ${f.label.toLowerCase()} tag`,
-        onclick: () => this.app.setMissing(this.app.query.missing === f.key ? '' : f.key) },
+      rows.push(el('div', { class: 'node' + (this.app.query.missing === f.key ? ' active' : ''), title: `Images without any ${f.label.toLowerCase()} tag\nClick: in the whole library · Ctrl+click: in the current folder`,
+        onclick: (e) => this.app.setMissing(this.app.query.missing === f.key ? '' : f.key, { here: e.ctrlKey || e.metaKey }) },
       el('span', { class: 'tw', text: '○' }), el('span', { class: 'nm', text: f.none }), el('span', { class: 'ct', text: fmtNum(this.missing[f.key] ?? 0) })));
       const tagRow = (t) => {
         const depth = t.name.split('/').length - 1;
         return el('div', {
-          class: 'node tagnode' + (active.has(t.id) ? ' active' : '') + (t.archived ? ' archived' : ''), style: { paddingLeft: `${6 + depth * 14}px` },
-          title: `${t.name}\nClick: show only this tag · Ctrl+click: combine (e.g. a project + a subject)`,
-          onclick: (e) => this.app.setTagFilter(t.id, e.ctrlKey || e.metaKey),
+          class: 'node tagnode' + (active.has(t.id) ? ' active' : '') + (excluded.has(t.id) ? ' excluded' : '') + (t.archived ? ' archived' : ''), style: { paddingLeft: `${6 + depth * 14}px` },
+          'data-tag-id': t.id,
+          title: `${t.name}\nClick: everything with this tag (whole library)\nCtrl+click: narrow the current view (e.g. a project within a folder)\nAlt+click: hide items with this tag\nDrop selected images here to tag them`,
+          onclick: (e) => this.app.setTagFilter(t.id, e.ctrlKey || e.metaKey, { exclude: e.altKey }),
         },
         el('span', { class: 'dot', style: { background: t.color || '#888' } }),
         el('span', { class: 'nm fit', text: t.name.split('/').pop() }),
@@ -118,7 +120,7 @@ export class Tags {
     const chip = (t) => {
       const h = have.get(t.id) || 0;
       return el('button', { class: 'chip' + (h && h === n ? ' full' : h ? ' partial' : ''), title: `${this.facetLabel(t.facet)}: ${t.name}${t.hotkey ? ` (${t.hotkey})` : ''} - click to add/remove for ${n} item(s)`,
-        style: { '--c': t.color || '#888' }, onclick: () => this.app.applyTag(t.id) },
+        style: { '--c': t.color || '#888' }, 'data-tag-id': t.id, onclick: () => this.app.applyTag(t.id) },
       t.hotkey ? el('span', { class: 'hk', text: t.hotkey }) : null, el('span', { text: t.name.split('/').pop() }),
       h && h < n ? el('span', { class: 'part', text: `${h}/${n}` }) : null);
     };

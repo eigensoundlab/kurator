@@ -68,7 +68,9 @@ def main(argv: list[str] | None = None) -> None:
     if not args.no_browser:
         threading.Thread(target=lambda: (time.sleep(1.0), webbrowser.open(url)), daemon=True).start()
     # Loopback only - the API can read your library, it must never be reachable from the network.
-    config = uvicorn.Config(app, host="127.0.0.1", port=args.port, log_level="warning", access_log=False)
+    # timeout_graceful_shutdown: don't wait for the browser's open connections when quitting
+    config = uvicorn.Config(app, host="127.0.0.1", port=args.port, log_level="warning", access_log=False,
+                            timeout_graceful_shutdown=2)
     server = uvicorn.Server(config)
 
     async def serve():
@@ -92,6 +94,38 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(serve())
     except KeyboardInterrupt:
         pass
+    finally:
+        _quit(scanner, watcher, ai)
+
+
+def _quit(scanner, watcher, ai) -> None:
+    """Stop background work quickly, then exit without waiting for queued work.
+
+    Everything Kurator writes is committed as it goes (SQLite, WAL), so nothing is lost by not
+    finishing a scan: unfinished files are simply processed on the next start.
+    """
+    print("[Kurator] Stopping ...", flush=True)
+    done = threading.Event()
+
+    from . import rclone
+
+    def stop_all():
+        for fn in (lambda: scanner.stop(timeout=3),
+                   lambda: watcher and watcher.stop(),
+                   lambda: ai and ai.cancel(),
+                   lambda: rclone._shared and rclone._shared.stop()):
+            try:
+                fn()
+            except Exception:
+                pass
+        done.set()
+
+    threading.Thread(target=stop_all, daemon=True).start()
+    done.wait(6)
+    print("[Kurator] Stopped.", flush=True)
+    # os._exit: skip interpreter shutdown, which would otherwise wait for every queued thumbnail
+    # or scan job in the thread pools (minutes on a big library).
+    os._exit(0)
 
 
 if __name__ == "__main__":

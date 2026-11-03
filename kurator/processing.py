@@ -96,7 +96,8 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
             if orientation in (5, 6, 7, 8):
                 full_w, full_h = full_h, full_w
             out["width"], out["height"] = full_w, full_h
-            if loaded.meta.get("audio") or loaded.meta.get("placeholder") or (loaded.size is None and loaded.meta.get("preview")):
+            if (loaded.meta.get("audio") or loaded.meta.get("placeholder") or "model" in loaded.meta
+                    or (loaded.size is None and loaded.meta.get("preview"))):
                 out["width"] = out["height"] = None  # the thumbnail is a waveform / a card, not the content
             img = ImageOps.exif_transpose(img) if orientation != 1 else img
             img.load()

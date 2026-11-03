@@ -295,6 +295,10 @@ table.space tr.offline td { color: var(--muted); }
 .v-img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; opacity: 0; transition: opacity .1s; }
 .v-img.ready { opacity: 1; }
 .viewer.pixel .v-img { image-rendering: pixelated; }
+.meshview { position: absolute; inset: 0; width: 100%; height: 100%; display: none; cursor: grab; touch-action: none; }
+.meshview:active { cursor: grabbing; }
+.viewer.mode3d .meshview { display: block; }
+.viewer.mesh-ready .v-img { visibility: hidden; }
 .v-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: #000d; color: #eee; }
 .v-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
 .v-info { color: #aaa; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -326,3 +330,23 @@ body.offline #offline { display: block; }
 
 @media (max-width: 1100px) { #main { grid-template-columns: 200px 1fr 280px; } #search { width: 160px; } }
 .tp-presets .chip { border-left-width: 1px; --c: var(--accent); }
+.node.tagnode.excluded .nm { text-decoration: line-through; opacity: .7; }
+.chip.not { border-style: dashed; text-decoration: line-through; }
+.chip.not .x { text-decoration: none; }
+/* dragging selected items onto a tag */
+.dragghost { position: fixed; z-index: 80; pointer-events: none; background: var(--accent); color: #fff; font-size: 12px;
+  padding: 3px 9px; border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,.4); white-space: nowrap; }
+.droptarget { outline: 2px solid var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 22%, transparent) !important; }
+body.dragging-items, body.dragging-items * { cursor: copy !important; }
+/* sounds: ▶ on the waveform, highlighted while playing */
+.cell .play { display: none; position: absolute; left: 8px; top: 8px; width: 28px; height: 28px; border-radius: 50%; border: 0;
+  background: #000b; color: #fff; font-size: 12px; line-height: 28px; text-align: center; cursor: pointer; z-index: 2; padding: 0; }
+.cell .play::before { content: "▶"; }
+.cell.audio .play { display: block; opacity: .75; }
+.cell.audio:hover .play, .cell.playing .play { opacity: 1; }
+.cell.playing .play { background: var(--accent); }
+.cell.playing .play::before { content: "■"; }
+.cell.playing .th { box-shadow: 0 0 0 2px var(--accent); }
+.cell.audio .ext { left: 42px; top: 13px; }
+.viewer.mode3d .v-2d { display: none; }
+.v-zoom { white-space: nowrap; }

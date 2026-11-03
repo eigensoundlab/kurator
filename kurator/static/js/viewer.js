@@ -1,7 +1,8 @@
 // Full-screen viewer / quick look. Browsing here never changes a multi-selection.
 
 import { originalUrl, thumbUrl } from './api.js';
-import { el, extOf, fmtDate, fmtNum, prefs, VIEWABLE } from './util.js';
+import { MeshView } from './meshview.js';
+import { el, extOf, fmtDate, fmtNum, MESHES, prefs, VIEWABLE } from './util.js';
 
 const BGS = ['dark', 'gray', 'light', 'checker'];
 
@@ -17,9 +18,9 @@ export class Viewer {
     this.zoomLbl = el('div', { class: 'v-zoom' });
     this.bar = el('div', { class: 'v-bar' }, this.selBadge, this.title, this.tagsEl, this.info, this.zoomLbl,
       el('button', { class: 'v-btn', title: 'Background (B)', text: 'BG', onclick: () => this.cycleBg() }),
-      el('button', { class: 'v-btn', title: 'Pixel-art zoom (N)', text: 'PX', onclick: () => this.togglePixel() }),
-      el('button', { class: 'v-btn', title: 'Fit (0)', text: 'Fit', onclick: () => this.fitView() }),
-      el('button', { class: 'v-btn', title: '100% (Z)', text: '1:1', onclick: () => this.zoomTo(1) }),
+      el('button', { class: 'v-btn v-2d', title: 'Pixel-art zoom (N)', text: 'PX', onclick: () => this.togglePixel() }),
+      el('button', { class: 'v-btn', title: 'Fit / reset view (0)', text: 'Fit', onclick: () => (this.is3d ? this.mv?.reset() : this.fitView()) }),
+      el('button', { class: 'v-btn v-2d', title: '100% (Z)', text: '1:1', onclick: () => this.zoomTo(1) }),
       el('button', { class: 'v-btn', title: 'Close (Esc)', text: '✕', onclick: () => this.close() }));
     this.prev = el('button', { class: 'v-nav v-prev', text: '‹', title: 'Previous (←)', onclick: () => this.step(-1) });
     this.next = el('button', { class: 'v-nav v-next', text: '›', title: 'Next (→)', onclick: () => this.step(1) });
@@ -53,6 +54,8 @@ export class Viewer {
     this.isOpen = false;
     this.root.classList.remove('open');
     this.img.removeAttribute('src');
+    this.mv?.clear();
+    this.root.classList.remove('mode3d', 'mesh-ready');
     this.app.onViewerClosed(this.i);
   }
 
@@ -71,13 +74,32 @@ export class Viewer {
     this.full = !!animated;
     this.img.classList.remove('ready');
     this.img.src = src;
+    this.show3d(MESHES.has(ext) && it.v[i] !== 'e' ? it.ids[i] : null);
     if (this.w && this.h) this.fitView();
     this.title.textContent = it.n[i];
-    this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`;
+    this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
+      + (this.is3d ? ' · drag: turn · right-drag: move · wheel: zoom · 0: reset' : '');
     this.paintSel();
     this.paintTags();
     this.root.classList.toggle('alpha', !!it.a[i]);
     this.preload(i + 1); this.preload(i - 1);
+  }
+
+  /** 3D models: the rendered thumbnail shows until the geometry has loaded, then the live view. */
+  show3d(id) {
+    this.is3d = id != null;
+    this.root.classList.toggle('mode3d', this.is3d);
+    this.root.classList.remove('mesh-ready');
+    if (!this.is3d) { this.mv?.clear(); return; }
+    if (!this.mv) this.mv = new MeshView(this.stage);
+    this.mv.load(id).then((head) => {
+      if (head && this.isOpen && this.items.ids[this.i] === id) {
+        this.root.classList.add('mesh-ready');
+        this.zoomLbl.textContent = `${fmtNum(head.triangles)} triangles`;
+      }
+    }).catch((e) => {
+      if (this.isOpen && this.items.ids[this.i] === id) { this.root.classList.remove('mode3d'); this.app.toast(`3D view: ${e.message}`, 4000); }
+    });
   }
 
   preload(i) {
@@ -149,7 +171,7 @@ export class Viewer {
     im.style.width = `${this.w}px`;
     im.style.height = `${this.h}px`;
     im.style.transform = `translate(${this.tx}px,${this.ty}px) scale(${this.s})`;
-    this.zoomLbl.textContent = `${Math.round(this.s * 100)}%`;
+    if (!this.root.classList.contains('mesh-ready')) this.zoomLbl.textContent = `${Math.round(this.s * 100)}%`;
     // Need more pixels than the 1600 preview has? Switch to the original file.
     if (!this.full && this.viewable && Math.max(this.w, this.h) * this.s > 1700 && Math.max(this.w, this.h) > 1600) {
       this.full = true;
@@ -219,7 +241,7 @@ export class Viewer {
     if (k === 'x' || k === 'X' || (k === ' ' && e.ctrlKey)) { this.toggleSel(); return true; }
     if (k === 'b' || k === 'B') { this.cycleBg(); return true; }
     if (k === 'n' || k === 'N') { this.togglePixel(); return true; }
-    if (k === '0') { this.fitView(); return true; }
+    if (k === '0') { if (this.is3d) this.mv?.reset(); else this.fitView(); return true; }
     if (k === 'z' || k === 'Z') { if (this.fitted) this.zoomTo(1); else this.fitView(); return true; }
     if (/^[1-9]$/.test(k) && !e.ctrlKey && !e.metaKey) {  // tag hotkeys apply to the shown image only
       const t = this.app.tags.byHotkey.get(+k);

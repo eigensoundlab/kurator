@@ -16,7 +16,7 @@ import { openSettingsDialog } from './settingsdlg.js';
 import { Sidebar } from './sidebar.js';
 import { Tags } from './tags.js';
 import { TypeFilter } from './typefilter.js';
-import { AUDIO, VIEWABLE, extOf } from './util.js';
+import { AUDIO, MESHES, VIEWABLE, extOf } from './util.js';
 import { $, debounce, el, fmtNum, isTyping, prefs } from './util.js';
 import { Viewer } from './viewer.js';
 
@@ -42,11 +42,11 @@ class App {
     };
     this.aiView = null;  // {kind: 'search', q} | {kind: 'similar', id, name}
     this.animateOnHover = prefs.get('animHover', true);
-    this.autoPlay = prefs.get('autoPlay', false);
+    this.autoPlay = prefs.get('autoPlay', true);   // sounds play when you click them or arrow onto them
     this.audio = new Audio();
     this.audio.preload = 'none';
     this.playingId = null;
-    this.audio.addEventListener('ended', () => { this.playingId = null; this.panel.paintPlayer?.(); });
+    this.audio.addEventListener('ended', () => { this.playingId = null; this.panel.paintPlayer?.(); this.grid?.refreshStates(); });
     this.audio.addEventListener('timeupdate', () => this.panel.paintPlayer?.());
     this.typeFilter = new TypeFilter(this);
     this.filterSets = [];
@@ -149,6 +149,7 @@ class App {
       this.typeFilter.setTypes(st.types);
       VIEWABLE.clear(); for (const e of st.types.viewable) VIEWABLE.add(e);
       AUDIO.clear(); for (const e of st.types.audio) AUDIO.add(e);
+      if (st.types.meshes) { MESHES.clear(); for (const e of st.types.meshes) MESHES.add(e); }
     }
     const scan = st.scan;
     if (scan.version !== this.scanVersion) {
@@ -206,17 +207,43 @@ class App {
   }
 
   // ------------------------------------------------------------- filters
-  setTagFilter(id, add = false) {
-    let ids = (this.query.tag || '').split(',').filter(Boolean).map(Number);
-    if (add) ids = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
-    else ids = ids.length === 1 && ids[0] === id ? [] : [id];
+  /**
+   * Sidebar tag clicks:  click = go to everything with this tag, in the whole library (like opening
+   * an album); Ctrl+click = narrow the current view (keeps the folder and other filters);
+   * Alt+click = hide items with this tag.
+   */
+  setTagFilter(id, add = false, { exclude = false } = {}) {
+    const list = (s) => (s || '').split(',').filter(Boolean).map(Number);
+    let ids = list(this.query.tag), ex = list(this.query.exclude);
+    if (exclude) {
+      ex = ex.includes(id) ? ex.filter((x) => x !== id) : [...ex, id];
+      ids = ids.filter((x) => x !== id);
+    } else if (add) {
+      ids = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+      ex = ex.filter((x) => x !== id);
+    } else {
+      const same = ids.length === 1 && ids[0] === id && !this.query.folder;
+      ids = same ? [] : [id];
+      ex = [];
+      this.query.missing = '';
+      if (this.query.folder && !same) this.leaveFolder();
+    }
     this.query.tag = ids.join(',');
-    if (!add) this.query.missing = '';
+    this.query.exclude = ex.join(',');
     this.onFilterChanged();
   }
 
+  /** Back to "All library items" without reloading twice (the caller reloads). */
+  leaveFolder() {
+    this.query.folder = null;
+    prefs.set('folder', null);
+    this.sidebar.render();
+    this.sidebar.renderFs();
+  }
+
   /** Show images without any tag of a group: '' | 'subject' | 'project' | 'status' | 'source'. */
-  setMissing(facet) {
+  setMissing(facet, { here = false } = {}) {
+    if (facet && !here && this.query.folder) this.leaveFolder();
     this.query.missing = facet;
     if (facet) this.query.tag = (this.query.tag || '').split(',').filter((t) => t && this.tags.facetOf(+t) !== facet).join(',');
     this.onFilterChanged();
@@ -226,6 +253,7 @@ class App {
 
   clearFilters() {
     this.query.tag = '';
+    this.query.exclude = '';
     this.query.untagged = false;
     this.query.missing = '';
     this.query.suggested = false;
@@ -277,6 +305,7 @@ class App {
 
   computeFilterSets() {
     this.filterSets = (this.query.tag || '').split(',').filter(Boolean).map((t) => this.tags.descendants(+t));
+    this.excludeSets = (this.query.exclude || '').split(',').filter(Boolean).map((t) => this.tags.descendants(+t));
   }
 
   /** Does item i still match the tag filter? (Items you just re-tagged stay visible but dimmed.) */
@@ -286,6 +315,9 @@ class App {
     if (this.query.missing && ts && ts.some((t) => this.tags.facetOf(t) === this.query.missing)) return false;
     for (const set of this.filterSets) {
       if (!ts || !ts.some((t) => set.has(t))) return false;
+    }
+    for (const set of this.excludeSets || []) {
+      if (ts && ts.some((t) => set.has(t))) return false;
     }
     return true;
   }
@@ -381,7 +413,13 @@ class App {
 
   scheduleTagBar() {
     if (this._barRaf) return;
-    this._barRaf = requestAnimationFrame(() => { this._barRaf = 0; this.tags.renderBar(); });
+    this._barRaf = requestAnimationFrame(() => {
+      this._barRaf = 0;
+      this.tags.renderBar();
+      // the "− Remove N from <project>" button in the path bar follows the selection
+      const single = (this.query.tag || '').split(',').filter(Boolean).length === 1;
+      if (single) this.renderPathBar();
+    });
   }
 
   async undo() {
@@ -478,16 +516,24 @@ class App {
       this.audio.play().catch(() => {});
     }
     this.panel.paintPlayer?.();
+    this.grid.refreshStates();
   }
 
-  stopAudio() { if (!this.audio.paused) this.audio.pause(); this.playingId = null; this.panel.paintPlayer?.(); }
+  stopAudio() { if (!this.audio.paused) this.audio.pause(); this.playingId = null; this.panel.paintPlayer?.(); this.grid.refreshStates(); }
+
+  setAutoPlay(on) {
+    this.autoPlay = on;
+    prefs.set('autoPlay', on);
+    if (!on) this.stopAudio();
+    this.updateStatus();
+  }
 
   setFocus(i, { scroll = true } = {}) {
     if (i < 0 || i >= this.items.ids.length) return;
     const changed = this.focusIndex !== i;
     this.focusIndex = i;
     this.focusId = this.items.ids[i];
-    if (changed && this.autoPlay && this.isAudio(i)) this.togglePlay(i, { restart: true });
+    if (changed && this.autoPlay && this.isAudio(i) && VIEWABLE.has(extOf(this.items.n[i]))) this.togglePlay(i, { restart: true });
     else if (changed && this.playingId && !this.isAudio(i)) this.stopAudio();
     if (scroll) this.grid.scrollToIndex(i);
     this.grid.refreshStates();
@@ -552,12 +598,23 @@ class App {
 
     scroller.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      const play = e.target.closest?.('.play');
+      if (play) {   // the ▶ on a sound: play/stop without touching the selection
+        const i = +play.parentElement.dataset.i;
+        e.preventDefault();
+        if (this.playingId === this.items.ids[i]) this.stopAudio(); else this.togglePlay(i, { restart: true });
+        return;
+      }
       const r = scroller.getBoundingClientRect();
       if (e.clientX - r.left >= scroller.clientWidth) return; // scrollbar
       scroller.focus({ preventScroll: true });
       const [x, y] = contentPt(e);
-      st = { x, y, cx: x, cy: y, clientY: e.clientY, idx: g.indexAt(x, y), marquee: false,
-             additive: e.ctrlKey || e.metaKey || e.shiftKey, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey, base: this.selected };
+      const hit = g.indexAt(x, y);
+      st = { x, y, cx: x, cy: y, clientY: e.clientY, idx: hit, marquee: false,
+             additive: e.ctrlKey || e.metaKey || e.shiftKey, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey, base: this.selected,
+             // dragging from a selected image carries the selection (drop it on a tag or project);
+             // dragging from anywhere else draws a selection rectangle
+             carry: hit >= 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && this.selected.has(this.items.ids[hit]) };
       scroller.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
@@ -565,6 +622,16 @@ class App {
       if (!st) return;
       [st.cx, st.cy] = contentPt(e);
       st.clientY = e.clientY;
+      if (st.carry) {
+        if (!st.dragging && Math.abs(st.cx - st.x) + Math.abs(st.cy - st.y) > 8) {
+          st.dragging = true;
+          st.ghost = el('div', { class: 'dragghost' });
+          document.body.append(st.ghost);
+          document.body.classList.add('dragging-items');
+        }
+        if (st.dragging) this.dragOver(st, e);
+        return;
+      }
       if (!st.marquee && Math.abs(st.cx - st.x) + Math.abs(st.cy - st.y) > 6) {
         st.marquee = true;
         this.pushHistory({ kind: 'sel', sel: this.selected });
@@ -579,6 +646,7 @@ class App {
       const s = st;
       st = null;
       marquee.style.display = 'none';
+      if (s.dragging) { this.dragDrop(s); return; }
       if (s.marquee) { this.setAnchor(this.focusIndex); return; }
       const i = s.idx;
       if (i < 0) return; // clicking empty space never clears the selection (Esc does)
@@ -608,6 +676,27 @@ class App {
       e.preventDefault();
       this.setSize(this.grid.size * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
     }, { passive: false });
+  }
+
+  dragOver(st, e) {
+    const n = this.selected.size;
+    const under = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-tag-id]');
+    if (st.target !== under) {
+      st.target?.classList.remove('droptarget');
+      st.target = under;
+      under?.classList.add('droptarget');
+    }
+    const t = under && this.tags.byId.get(+under.dataset.tagId);
+    st.ghost.textContent = t ? `${t.archived ? '' : '+ '}${fmtNum(n)} → ${t.name}` : `${fmtNum(n)} item${n === 1 ? '' : 's'} · drop on a tag or project`;
+    st.ghost.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 10}px)`;
+  }
+
+  dragDrop(st) {
+    st.ghost?.remove();
+    st.target?.classList.remove('droptarget');
+    document.body.classList.remove('dragging-items');
+    const id = st.target ? +st.target.dataset.tagId : null;
+    if (id) this.applyTag(id, { op: 'add', targets: [...this.selected] });
   }
 
   openViewer(i = this.focusIndex, opts = {}) {
@@ -656,7 +745,7 @@ class App {
       else if (k === ' ' && ctrl) { if (fi >= 0) this.toggleSelect(fi); }
       else if (k === ' ' && this.isAudio(fi)) { if (!e.repeat) this.togglePlay(fi); }
       else if (k === ' ') { if (!e.repeat && n) { spaceDown = performance.now(); this.openViewer(fi, { quick: true }); } }
-      else if ((k === 'p' || k === 'P') && !ctrl) { this.autoPlay = !this.autoPlay; prefs.set('autoPlay', this.autoPlay); this.toast(this.autoPlay ? 'Auto-play sounds on focus: on' : 'Auto-play: off'); if (!this.autoPlay) this.stopAudio(); }
+      else if ((k === 'p' || k === 'P') && !ctrl) { this.setAutoPlay(!this.autoPlay); this.toast(this.autoPlay ? 'Sounds play when selected: on' : 'Auto-play: off (Space plays)'); }
       else if ((k === 'a' || k === 'A') && !ctrl) this.aiReview(!e.shiftKey);
       else if ((k === 's' || k === 'S') && !ctrl) { if (fi >= 0) this.setAIView({ kind: 'similar', id: this.items.ids[fi], name: this.items.n[fi] }); }
       else if ((k === 'o' || k === 'O') && !ctrl) { if (fi >= 0) api.open(this.items.ids[fi]).catch((er) => this.toast(er.message)); }
@@ -768,9 +857,11 @@ class App {
     this.stScan = el('span', { class: 'st-scan' });
     this.stSel = el('span', { class: 'st-sel' });
     this.stJob = el('span', { class: 'st-job', title: 'Open Backup', onclick: () => openBackupDialog(this) });
+    this.autoPlayBtn = el('button', { class: 'btn small', title: 'Play sounds when you click them or move onto them with the arrow keys (P)',
+      onclick: () => this.setAutoPlay(!this.autoPlay) });
     this.showSelBtn = el('button', { class: 'btn small', text: 'Show only selected', title: 'Temporarily show only the selected items',
       onclick: () => { this.showSel = !this.showSel; this.showSelBtn.classList.toggle('on', this.showSel); this.applyView({ keepScroll: false }); } });
-    bar.append(this.stCount, this.stScan, this.stJob, el('div', { class: 'spacer' }), this.stSel,
+    bar.append(this.stCount, this.stScan, this.stJob, el('div', { class: 'spacer' }), this.autoPlayBtn, this.stSel,
       el('button', { class: 'btn small', text: 'All', title: 'Select all (Ctrl+A)', onclick: () => this.selectAll() }),
       el('button', { class: 'btn small', text: 'Invert', title: 'Invert selection (Ctrl+I)', onclick: () => this.invertSelection() }),
       el('button', { class: 'btn small', text: 'Clear', title: 'Clear selection (Esc)', onclick: () => this.clearSelection() }),
@@ -784,6 +875,13 @@ class App {
 
   updateStatus() {
     this.stCount.textContent = `${fmtNum(this.items.ids.length)} items`;
+    if (this._audioItems !== this.items) {   // the auto-play switch only shows where there are sounds
+      this._audioItems = this.items;
+      this._hasAudio = this.items.n.some((n) => AUDIO.has(extOf(n)));
+    }
+    this.autoPlayBtn.style.display = this._hasAudio ? '' : 'none';
+    this.autoPlayBtn.textContent = this.autoPlay ? '♪ Auto-play on' : '♪ Auto-play off';
+    this.autoPlayBtn.classList.toggle('on', this.autoPlay);
     const n = this.selected.size;
     let hidden = 0;
     if (n) for (const id of this.selected) if (!this.idIndex.has(id)) hidden++;
@@ -847,6 +945,19 @@ class App {
       filters.push(el('span', { class: 'chip small', style: { '--c': t?.color || '#888' } }, el('span', { text: t?.name || 'tag' }),
         el('span', { class: 'x', text: '×', title: 'Remove filter', onclick: () => this.setTagFilter(id, true) })));
     }
+    for (const id of (q.exclude || '').split(',').filter(Boolean).map(Number)) {
+      const t = this.tags.byId.get(id);
+      filters.push(el('span', { class: 'chip small not', style: { '--c': t?.color || '#888' }, title: 'Hidden: items with this tag (Alt+click a tag)' },
+        el('span', { text: `not ${t?.name || 'tag'}` }),
+        el('span', { class: 'x', text: '×', title: 'Remove filter', onclick: () => this.setTagFilter(id, false, { exclude: true }) })));
+    }
+    const only = (q.tag || '').split(',').filter(Boolean).map(Number);
+    if (only.length === 1 && this.selected.size) {
+      const t = this.tags.byId.get(only[0]);
+      if (t) filters.push(el('button', { class: 'btn small', title: `Remove the selected items from ${t.name} (Ctrl+Z undoes). Press R afterwards to drop them from this view.`,
+        text: `− Remove ${fmtNum(this.selected.size)} from ${t.name.split('/').pop()}`,
+        onclick: () => this.applyTag(t.id, { op: 'remove', targets: [...this.selected] }).then(() => this.renderPathBar()) }));
+    }
     if (q.untagged) filters.push(el('span', { class: 'chip small' }, el('span', { text: 'Untagged' }), el('span', { class: 'x', text: '×', onclick: () => this.setUntagged(false) })));
     if (q.missing) {
       const f = this.tags.facets.find((x) => x.key === q.missing);
@@ -867,7 +978,7 @@ class App {
     if (q.suggested) filters.push(el('span', { class: 'chip small ai' }, el('span', { text: 'AI suggestions' }), el('span', { class: 'x', text: '×', onclick: () => this.setSuggestedFilter(false) })));
     if (this.aiView) filters.push(el('span', { class: 'chip small ai' }, el('span', { text: this.aiView.kind === 'search' ? `AI search: ${this.aiView.q}` : `Similar to ${this.aiView.name}` }),
       el('span', { class: 'x', text: '×', onclick: () => this.setAIView(null) })));
-    if (filters.length || q.q || q.missing) right.push(el('button', { class: 'btn small', text: 'Clear filters', onclick: () => this.clearFilters() }));
+    if (filters.length || q.q || q.missing || q.exclude) right.push(el('button', { class: 'btn small', text: 'Clear filters', onclick: () => this.clearFilters() }));
     right.push(el('button', { class: 'btn small', text: '⟳', title: 'Refresh the list (R) - drops items that no longer match the filter', onclick: () => this.reload() }));
     this.pathbar.replaceChildren(el('div', { class: 'crumbs' }, ...left), ...filters, el('div', { class: 'spacer' }), ...right);
   }
@@ -881,12 +992,14 @@ class App {
       ['Space (tap / hold)', 'Quick look: tap to open, hold to peek and release to return'],
       ['Enter, double-click', 'Open viewer'],
       ['O', 'Open the file in its application (Krita, Photoshop, audio editor…)'],
-      ['Space on a sound · P', 'Play / stop · auto-play sounds while browsing with the arrows'],
+      ['Click / arrows on a sound', 'Plays it (auto-play; switch with P or the ♪ button in the status bar)'],
+      ['Space · ▶ on a sound', 'Play / stop (▶ doesn\'t change the selection)'],
       ['Ctrl + wheel, + / −', 'Thumbnail size'],
       ['/  or  Ctrl+F', 'Search names'],
       ['Selecting', ''],
       ['Click / Ctrl+click / Shift+click', 'Select one / toggle / range'],
       ['Drag on the grid', 'Rectangle select (hold Ctrl or Shift to add)'],
+      ['Drag selected images', 'Drop them on a tag or project in the sidebar or tag bar to add it'],
       ['X  or  Ctrl+Space', 'Toggle the focused item'],
       ['Shift + arrows', 'Extend selection'],
       ['Ctrl+A / Ctrl+I / Esc', 'Select all / invert / clear'],
@@ -894,6 +1007,8 @@ class App {
       ['Tagging & sorting', ''],
       ['1 … 9', 'Add/remove the tag on that hotkey (selection, or the focused image)'],
       ['T', 'Tag with any name (creates the tag if new)'],
+      ['Click a tag / project', 'Everything with it, in the whole library'],
+      ['Ctrl+click · Alt+click', 'Narrow the current view (e.g. a project in this folder) · hide items with it'],
       ['M', 'Move selection to a folder (with preview, keeps dates, undoable)'],
       ['B', 'Backup (sets, plan with free space, restore)'],
       ['AI', ''],
@@ -908,6 +1023,7 @@ class App {
       ['X', 'Toggle selection of the shown image'],
       ['1 … 9, T', 'Tag the shown image'],
       ['Wheel, drag, double-click', 'Zoom at cursor, pan, toggle fit/100%'],
+      ['3D models', 'Drag: turn · right-drag or Shift+drag: move · wheel: zoom · 0 or double-click: reset'],
       ['0 / Z', 'Fit / toggle 100%'],
       ['B', 'Background: dark, gray, light, checkerboard'],
       ['N', 'Pixel-art mode (sharp pixels when zoomed)'],
