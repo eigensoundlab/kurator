@@ -125,9 +125,13 @@ def test_tag_layout_collisions_and_retag(env):
     assert (tmp / "tb" / "Icons" / "dragon.png").exists() and not (tmp / "tb" / "Creatures").exists()
 
 
-def test_spanning_two_targets_and_space_check(env):
+def test_spanning_two_targets_and_space_check(env, monkeypatch):
     db, sc, lib, tmp, ids, jobs = env
-    free = shutil.disk_usage(tmp).free
+    # Fixed free space: on a real (CI) disk it changes while the test runs, and the margin here is
+    # a few KB, so the measured value would make the test flaky.
+    free = 50 * 1024 ** 3
+    real = shutil.disk_usage
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: real(p)._replace(free=free))
     one_file = 40000
     small = (free - one_file * 1.5) / 1024 ** 3  # first target only has room for ~1 file
     s = backup.save_set(db, {"name": "Span", "targets": [
