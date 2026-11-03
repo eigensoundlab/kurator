@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments (install.bat / install.sh create .venv)
+.venv/
+.venv-*/
+venv/
+env/
+
+# Test, lint and audit output
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+audit-req.txt
+test-results/
+playwright-report/
+
+# Kurator data (catalog.db, thumbs.db, embeddings.db) if --data-dir points inside the clone
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+kurator-data/
+
+# Release archives
+*.zip
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+desktop.ini
+# (Thumbs.db is already covered by *.db)
+
+# Local secrets, just in case
+.env
+*.conf.local

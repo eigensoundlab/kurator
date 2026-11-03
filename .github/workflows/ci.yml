@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"   # weekly: catch newly published vulnerabilities in dependencies
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade --upgrade-strategy eager -e ".[dev]"
+      - name: Tests
+        run: python -m pytest -q
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install newest dependencies (incl. the AI extra, CPU build of PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade --upgrade-strategy eager ".[audit,ai]" --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: pip-audit (known vulnerabilities)
+        # Kurator itself is not on PyPI, so audit the installed dependencies as a pinned list
+        # (local version tags such as +cpu stripped).
+        run: |
+          python -m pip freeze --exclude kurator --exclude-editable | sed -E 's/\+[A-Za-z0-9.]+$//' > audit-req.txt
+          python -m pip_audit -r audit-req.txt --no-deps --disable-pip --strict --progress-spinner off

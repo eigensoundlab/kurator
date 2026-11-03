@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kurator"
+version = "0.6.0"
+description = "Fast local asset manager for artists and game developers: browse, tag, sort, move and back up images, keeping original dates and metadata."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Daniel Sandner" }]
+requires-python = ">=3.10"
+keywords = ["asset manager", "image organizer", "digital asset management", "art", "gamedev", "tagging", "xmp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Graphics :: Viewers",
+]
+dependencies = [
+    "fastapi>=0.162.0",
+    "uvicorn>=0.54.0",
+    "starlette>=1.10.0",
+    "pillow>=13.0.0",
+    "h11>=0.16.0",
+    "watchdog>=7.0.0",
+    "numpy>=2.0",
+    "pypdfium2>=5.14.0",   # PDF / Illustrator previews (Apache-2.0 / BSD-3)
+    "resvg-py>=0.5.0",     # SVG rendering (MIT, resvg: Apache-2.0 / MIT)
+    "pi-heif>=1.4.0",      # HEIC/HEIF decoding only (BSD-3, no GPL encoders)
+    "soundfile>=0.14.0",   # audio decoding (BSD-3, libsndfile LGPL - dynamically loaded)
+    "tinytag>=2.3.2",      # audio tags (MIT)
+]
+
+[project.optional-dependencies]
+audit = ["pip-audit>=2.10"]
+ai = ["torch>=2.6", "torchvision>=0.21", "open-clip-torch>=3.3"]   # optional AI features (install.bat ai)
+dev = ["pytest>=8", "httpx2>=2.16", "pip-audit>=2.10"]
+ui-tests = ["playwright>=1.50"]
+
+[project.urls]
+Homepage = "https://github.com/eigensoundlab/kurator"
+Issues = "https://github.com/eigensoundlab/kurator/issues"
+"Eigensound (sound research)" = "https://eigensound.com/"
+"sandner.art (AI/ML for art and science)" = "https://sandner.art/"
+
+[project.scripts]
+kurator = "kurator.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["kurator*"]
+
+[tool.setuptools.package-data]
+kurator = ["static/*", "static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
