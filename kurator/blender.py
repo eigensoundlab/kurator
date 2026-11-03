@@ -76,7 +76,10 @@ def to_glb(src: str, h: str, cache_dir: str, timeout: float = 300) -> str:
         if os.path.isfile(out) and os.path.getsize(out) > 0:
             return out
         tmp = out + ".part.glb"
-        args = [exe, "--background", "--factory-startup", "--disable-autoexec", src, "--python-expr", EXPORT, "--", tmp]
+        script = os.path.join(cache_dir, "_kurator_export.py")   # a file: multi-line arguments are fragile on Windows
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(EXPORT)
+        args = [exe, "--background", "--factory-startup", "--disable-autoexec", src, "--python", script, "--", tmp]
         try:
             r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                timeout=timeout, creationflags=_NO_WINDOW, check=False)

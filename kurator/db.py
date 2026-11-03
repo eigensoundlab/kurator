@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 CATALOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -194,6 +194,18 @@ MIGRATIONS = {
             name TEXT NOT NULL,
             query TEXT NOT NULL,          -- JSON: the grid's filters
             position INTEGER NOT NULL DEFAULT 0,
+            created REAL
+        )""",
+    ],
+    7: [
+        # Perceptual hash (dHash, 64 bit) for finding similar - not identical - images
+        "ALTER TABLE files ADD COLUMN phash INTEGER",
+        # Version stacks: sketch -> lineart -> colour shown as one item
+        "ALTER TABLE files ADD COLUMN stack_id INTEGER",
+        "CREATE INDEX files_stack ON files(stack_id) WHERE stack_id IS NOT NULL",
+        """CREATE TABLE stacks (
+            id INTEGER PRIMARY KEY,
+            cover_id INTEGER,            -- the file shown for the stack (default: the newest)
             created REAL
         )""",
     ],
@@ -426,7 +438,7 @@ class Database:
                 r["hash"], r.get("width"), r.get("height"), r.get("color"), int(bool(r.get("alpha"))),
                 (r.get("meta") or {}).get("frames"),
                 r["date_ts"], r["date_source"], json.dumps(r.get("meta") or {}, ensure_ascii=False, default=str),
-                r.get("kind", "image"), r["size"], r["mtime_ns"], r["path"],
+                r.get("kind", "image"), r["size"], r["mtime_ns"], r.get("phash"), r["path"],
             ))
             for s, d in (r.get("thumbs") or {}).items():
                 thumbs.append((r["hash"], s, d))
@@ -439,7 +451,7 @@ class Database:
             c.execute("BEGIN")
             c.executemany(
                 "UPDATE files SET hash=?, width=?, height=?, color=?, alpha=?, frames=?, date_ts=?, date_source=?, meta=?, "
-                "kind=?, size=?, mtime_ns=?, status=1, error=NULL WHERE path=?",
+                "kind=?, size=?, mtime_ns=?, phash=?, status=1, error=NULL WHERE path=?",
                 ok,
             )
             c.executemany("UPDATE files SET status=2, error=? WHERE path=?", bad)

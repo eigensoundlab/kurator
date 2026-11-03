@@ -4,7 +4,7 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.9 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.10 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files, 3D models
 > (previews and a 3D viewer), **video**, **projects you work inside**, and optional local AI
@@ -294,12 +294,48 @@ back to *In project* → tag and sort.
 - Exports copy, never move. The destination can't be inside a library folder (the copies would
   be catalogued twice).
 
-### Saved views and duplicates
+### Saved views, duplicates and similar images
 
 - **☆ Save view** in the path bar remembers the current folder, project, tags, types, search and sort
   under a name in the sidebar (*Saved views*), e.g. "Game A – creatures without status".
 - **Duplicates** (in the sidebar when there are any) lists files whose exact content exists in more
   than one place, next to each other. The side panel shows *Also in* with the other locations.
+- **Similar images** (sidebar) groups pictures that look nearly the same: resized, re-saved as JPEG,
+  slightly edited, exported twice. Groups are shown one after the other, every other group with an
+  orange frame; choose *nearly identical*, *very similar* or *similar* in the path bar. It works inside
+  the current folder, project and filters. (A 64-bit picture fingerprint is made while indexing;
+  for an existing catalog Kurator makes them from the thumbnails the first time you open the view.)
+
+### Version stacks
+
+Sketch → lineart → colour, or v01 → v02 → final: **stack** them and the grid shows one item, the
+newest on top, with ▤ and the number of versions.
+
+- Select the versions and press **Ctrl+G** (or *Stack as versions* in the side panel). **Stack by
+  name** finds the groups for you inside the selection, per folder: `hero_sketch`, `hero_lineart`,
+  `hero_color`, `hero_v2`, `hero (1)`, `hero copy` belong together.
+- Click **▤** on a thumbnail to see all versions, oldest first. The side panel lists the versions
+  (click to jump) and has *put on top* to choose which one represents the stack.
+- If a filter matches only an older version (e.g. a tag only the lineart has), that version is shown.
+- **Ctrl+Shift+G** unstacks. *Stacks* in the toolbar switches between stacked and all files.
+  Stacks only group what you see; files stay where they are.
+
+### Compare
+
+Select 2–4 images and press **C**: they appear side by side, and zooming (wheel) or moving (drag)
+moves all of them together, so the same detail stays lined up. **S** (two images) switches to a
+swipe view: one over the other, the divider follows the mouse. **0** fits, **1** is 100%, Esc goes back.
+
+### Join images and contact sheets (J)
+
+**J** (or *Join / sheet…* in the status bar) works on the selection (or the whole view), in grid order:
+
+- **Join images:** side by side, stacked, or in a grid; every image scaled to the smallest or largest
+  height/width; gap; background colour or transparent; optional result width/height. PNG, JPEG or WebP.
+- **Contact sheet:** A4/A3/A5/Letter/Tabloid (portrait or landscape, 100–300 dpi) or any pixel size;
+  columns; captions (name, date, tags); title; page numbers; background. One PDF, or PNG/JPEG pages.
+- A live preview shows the result before saving. New files never overwrite existing ones; save into
+  a library folder and they appear in the grid.
 
 ### Filters: how they combine
 
@@ -531,6 +567,9 @@ kurator/
   rules.py         move rules: tag -> destination template
   projects.py      projects with automatic sources (tags, folders, other projects)
   assets.py        texture sets, model companions, project export to game folders
+  similar.py       picture fingerprints (dHash) and grouping of similar images
+  stacks.py        version stacks
+  sheets.py        contact sheets and joined images
   blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
   xmp.py           XMP sidecars (write), keyword import (XMP, Windows tags, sidecars)
   watcher.py       live folder watching (watchdog), debounced re-check of changed folders
@@ -634,12 +673,13 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
     ~~projects as the top filter, with automatic sources~~ ✅
 12. ~~Texture sets, project export to Unity/Godot/Unreal, saved views, exact duplicates (also stored
     once in backups), Blender files in 3D, long sounds in orange~~ ✅
-    Next: near-duplicate finder (similar, not identical images), contact sheets / PureRef export,
-    compare mode (2–4 images side by side), version stacks (sketch → lineart → colour).
-13. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+13. ~~Similar images, version stacks, compare mode, join images and contact sheets~~ ✅
+    Next: colour / aspect / transparency filters, a timeline scrubber, LUFS/BPM/key for sounds,
+    sprite sheets and texture atlases for game export. (PureRef's board format isn't open, so boards
+    are best made by dragging images into PureRef.)
+14. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
-Other ideas: version stacks (sketch → lineart → colour), near-duplicate finder, compare mode (2–4 up),
-timeline scrubber, colour/aspect/transparency filters, contact sheets / PureRef export.
+Other ideas: timeline scrubber, colour/aspect/transparency filters.
 
 ## License
 

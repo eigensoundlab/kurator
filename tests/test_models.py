@@ -184,6 +184,7 @@ def test_scanner_stops_quickly(tmp_path):
     assert pending > 0   # left for the next start
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in 'blender' is a script with a POSIX #! line")
 def test_blend_3d_view_through_blender(samples, tmp_path, monkeypatch):
     """With Blender installed, .blend files open in the 3D viewer (converted once to a cached GLB).
     A stand-in 'blender' checks that scripts in the file can't run (--disable-autoexec)."""
@@ -198,7 +199,7 @@ import shutil, sys
 a = sys.argv[1:]
 open({str(log)!r}, "a").write(" ".join(a[:4]) + "\\n")
 assert "--disable-autoexec" in a and "--factory-startup" in a and "--background" in a
-assert a.index("--disable-autoexec") < a.index("--python-expr")
+assert a.index("--disable-autoexec") < a.index("--python")
 shutil.copy({glb!r}, a[a.index("--") + 1])
 """)
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)

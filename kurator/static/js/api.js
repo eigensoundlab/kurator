@@ -16,6 +16,17 @@ async function req(method, url, body, signal) {
   return r.json();
 }
 
+/** POST that returns a picture (previews): { url, headers }. */
+async function postImage(url, body, signal) {
+  const r = await fetch(url, { method: 'POST', signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch { /* not json */ }
+    throw new Error(msg);
+  }
+  return { url: URL.createObjectURL(await r.blob()), headers: r.headers };
+}
+
 export const api = {
   state: () => req('GET', '/api/state'),
   folders: (project) => req('GET', '/api/folders' + (project ? `?project=${project}` : '')),
@@ -38,6 +49,11 @@ export const api = {
   tags: (project) => req('GET', '/api/tags' + (project ? `?project=${project}` : '')),
   projects: () => req('GET', '/api/projects'),
   views: () => req('GET', '/api/views'),
+  similarStatus: () => req('GET', '/api/similar/status'),
+  stack: (ids, byName = false) => req('POST', '/api/stacks', { ids, by_name: byName }),
+  unstack: (ids) => req('POST', '/api/stacks/unstack', { ids }),
+  stackCover: (id) => req('POST', '/api/stacks/cover', { id }),
+  sheet: (kind, body, signal) => (body.preview ? postImage(`/api/sheets/${kind}`, body, signal) : req('POST', `/api/sheets/${kind}`, body)),
   related: (id) => req('GET', `/api/items/${id}/related`),
   exportPresets: () => req('GET', '/api/export/presets'),
   exportPlan: (body) => req('POST', '/api/export/plan', body),

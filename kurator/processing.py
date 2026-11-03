@@ -59,6 +59,21 @@ def _avg_color(img: Image.Image) -> int:
     return (r << 16) | (g << 8) | b
 
 
+def dhash(img: Image.Image) -> int:
+    """64-bit difference hash: survives resizing, re-saving and small edits (for "similar images").
+    Signed, so it fits an SQLite INTEGER."""
+    if img.mode == "RGBA":
+        bg = Image.new("RGBA", img.size, _PLACEHOLDER_BG + (255,))
+        img = Image.alpha_composite(bg, img)
+    g = img.convert("L").resize((9, 8), Image.Resampling.BOX)
+    px = list(g.tobytes())   # 8-bit grey: one byte per pixel
+    v = 0
+    for row in range(8):
+        for col in range(8):
+            v = (v << 1) | (px[row * 9 + col] > px[row * 9 + col + 1])
+    return v - (1 << 64) if v >= 1 << 63 else v
+
+
 def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
     """Return a result dict; never raises (errors are reported in result['error'])."""
     out: dict = {"path": path}
@@ -118,6 +133,8 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
                 extra.convert("RGB").save(buf, "WEBP", quality=72, method=4)
                 out["thumbs"][key] = buf.getvalue()
             out["alpha"] = img.mode == "RGBA" and img.getchannel("A").getextrema()[0] < 255
+            if handler.kind in ("image", "video") and not loaded.meta.get("placeholder"):
+                out["phash"] = dhash(img)
     except Exception as e:  # report, don't crash the pool
         out["error"] = f"{type(e).__name__}: {e}"
         out["trace"] = traceback.format_exc(limit=3)

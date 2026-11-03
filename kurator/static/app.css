@@ -411,3 +411,47 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .twin { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; color: var(--accent); font-size: 12px; }
 .rel { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 6px 0; }
 .projdlg label.chk { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); font-size: 13px; margin: 4px 0; }
+
+.cell.gB .th { box-shadow: 0 0 0 3px #e6a23c66; }
+.cell.gB.sel .th { box-shadow: 0 0 0 3px var(--accent2); }
+/* join / contact sheet dialog */
+.sheetdlg { display: flex; gap: 18px; align-items: flex-start; }
+.sheetcol { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.prevcol { flex: 1.25; align-items: center; justify-content: center; background: var(--checker); border-radius: 8px; padding: 10px; min-height: 380px; }
+.sheet-prev { max-width: 100%; max-height: 520px; box-shadow: 0 4px 18px rgba(0,0,0,.45); }
+.sheetopts .sf, .sheetcol > .sf { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; color: var(--muted); }
+.sf > span { width: 120px; flex: none; }
+.sf > input[type=text], .sf > select { flex: 1; min-width: 0; }
+.sf small { font-size: 11px; }
+.sheetopts .row { display: flex; gap: 12px; }
+.sheetopts label.chk { margin: 4px 0 4px 128px; }
+/* version stacks */
+.cell .stackbadge { display: none; position: absolute; right: 6px; top: 34px; z-index: 2; border: 0; border-radius: 9px; padding: 1px 7px;
+  background: #000b; color: #fff; font: 11px/16px inherit; cursor: pointer; }
+.cell.stacked .stackbadge { display: block; }
+.cell.stacked .th { box-shadow: 3px -3px 0 -1px var(--bg3), 6px -6px 0 -2px var(--line); }
+.cell.stacked.sel .th { box-shadow: 0 0 0 3px var(--accent2); }
+.cell .stackbadge:hover { background: var(--accent); }
+/* compare */
+.compare { position: fixed; inset: 0; z-index: 55; background: #0b0c0f; display: none; outline: none; }
+.compare.open { display: block; }
+.cmp-grid { position: absolute; inset: 0 0 44px 0; display: grid; gap: 2px; background: #222; }
+.cmp-grid.n1 { grid-template-columns: 1fr; }
+.cmp-grid.n2 { grid-template-columns: 1fr 1fr; }
+.cmp-grid.n3 { grid-template-columns: 1fr 1fr 1fr; }
+.cmp-grid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.cmp-pane { position: relative; overflow: hidden; background: #0b0c0f; cursor: grab; }
+.cmp-pane:active { cursor: grabbing; }
+.cmp-img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; user-select: none; }
+.cmp-label { position: absolute; left: 10px; bottom: 8px; background: #000a; color: #fff; padding: 3px 8px; border-radius: 6px; font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-label.right { left: auto; right: 10px; }
+.cmp-divider { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 6px #000; pointer-events: none; }
+.cmp-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: #000; color: #ccc; }
+.cmp-bar .v-back { position: static; }
+.cmp-hint { flex: 1; font-size: 12px; color: #999; }
+.v-btn.on { background: var(--accent); color: #fff; }
+.sheetopts .sf, .sheetcol > .sf { flex-wrap: wrap; }
+.sf small { flex-basis: 100%; margin-left: 128px; margin-top: -2px; }
+.sheetopts .row .sf > span { width: auto; min-width: 0; }
+.sheetopts .row .sf small { margin-left: 0; }
+.sheetopts .row .sf:first-child > span { width: 120px; }

@@ -79,6 +79,17 @@ def model_companions(path: str, meta: dict | None = None) -> list[str]:
     base = os.path.dirname(os.path.abspath(path))
     ext = os.path.splitext(path)[1].lower()
     out: list[str] = []
+    seen: set = set()
+
+    def ident(p: str):
+        """Same file, even when a case-insensitive disk (Windows, macOS) spells it differently."""
+        try:
+            st = os.stat(p)
+            return (st.st_dev, st.st_ino) if st.st_ino else os.path.normcase(os.path.abspath(p))
+        except OSError:
+            return os.path.normcase(os.path.abspath(p))
+
+    me = ident(path)
 
     def add(rel: str):
         rel = unquote(rel.strip().strip('"')).replace("\\", "/")
@@ -87,8 +98,11 @@ def model_companions(path: str, meta: dict | None = None) -> list[str]:
         p = os.path.normpath(os.path.join(base, rel)) if not os.path.isabs(rel) else os.path.normpath(rel)
         if not os.path.isfile(p):   # textures referenced with an absolute path from the artist's PC: look nearby
             p = _find_nearby(base, os.path.basename(rel))
-        if p and os.path.isfile(p) and p not in out and os.path.abspath(p) != os.path.abspath(path):
-            out.append(p)
+        if p and os.path.isfile(p):
+            k = ident(p)
+            if k not in seen and k != me:
+                seen.add(k)
+                out.append(p)
 
     try:
         if ext == ".obj":
@@ -119,8 +133,10 @@ def model_companions(path: str, meta: dict | None = None) -> list[str]:
         pass
     # a texture set named like the model (sword.fbx + sword_albedo.png ...)
     stem = _base_of(os.path.basename(path))
+    dirs_seen: set = set()
     for d in (base, os.path.join(base, "textures"), os.path.join(base, "Textures")):
-        if os.path.isdir(d):
+        if os.path.isdir(d) and ident(d) not in dirs_seen:
+            dirs_seen.add(ident(d))
             for n in os.listdir(d):
                 r = map_role(n)
                 if r and r[0] == stem:

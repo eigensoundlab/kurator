@@ -35,7 +35,11 @@ def env(tmp_path):
 
 
 def stored(tmp):
-    return sorted(str(p.relative_to(tmp / "bk")) for p in (tmp / "bk").rglob("*.png") if "_kurator" not in str(p))
+    return sorted(p.relative_to(tmp / "bk").as_posix() for p in (tmp / "bk").rglob("*.png") if "_kurator" not in str(p))
+
+
+def rel(p, lib):
+    return os.path.relpath(p, lib).replace("\\", "/")
 
 
 def test_identical_files_stored_once_and_restored_everywhere(env):
@@ -46,7 +50,7 @@ def test_identical_files_stored_once_and_restored_everywhere(env):
     assert p["bytes"] == os.path.getsize(lib / "a" / "dragon.png") + os.path.getsize(lib / "a" / "other.png")
     run_job(jobs, lambda: jobs.start_backup(s["id"]))
     assert stored(tmp) == ["Art/a/dragon.png", "Art/a/other.png"]
-    rows = {os.path.relpath(r["src_path"], lib): r["dest"] for r in db.cat.execute("SELECT * FROM backup_files")}
+    rows = {rel(r["src_path"], lib): r["dest"] for r in db.cat.execute("SELECT * FROM backup_files")}
     assert rows["b/dragon.png"] == rows["a/dragon.png"] == rows["c/dragon copy.png"]
     manifest = [json.loads(ln) for ln in (tmp / "bk" / "_kurator" / "manifest.jsonl").read_text().splitlines()]
     assert len(manifest) == 4
@@ -72,7 +76,7 @@ def test_editing_the_owner_keeps_the_others_safe(env):
     run_job(jobs, lambda: jobs.start_backup(s["id"]))
     assert (tmp / "bk" / "Art" / "a" / "dragon.png").read_bytes() == (lib / "a" / "dragon.png").read_bytes()
     assert (tmp / "bk" / "Art" / "b" / "dragon.png").read_bytes() == old    # the others got their own copy
-    r = {os.path.relpath(x["src_path"], lib): x["dest"] for x in db.cat.execute("SELECT * FROM backup_files")}
+    r = {rel(x["src_path"], lib): x["dest"] for x in db.cat.execute("SELECT * FROM backup_files")}
     assert r["c/dragon copy.png"] == r["b/dragon.png"] == "Art/b/dragon.png"
     p = backup.plan(db, s["id"])
     assert not [o for o in p["ops"] if o["op"] not in ("meta",)]
@@ -83,7 +87,7 @@ def test_editing_a_copy_and_retagging(env):
     s = backup.save_set(db, {"name": "T", "layout": "tags", "tag_template": "{tagpath}",
                              "targets": [{"location": str(tmp / "bk"), "reserve_gb": 0}]})
     dragons = tags.create_tag(db, "Dragons")["id"]
-    ids = {os.path.relpath(r[1], lib): r[0] for r in db.cat.execute("SELECT id, path FROM files")}
+    ids = {rel(r[1], lib): r[0] for r in db.cat.execute("SELECT id, path FROM files")}
     tags.apply(db, [ids["a/dragon.png"], ids["b/dragon.png"], ids["c/dragon copy.png"]], dragons, "add")
     run_job(jobs, lambda: jobs.start_backup(s["id"]))
     assert stored(tmp) == ["Dragons/dragon.png", "_untagged/Art/a/other.png"]
@@ -113,7 +117,7 @@ def test_mirror_keeps_a_copy_others_still_need(env):
     run_job(jobs, lambda: jobs.start_backup(s["id"]))
     # the stored copy isn't archived - b/ and c/ still need it; it moves to b/'s place instead
     assert stored(tmp) == ["Art/a/other.png", "Art/b/dragon.png"]
-    r = {os.path.relpath(x["src_path"], lib): x["dest"] for x in db.cat.execute("SELECT * FROM backup_files")}
+    r = {rel(x["src_path"], lib): x["dest"] for x in db.cat.execute("SELECT * FROM backup_files")}
     assert r == {"a/other.png": "Art/a/other.png", "b/dragon.png": "Art/b/dragon.png", "c/dragon copy.png": "Art/b/dragon.png"}
 
 

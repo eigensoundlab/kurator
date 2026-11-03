@@ -17,6 +17,9 @@ from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import __version__, assets, backup, dates, fileops, projects, rclone, rules, tags, xmp
+from . import similar as similar_mod
+from .sheets import SheetError
+from . import stacks as stacks_mod
 from .backup import BackupError
 from .backup_targets import TargetError
 from .db import Database
@@ -30,7 +33,7 @@ from .handlers import handler_for, supported_extensions, supported_types
 from .processing import THUMB_SIZES, process_file
 from .scanner import Scanner
 
-ITEM_COLS = "id, hash, color, date_ts, name, width, height, date_source, alpha, status, frames, tver"
+ITEM_COLS = "id, hash, color, date_ts, name, width, height, date_source, alpha, status, frames, tver, stack_id"
 SORTS = {
     "date": "date_ts {o}, id {o}",
     "name": "name COLLATE NOCASE {o}, id {o}",
@@ -207,6 +210,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.exception_handler(TargetError)
     @app.exception_handler(rclone.RcloneError)
     @app.exception_handler(projects.ProjectError)
+    @app.exception_handler(SheetError)
+    @app.exception_handler(stacks_mod.StackError)
     @app.exception_handler(assets.ExportError)
     @app.exception_handler(AIError)
     @app.exception_handler(AIUnavailable)
@@ -317,8 +322,15 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         project: int | None = None,
         member_of: int | None = None,
         dupes: bool = False,
+        similar: int = 0,
+        stacks: str = "collapse",
+        stack: int | None = None,
     ):
         where, args = [], []
+        if stack:   # the versions in one stack, oldest first
+            where.append("stack_id = ?")
+            args.append(stack)
+            sort, order = "date", "asc"
         if dupes:   # the same content in more than one place (exact copies), shown next to each other
             where.append("hash IN (SELECT hash FROM files WHERE hash IS NOT NULL AND status = 1 AND "
                          "root_id IN (SELECT id FROM roots WHERE kind = 'library') GROUP BY hash HAVING COUNT(*) > 1)")
@@ -380,7 +392,29 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             if profile:
                 args.append(profile)
         sql = (f"SELECT {ITEM_COLS} FROM files" + (" WHERE " + " AND ".join(where) if where else "") + f" ORDER BY {order_sql}")
-        out = _payload(db.cat.execute(sql, args))
+        if similar:   # groups of near-identical pictures, group after group (biggest first)
+            rows = db.cat.execute(sql, args).fetchall()
+            byid = {r[0]: r for r in rows}
+            ids = list(byid)
+            ph = []
+            for k in range(0, len(ids), 900):
+                chunk = ids[k:k + 900]
+                ph += db.cat.execute(f"SELECT id, phash FROM files WHERE id IN ({','.join('?' * len(chunk))})", chunk).fetchall()
+            gs = similar_mod.groups(ph, max(0, min(int(similar), 20)))
+            order = []
+            for gi, g in enumerate(gs):
+                g.sort(key=lambda i: -(byid[i][3] or 0))
+                order += [(i, gi) for i in g]
+            out = _payload([byid[i] for i, _ in order])
+            out["g"] = [gi for _, gi in order]
+            out["groups"] = len(gs)
+        elif stacks == "collapse" and not stack and not dupes:   # a version stack shows as one item
+            rows, sizes = stacks_mod.collapse(db, db.cat.execute(sql, args).fetchall(), 12)
+            out = _payload(rows)
+            if sizes:
+                out["k"] = [sizes.get(i, 0) for i in out["ids"]]
+        else:
+            out = _payload(db.cat.execute(sql, args))
         if member_of:   # "add from library" mode: which items are already in the active project
             mem = projects.member_ids(db, member_of)
             out["m"] = [1 if i in mem else 0 for i in out["ids"]]
@@ -430,6 +464,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         h = handler_for(out["ext"])
         out["viewable"] = bool(h and h.browser_viewable)
         out["tags"] = [r[0] for r in db.cat.execute("SELECT tag_id FROM file_tags WHERE file_id = ?", (item_id,))]
+        out["stack"] = stacks_mod.info(db, item_id)
         out["twins"] = [{"id": r[0], "path": r[1]} for r in db.cat.execute(   # the same file elsewhere
             "SELECT id, path FROM files WHERE hash = ? AND id != ? ORDER BY path LIMIT 50", (out["hash"], item_id))] if out["hash"] else []
         out["tag_sources"] = {str(r[0]): [r[1], r[2]] for r in db.cat.execute(
@@ -619,9 +654,72 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         exporter.cancel()
         return _json({"ok": True})
 
+    # -- contact sheets and joined images -------------------------------------------------
+    from . import sheets
+
+    def _num(v):
+        try:
+            return int(v) if v not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return None
+
+    @app.post("/api/sheets/contact")
+    def sheet_contact(body: dict):
+        pages = sheets.contact_sheet(
+            db, list(body.get("ids") or []), page=str(body.get("page") or "A4"), landscape=bool(body.get("landscape")),
+            dpi=max(72, min(_num(body.get("dpi")) or 150, 600)), width=_num(body.get("width")), height=_num(body.get("height")),
+            columns=_num(body.get("columns")) or 5, caption=str(body.get("caption") or "name"), title=str(body.get("title") or ""),
+            background=str(body.get("background") or "white"), page_numbers=body.get("page_numbers", True) is not False)
+        if body.get("preview"):
+            return Response(sheets.preview_png(pages[0]), media_type="image/png", headers={"X-Pages": str(len(pages)),
+                            "X-Size": f"{pages[0].width}x{pages[0].height}", "Cache-Control": "no-store"})
+        files = sheets.save_pages(pages, str(body.get("dest") or ""), str(body.get("name") or ""), str(body.get("format") or "pdf"),
+                                  max(72, min(_num(body.get("dpi")) or 150, 600)))
+        return _json({"files": files, "pages": len(pages)})
+
+    @app.post("/api/sheets/join")
+    def sheet_join(body: dict):
+        img = sheets.join(db, list(body.get("ids") or []), layout=str(body.get("layout") or "horizontal"),
+                          columns=_num(body.get("columns")) or 3, gap=_num(body.get("gap")) or 0,
+                          background=str(body.get("background") or "white"), transparent=bool(body.get("transparent")),
+                          size=str(body.get("size") or "smallest"), target_width=_num(body.get("target_width")),
+                          target_height=_num(body.get("target_height")))
+        if body.get("preview"):
+            return Response(sheets.preview_png(img), media_type="image/png",
+                            headers={"X-Size": f"{img.width}x{img.height}", "Cache-Control": "no-store"})
+        path = sheets.save_image(img, str(body.get("dest") or ""), str(body.get("name") or ""), str(body.get("format") or "png"))
+        return _json({"files": [path], "width": img.width, "height": img.height})
+
+    # -- version stacks --------------------------------------------------------------------
+    @app.post("/api/stacks")
+    def stack_make(body: dict):
+        ids = list(body.get("ids") or [])
+        if body.get("by_name"):
+            made = stacks_mod.by_name(db, ids)
+            return _json({"stacks": len(made)})
+        return _json({"stack": stacks_mod.make(db, ids)})
+
+    @app.post("/api/stacks/unstack")
+    def stack_unstack(body: dict):
+        return _json({"dissolved": stacks_mod.unstack(db, list(body.get("ids") or []))})
+
+    @app.post("/api/stacks/cover")
+    def stack_cover(body: dict):
+        stacks_mod.set_cover(db, int(body.get("id") or 0))
+        return _json({"ok": True})
+
+    # -- similar images ------------------------------------------------------------------
+    phash_fill = similar_mod.Backfill(db)
+
+    @app.get("/api/similar/status")
+    def similar_status():
+        """How many pictures still need a hash for "Similar images" (starts making them)."""
+        running = phash_fill.start()
+        return _json({"pending": phash_fill.pending(), "running": running, "done": phash_fill.done})
+
     # -- saved views ("smart folders"): a name for the grid's current filters -----------------
     VIEW_KEYS = {"folder", "recursive", "q", "ext", "sort", "order", "guessed", "tag", "exclude", "missing",
-                 "untagged", "project", "dupes", "suggested"}
+                 "untagged", "project", "dupes", "similar", "suggested"}
 
     @app.get("/api/views")
     def get_views():

@@ -86,6 +86,7 @@ export class Sidebar {
     if (q.ext) parts.push(String(q.ext).split(',').slice(0, 6).join(' '));
     if (q.q) parts.push(`"${q.q}"`);
     if (q.dupes) parts.push('duplicates');
+    if (q.similar) parts.push('similar images');
     if (q.guessed) parts.push('guessed dates');
     return parts.join(' · ') || 'everything';
   }
@@ -170,6 +171,9 @@ export class Sidebar {
     if (dupes) rows.push(el('div', { class: 'node' + (this.app.query.dupes ? ' active' : ''), title: 'The same file in more than one folder (exact copies), shown next to each other',
       onclick: () => this.app.setDupes(!this.app.query.dupes) },
     el('span', { class: 'tw', text: '⧉' }), el('span', { class: 'nm', text: 'Duplicates' }), el('span', { class: 'ct', text: fmtNum(dupes) })));
+    rows.push(el('div', { class: 'node' + (this.app.query.similar ? ' active' : ''), title: 'Pictures that look nearly the same: resized, re-saved, slightly edited, exported twice…',
+      onclick: () => this.app.setSimilar(this.app.query.similar ? 0 : 8) },
+    el('span', { class: 'tw', text: '≈' }), el('span', { class: 'nm', text: 'Similar images' })));
     for (const r of byParent.get('') || []) rows.push(...build(r, 0));
     if (!this.nodes.length) rows.push(el('div', { class: 'p-hint small', text: 'Add a folder with your images below, or open any folder under Browse.' }));
     this.libTree.replaceChildren(...rows);

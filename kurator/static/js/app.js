@@ -7,6 +7,7 @@
 
 import { api } from './api.js';
 import { openAIDialog } from './aidlg.js';
+import { Compare } from './compare.js';
 import { openDialog } from './dialog.js';
 import { openBackupDialog } from './backupdlg.js';
 import { Grid } from './grid.js';
@@ -15,6 +16,7 @@ import { Panel } from './panel.js';
 import { Projects } from './projects.js';
 import { openRulesDialog } from './rulesdlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
+import { openSheetsDialog } from './sheetsdlg.js';
 import { Sidebar } from './sidebar.js';
 import { Tags } from './tags.js';
 import { TypeFilter } from './typefilter.js';
@@ -41,6 +43,8 @@ class App {
       untagged: false,
       missing: '',
       suggested: false,
+      stacks: prefs.get('stacks', 'collapse'),
+      stack: '',
     };
     this.aiView = null;  // {kind: 'search', q} | {kind: 'similar', id, name}
     this.animateOnHover = prefs.get('animHover', true);
@@ -73,6 +77,7 @@ class App {
     this.sidebar = new Sidebar($('#sidebar'), this);
     this.viewer = new Viewer(this);
     this.projects = new Projects(this);
+    this.comparer = new Compare(this);
     this.grid.setOptions({ size: prefs.get('size', 170), fit: prefs.get('fit', 'contain'), labels: prefs.get('labels', false) });
 
     this.buildToolbar();
@@ -261,7 +266,7 @@ class App {
   viewQuery() {
     const q = this.query;
     return { folder: q.folder, recursive: q.recursive, q: q.q, ext: q.ext, sort: q.sort, order: q.order, guessed: q.guessed,
-      tag: q.tag, exclude: q.exclude, missing: q.missing, project: this.projects.active || '', dupes: q.dupes };
+      tag: q.tag, exclude: q.exclude, missing: q.missing, project: this.projects.active || '', dupes: q.dupes, similar: q.similar };
   }
 
   saveView() {
@@ -284,7 +289,7 @@ class App {
     const q = v.query || {};
     Object.assign(this.query, { folder: q.folder || null, recursive: q.recursive ?? this.query.recursive, q: q.q || '', ext: q.ext || '',
       sort: q.sort || this.query.sort, order: q.order || this.query.order, guessed: !!q.guessed, tag: q.tag || '', exclude: q.exclude || '',
-      missing: q.missing || '', dupes: !!q.dupes, untagged: false, suggested: false });
+      missing: q.missing || '', dupes: !!q.dupes, similar: +q.similar || 0, untagged: false, suggested: false });
     prefs.set('folder', this.query.folder);
     this.typeFilter.setSelected?.(this.query.ext);
     const s = $('#search');
@@ -299,9 +304,76 @@ class App {
     this.sidebar.renderViews();
   }
 
+  /** Similar images: groups of near-identical pictures (dist = how many of 64 bits may differ). */
+  async setSimilar(dist) {
+    this.query.similar = dist;
+    if (dist) {
+      this.query.dupes = false;
+      if (this.query.folder && !this.isLibraryPath(this.query.folder)) this.leaveFolder();
+      const wait = async () => {
+        let st;
+        try { st = await api.similarStatus(); } catch { return; }
+        if (!this.query.similar) return;
+        if (st.pending) {
+          this.toast(`Preparing ${fmtNum(st.pending)} pictures for comparison…`, 1600);
+          setTimeout(wait, 1500);
+          this._similarWaited = true;
+        } else if (this._similarWaited) { this._similarWaited = false; this.reload(); }
+      };
+      wait();
+    }
+    this.sidebar.renderLibrary();
+    this.onFilterChanged();
+  }
+
+  /** Compare the 2-4 selected images (or the focused one with the selected one). */
+  compare() {
+    const idx = [...this.selected].map((id) => this.indexOf(id)).filter((i) => i >= 0);
+    if (idx.length === 1 && this.focusIndex >= 0 && !idx.includes(this.focusIndex)) idx.unshift(this.focusIndex);
+    if (idx.length < 2) { this.toast('Select 2 to 4 images to compare'); return; }
+    if (idx.length > 4) { this.toast('Compare works with up to 4 images - select fewer'); return; }
+    idx.sort((a, b) => a - b);
+    this.comparer.open(idx);
+  }
+
+  // ----------------------------------------------------------- version stacks
+  async stackSelection(byName = false) {
+    const ids = this.tagTargets();
+    if (ids.length < 2) { this.toast('Select two or more versions first'); return; }
+    try {
+      const r = await api.stack(ids, byName);
+      this.toast(byName ? (r.stacks ? `${fmtNum(r.stacks)} stacks made from the names` : 'No versions found by name') : 'Stacked - the newest is shown on top');
+      this.reload();
+    } catch (e) { this.toast(e.message); }
+  }
+
+  async unstackSelection() {
+    const ids = this.tagTargets();
+    try { const r = await api.unstack(ids); this.toast(r.dissolved ? `Unstacked ${fmtNum(r.dissolved)}` : 'Not in a stack'); this.reload(); } catch (e) { this.toast(e.message); }
+  }
+
+  /** Show all versions of a stack (by stack id, or of the stack a file is in). */
+  async openStack(stackId, name, fileId) {
+    if (stackId == null && fileId != null) {
+      try { stackId = (await api.item(fileId)).stack?.id; } catch { return; }
+    }
+    if (!stackId) return;
+    this.query.stack = stackId;
+    this.stackName = name;
+    this.onFilterChanged();
+  }
+
+  setStacks(collapse) {
+    this.query.stacks = collapse ? 'collapse' : 'expand';
+    prefs.set('stacks', this.query.stacks);
+    this.stacksBtn?.classList.toggle('on', collapse);
+    this.reload({ keepScroll: true });
+  }
+
   /** Exact duplicates: files whose content exists in more than one place, next to each other. */
   setDupes(on) {
     this.query.dupes = on;
+    if (on) this.query.similar = 0;
     if (on && this.query.folder) this.leaveFolder();
     this.sidebar.renderLibrary();
     this.onFilterChanged();
@@ -311,6 +383,8 @@ class App {
     this.query.tag = '';
     this.query.exclude = '';
     this.query.dupes = false;
+    this.query.similar = 0;
+    this.query.stack = '';
     this.query.untagged = false;
     this.query.missing = '';
     this.query.suggested = false;
@@ -655,6 +729,13 @@ class App {
 
     scroller.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      const badge = e.target.closest?.('.stackbadge');
+      if (badge) {   // a version stack: show its versions
+        const i = +badge.parentElement.dataset.i;
+        e.preventDefault();
+        this.openStack(null, this.items.n[i], this.items.ids[i]);
+        return;
+      }
       const play = e.target.closest?.('.play');
       if (play) {   // the ▶ on a sound: play/stop without touching the selection
         const i = +play.parentElement.dataset.i;
@@ -780,6 +861,7 @@ class App {
         if (e.key === 'Escape') e.target.blur();
         return;
       }
+      if (this.comparer.isOpen) { if (this.comparer.onKey(e)) e.preventDefault(); return; }
       if (this.viewer.isOpen) {
         if (e.key === ' ' && !e.ctrlKey && this.viewer.quick && spaceDown) { e.preventDefault(); return; }
         if (this.viewer.onKey(e)) e.preventDefault();
@@ -807,6 +889,8 @@ class App {
       else if ((k === 's' || k === 'S') && !ctrl) { if (fi >= 0) this.setAIView({ kind: 'similar', id: this.items.ids[fi], name: this.items.n[fi] }); }
       else if ((k === 'o' || k === 'O') && !ctrl) { if (fi >= 0) api.open(this.items.ids[fi]).catch((er) => this.toast(er.message)); }
       else if (k === 'Enter') this.openViewer(fi);
+      else if (ctrl && (k === 'g' || k === 'G')) { if (e.shiftKey) this.unstackSelection(); else this.stackSelection(); }
+      else if ((k === 'c' || k === 'C') && !ctrl) this.compare();
       else if ((k === 'x' || k === 'X') && !ctrl) { if (fi >= 0) this.toggleSelect(fi); }
       else if (ctrl && (k === 'a' || k === 'A')) this.selectAll();
       else if (ctrl && (k === 'i' || k === 'I')) this.invertSelection();
@@ -819,6 +903,7 @@ class App {
       else if ((k === 't' || k === 'T') && !ctrl) this.tags.quickTag();
       else if (k === 'M' && e.shiftKey && !ctrl) openRulesDialog(this);
       else if ((k === 'b' || k === 'B') && !ctrl) openBackupDialog(this);
+      else if ((k === 'j' || k === 'J') && !ctrl) openSheetsDialog(this);
       else if ((k === 'm' || k === 'M') && !ctrl) this.moveDialog();
       else if ((k === 'r' || k === 'R') && !ctrl) { this.reload(); this.toast('Refreshed'); }
       else if (k === 'Backspace' || (e.altKey && k === 'ArrowUp')) { const p = this.query.folder && this.parentOf(this.query.folder); if (p) this.openPath(p); }
@@ -885,6 +970,8 @@ class App {
     paintFit();
     fit.onclick = () => { const f = this.grid.fit === 'cover' ? 'contain' : 'cover'; prefs.set('fit', f); this.grid.setOptions({ fit: f }); paintFit(); };
 
+    this.stacksBtn = el('button', { class: 'btn' + (this.query.stacks === 'collapse' ? ' on' : ''), text: 'Stacks', title: 'Show version stacks as one item (newest on top). Ctrl+G stacks the selection, Ctrl+Shift+G unstacks.',
+      onclick: () => this.setStacks(this.query.stacks !== 'collapse') });
     const labels = el('button', { class: 'btn', title: 'Show file names', text: 'Names' });
     labels.classList.toggle('on', this.grid.labels);
     labels.onclick = () => { const v = !this.grid.labels; prefs.set('labels', v); this.grid.setOptions({ labels: v }); labels.classList.toggle('on', v); };
@@ -896,7 +983,7 @@ class App {
     anim.onclick = () => { this.animateOnHover = !this.animateOnHover; prefs.set('animHover', this.animateOnHover); anim.classList.toggle('on', this.animateOnHover); };
 
     bar.append(el('div', { class: 'brand', text: 'Kurator' }), this.projects.wrap, search, type, dates, sort, order, rec,
-      el('div', { class: 'spacer' }), this.sizeInput, fit, labels, anim, rescan,
+      el('div', { class: 'spacer' }), this.sizeInput, fit, labels, this.stacksBtn, anim, rescan,
       el('button', { class: 'btn', title: 'Back up to other disks, restore', text: 'Backup', onclick: () => openBackupDialog(this) }),
       el('button', { class: 'btn', title: 'AI tagging from tag pools, search by description, similar images', text: 'AI', onclick: () => openAIDialog(this) }),
       el('button', { class: 'btn icon', title: 'Settings: XMP sidecars, keyword import', text: '⚙', onclick: () => openSettingsDialog(this) }), help);
@@ -926,6 +1013,7 @@ class App {
       el('button', { class: 'btn small', text: 'Clear', title: 'Clear selection (Esc)', onclick: () => this.clearSelection() }),
       this.showSelBtn,
       el('button', { class: 'btn small', text: 'Undo', title: 'Undo last change - selection, tags or move (Ctrl+Z)', onclick: () => this.undo() }),
+      el('button', { class: 'btn small', text: 'Join / sheet…', title: 'Join the selected images into one, or make a contact sheet (J)', onclick: () => openSheetsDialog(this) }),
       el('button', { class: 'btn small', text: 'Rules…', title: 'Move files into folders by tag (Shift+M)', onclick: () => openRulesDialog(this) }),
       el('button', { class: 'btn small primary', text: 'Move to…', title: 'Move the selected files to a folder (M)', onclick: () => this.moveDialog() }));
     this.toastEl = el('div', { class: 'toast' });
@@ -1032,6 +1120,16 @@ class App {
         text: `− Remove ${fmtNum(this.selected.size)} from ${t.name.split('/').pop()}`,
         onclick: () => this.applyTag(t.id, { op: 'remove', targets: [...this.selected] }).then(() => this.renderPathBar()) }));
     }
+    if (q.similar) {
+      const lvl = el('select', { title: 'How alike pictures must be' },
+        [['4', 'nearly identical'], ['8', 'very similar'], ['12', 'similar']].map(([v, t]) => el('option', { value: v, text: t })));
+      lvl.value = String(q.similar);
+      lvl.onchange = () => { this.query.similar = +lvl.value; this.reload({ keepScroll: false }); };
+      filters.push(el('span', { class: 'chip small' }, el('span', { text: `≈ Similar images${this.items.groups != null ? ` · ${fmtNum(this.items.groups)} groups` : ''}` }), lvl,
+        el('span', { class: 'x', text: '×', onclick: () => this.setSimilar(0) })));
+    }
+    if (q.stack) filters.push(el('span', { class: 'chip small' }, el('span', { text: `▤ Versions of ${this.stackName || 'stack'}` }),
+      el('span', { class: 'x', text: '×', onclick: () => { this.query.stack = ''; this.onFilterChanged(); } })));
     if (q.dupes) filters.push(el('span', { class: 'chip small' }, el('span', { text: '⧉ Duplicates' }), el('span', { class: 'x', text: '×', onclick: () => this.setDupes(false) })));
     if (q.untagged) filters.push(el('span', { class: 'chip small' }, el('span', { text: 'Untagged' }), el('span', { class: 'x', text: '×', onclick: () => this.setUntagged(false) })));
     if (q.missing) {
@@ -1054,7 +1152,7 @@ class App {
     if (this.aiView) filters.push(el('span', { class: 'chip small ai' }, el('span', { text: this.aiView.kind === 'search' ? `AI search: ${this.aiView.q}` : `Similar to ${this.aiView.name}` }),
       el('span', { class: 'x', text: '×', onclick: () => this.setAIView(null) })));
     right.push(el('button', { class: 'btn small', text: '☆ Save view', title: 'Remember these filters (folder, tags, types, project, sort) in the sidebar', onclick: () => this.saveView() }));
-    if (filters.length || q.q || q.missing || q.exclude || q.dupes) right.push(el('button', { class: 'btn small', text: 'Clear filters', onclick: () => this.clearFilters() }));
+    if (filters.length || q.q || q.missing || q.exclude || q.dupes || q.similar || q.stack) right.push(el('button', { class: 'btn small', text: 'Clear filters', onclick: () => this.clearFilters() }));
     right.push(el('button', { class: 'btn small', text: '⟳', title: 'Refresh the list (R) - drops items that no longer match the filter', onclick: () => this.reload() }));
     this.pathbar.replaceChildren(el('div', { class: 'crumbs' }, ...left), ...filters, el('div', { class: 'spacer' }), ...right);
   }
@@ -1089,6 +1187,11 @@ class App {
       ['Export… (path bar)', 'Copy the open project into a Unity / Godot / Unreal folder, models with their textures'],
       ['☆ Save view', 'Remember the current filters under a name (sidebar: Saved views)'],
       ['Duplicates (sidebar)', 'Files whose exact content is in more than one place'],
+      ['Similar images (sidebar)', 'Groups of pictures that look nearly the same'],
+      ['J', 'Join the selected images (side by side, stacked, grid) or make a contact sheet'],
+      ['Ctrl+G · Ctrl+Shift+G', 'Stack the selection as versions (newest on top) · unstack'],
+      ['▤ on a thumbnail', 'A version stack: click to see all versions'],
+      ['C', 'Compare 2–4 selected images side by side, zooming together (S in compare: swipe A/B)'],
       ['Click a tag', 'Everything with it (in the whole library, or in the open project)'],
       ['Ctrl+click · Alt+click', 'Narrow the current view (e.g. a tag in this folder) · hide items with it'],
       ['M', 'Move selection to a folder (with preview, keeps dates, undoable)'],

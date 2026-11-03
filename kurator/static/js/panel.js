@@ -153,7 +153,17 @@ export class Panel {
       if (Object.keys(t).length) parts.push(section('Text chunks', kvTable(t)));
     }
     if (m.xmp) parts.push(section('XMP', pre(m.xmp)));
-    this.relBox = el('div');
+    this.relInner = el('div');
+    this.relBox = el('div', {}, this.relInner);
+    if (d.stack) {   // versions: oldest -> newest
+      const st = d.stack;
+      this.relBox.prepend(el('div', { class: 'rel' }, el('span', { class: 'tb-group', text: `Versions (${st.members.length})` }),
+        st.members.map((mb, k) => el('button', { class: 'chip small' + (mb.id === d.id ? ' full' : ''), type: 'button', title: `${mb.name}${mb.id === st.cover ? ' · shown on top' : ''}`,
+          onclick: () => { const i = this.app.indexOf(mb.id); if (i >= 0) this.app.setFocus(i); else this.app.openStack(st.id, d.name); } },
+        el('span', { text: `${k + 1}${mb.id === st.cover ? ' ▲' : ''}` }))),
+        el('button', { class: 'chip small add', text: 'all versions', onclick: () => this.app.openStack(st.id, d.name) }),
+        d.id !== st.cover ? el('button', { class: 'chip small add', text: 'put on top', onclick: () => api.stackCover(d.id).then(() => this.app.reload()) }) : null));
+    }
     parts.splice(parts.indexOf(this.tagBox) + 1, 0, this.relBox);   // texture set / what a model uses, under the tags
     setKids(this.body, ...parts);
     this.loadRelated(d);
@@ -164,7 +174,7 @@ export class Panel {
   async loadRelated(d) {
     let r;
     try { r = await api.related(d.id); } catch { return; }
-    if (this.detail !== d || !this.relBox) return;
+    if (this.detail !== d || !this.relInner) return;
     const app = this.app;
     const go = (id, name) => {
       if (id == null) return;
@@ -180,7 +190,7 @@ export class Panel {
       r.uses.map((u) => chip(u, u.role ? `${u.role}: ${u.name}` : u.name))));
     if (r.models?.length) rows.push(el('div', { class: 'rel' }, el('span', { class: 'tb-group', text: 'Used by' }),
       r.models.map((m) => chip(m, m.name))));
-    setKids(this.relBox, rows);
+    setKids(this.relInner, rows);
   }
 
   /** Small player for sounds: play/stop, seek, time. One shared audio element (app.audio). */
@@ -274,6 +284,10 @@ export class Panel {
       el('div', { class: 'p-selhead' }, el('b', { text: `${fmtNum(n)} selected` }),
         visible < n ? el('span', { class: 'muted', text: ` · ${fmtNum(n - visible)} hidden by filter` }) : null),
       lo <= hi ? el('div', { class: 'muted', text: lo === hi ? fmtDate(lo) : `${fmtDate(lo)} – ${fmtDate(hi)}` }) : null,
-      strip);
+      strip,
+      el('div', { class: 'p-actions' },
+        el('button', { class: 'btn small', text: 'Stack as versions', title: 'Show these as one item, the newest on top (Ctrl+G)', onclick: () => app.stackSelection() }),
+        el('button', { class: 'btn small', text: 'Stack by name', title: 'Find versions by their names (hero_sketch, hero_lineart, hero_v2…) and stack each group', onclick: () => app.stackSelection(true) }),
+        n <= 4 ? el('button', { class: 'btn small', text: 'Compare', title: 'Side by side, zoom together (C)', onclick: () => app.compare() }) : null));
   }
 }

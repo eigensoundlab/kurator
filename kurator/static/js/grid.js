@@ -180,7 +180,8 @@ export class Grid {
     img.onerror = () => { if (img.getAttribute('src')) cell.classList.add('broken'); };
     const th = el('div', { class: 'th' }, img);
     cell = el('div', { class: 'cell' }, th, el('div', { class: 'ext' }), el('div', { class: 'check' }), el('div', { class: 'label' }), el('div', { class: 'dots' }),
-      el('button', { class: 'play', type: 'button', title: 'Play / stop (Space)', tabindex: '-1' }));
+      el('button', { class: 'play', type: 'button', title: 'Play / stop (Space)', tabindex: '-1' }),
+      el('button', { class: 'stackbadge', type: 'button', title: 'Versions - click to see them all', tabindex: '-1' }));
     cell._img = img; cell._th = th; cell._ext = cell.children[1]; cell._label = cell.children[3]; cell._dots = cell.children[4];
     this.layer.append(cell);
     return cell;
@@ -236,7 +237,11 @@ export class Grid {
     cell.classList.toggle('focus', i === app.focusIndex);
     cell.classList.toggle('dim', !app.matchesFilter(i));
     cell.classList.toggle('playing', id === app.playingId);
-    cell.classList.toggle('member', !!this.items.m?.[i]);   // "add from library": already in the project
+    cell.classList.toggle('member', !!this.items.m?.[i]);
+    const k = this.items.k?.[i] || 0;
+    cell.classList.toggle('stacked', k > 1);
+    if (k > 1) cell.lastChild.textContent = `▤ ${k}`;
+    cell.classList.toggle('gB', !!(this.items.g && this.items.g[i] % 2));   // "similar images": every other group tinted   // "add from library": already in the project
     this.paintTags(cell, i);
   }
 

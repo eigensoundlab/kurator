@@ -2,6 +2,17 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.10.0 – similar images, version stacks, compare, join and contact sheets
+- **Similar images:** groups of near-identical pictures (resized, re-saved, slightly edited), three
+  strictness levels, inside any folder, project or filter.
+- **Version stacks:** sketch → lineart → colour shown as one item; Ctrl+G, *Stack by name*, ▤ to see
+  all versions, *put on top*.
+- **Compare** 2–4 images with synced zoom and pan, plus an A/B swipe view.
+- **Join images** (horizontal, vertical, grid; target size, gap, background) and **contact sheets**
+  (PDF or PNG/JPEG pages; page sizes, columns, captions, title), with a live preview.
+- Fixes for the test suite on macOS and Windows (case-insensitive disks, path separators); Blender
+  conversion uses a script file instead of a long command line.
+
 ## 0.9.0 – export to games, texture sets, duplicates
 - **Project export** into Unity, Godot or Unreal folder layouts (or by type); models bring their
   textures and materials at the same relative paths; re-runs copy only what changed.
