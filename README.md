@@ -16,7 +16,8 @@ and metadata**.
 
 ## Install and run
 
-You need **Python 3.10+** (3.12+ recommended; on Windows it's needed to read file creation dates).
+You need **Python 3.11+** (3.12+ recommended; on Windows it's needed to read file creation dates).
+Python 3.10 reached its end of life in October 2026 and is no longer supported.
 Kurator installs into its **own virtual environment** in `.venv`, so your system Python and its
 packages are never touched.
 
