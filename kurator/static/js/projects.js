@@ -9,7 +9,7 @@
 
 import { api } from './api.js';
 import { openDialog } from './dialog.js';
-import { el, fmtNum, prefs, setKids } from './util.js';
+import { el, fmtBytes, fmtNum, prefs, setKids } from './util.js';
 
 export class Projects {
   constructor(app) {
@@ -76,15 +76,17 @@ export class Projects {
   }
 
   /** Make a project the top filter. */
-  activate(id, { mode = 'in' } = {}) {
+  activate(id, { mode = 'in', keepFilters = false } = {}) {
     if (this.active === id && this.mode === mode) return;
     this.active = id;
     this.mode = mode;
     prefs.set('project.id', id);
     prefs.set('project.mode', mode);
     const q = this.app.query;
-    q.tag = ''; q.exclude = ''; q.missing = ''; q.untagged = false;   // start from the whole project
-    if (q.folder) this.app.leaveFolder();
+    if (!keepFilters) {
+      q.tag = ''; q.exclude = ''; q.missing = ''; q.untagged = false;   // start from the whole project
+      if (q.folder) this.app.leaveFolder();
+    }
     this.changed();
   }
 
@@ -119,7 +121,8 @@ export class Projects {
       el('span', { class: 'x', text: '×', title: 'Leave the project (whole library)', onclick: (e) => { e.stopPropagation(); this.leave(); } })),
     el('span', { class: 'segs' }, seg('in', 'In project', 'Only the files of this project'),
       seg('add', 'Add from library', 'The whole library; files already in the project are marked ◆. Select and press + (or drag onto the project) to add.')),
-    el('button', { class: 'btn small', text: 'Edit…', title: 'Name, colour, and what the project includes automatically', onclick: () => this.edit(p.id) })];
+    el('button', { class: 'btn small', text: 'Edit…', title: 'Name, colour, and what the project includes automatically', onclick: () => this.edit(p.id) }),
+    el('button', { class: 'btn small', text: 'Export…', title: 'Copy the project into a game folder (Unity, Godot, Unreal…), with the textures its models use', onclick: () => this.exportDialog(p.id) })];
   }
 
   /** + / − keys and the path-bar button. */
@@ -148,6 +151,76 @@ export class Projects {
         : `${fmtNum(ids.length)} are included automatically - change that with Edit… on the project`, 3500);
     }
     this.refresh();
+  }
+
+  /** Copy the project (or the selection) into a game project's folder layout. Never moves anything. */
+  async exportDialog(id) {
+    const app = this.app;
+    const p = this.list.find((x) => x.id === id);
+    if (!p) return;
+    let presets = {};
+    try { presets = await api.exportPresets(); } catch (e) { app.toast(e.message); return; }
+    const saved = prefs.get(`export.${id}`, {});
+    const dest = el('input', { type: 'text', value: saved.dest || '', placeholder: 'Your game project folder, e.g. D:\\Games\\MyGame', spellcheck: 'false' });
+    const preset = el('select', {}, Object.entries(presets).map(([k, label]) => el('option', { value: k, text: label })));
+    preset.value = saved.preset || 'unity';
+    const bySubj = el('input', { type: 'checkbox' }); bySubj.checked = !!saved.by_subject;
+    const comps = el('input', { type: 'checkbox' }); comps.checked = saved.companions !== false;
+    const nSel = app.selected.size;
+    const onlySel = el('input', { type: 'checkbox', disabled: !nSel });
+    const out = el('div', { class: 'move-preview' });
+    const body = () => ({ project: id, dest: dest.value.trim(), preset: preset.value, by_subject: bySubj.checked,
+      companions: comps.checked, ids: onlySel.checked ? [...app.selected] : undefined });
+    const remember = () => prefs.set(`export.${id}`, { dest: dest.value.trim(), preset: preset.value, by_subject: bySubj.checked, companions: comps.checked });
+    let planned = null;
+    const preview = async () => {
+      setKids(out, el('div', { class: 'p-hint small', text: 'Planning…' }));
+      try { planned = await api.exportPlan(body()); } catch (e) { planned = null; setKids(out, el('div', { class: 'err', text: e.message })); d.buttons.Export.disabled = true; return; }
+      const c = planned.counts;
+      const label = { image: 'images', texture: 'textures', model: 'models', companion: 'textures/materials with models', audio: 'sounds', video: 'videos', source: 'work files', docs: 'documents' };
+      setKids(out,
+        el('div', { class: 'move-sum' }, el('b', { text: planned.copy ? `${fmtNum(planned.copy)} files to copy (${fmtBytes(planned.bytes)})` : 'Everything is already exported ✓' }),
+          el('div', { class: 'muted small', text: Object.entries(c).map(([k, v]) => `${fmtNum(v)} ${label[k] || k}`).join(' · ') + (planned.unchanged ? ` · ${fmtNum(planned.unchanged)} unchanged` : '') }),
+          el('div', { class: 'muted small', text: `into ${planned.dest}${planned.dest.includes('\\') ? '\\' : '/'}${planned.root}` })),
+        el('div', { class: 'mv-list' }, planned.examples.slice(0, 200).map((e) => el('div', { class: 'mv' + (e.skip ? ' muted' : '') }, el('span', { class: 'to', text: `${e.skip ? '=' : '+'} ${e.rel}` })))));
+      d.buttons.Export.disabled = !planned.copy;
+    };
+    for (const x of [dest, preset, bySubj, comps, onlySel]) x.addEventListener('change', () => { d.buttons.Export.disabled = true; setKids(out, el('div', { class: 'p-hint small', text: 'Press Preview to see what will be copied.' })); });
+    const d = openDialog({
+      title: `Export "${p.name}"`, width: 720,
+      body: el('div', { class: 'projdlg' },
+        el('div', { class: 'p-hint small', text: 'Copies the project\'s files into a game project, sorted by type. Models get the materials and textures they reference, at the same relative paths, so they import with their textures. Run it again later: only new or changed files are copied. Nothing in your library is moved or changed.' }),
+        el('label', {}, 'Destination folder', dest),
+        el('label', {}, 'Layout', preset),
+        el('label', { class: 'chk' }, bySubj, 'Subfolders by subject (e.g. Sprites/Creatures/Dragons)'),
+        el('label', { class: 'chk' }, comps, 'Bring the textures and materials that models use'),
+        el('label', { class: 'chk' }, onlySel, nSel ? `Only the ${fmtNum(nSel)} selected files` : 'Only the selected files (select some first)'),
+        out),
+      buttons: [{ label: 'Close' }, { label: 'Preview', onClick: () => { remember(); preview(); } },
+        { label: 'Export', primary: true, disabled: true, onClick: async () => {
+          remember();
+          try { await api.exportRun(body()); } catch (e) { setKids(out, el('div', { class: 'err', text: e.message })); return; }
+          d.buttons.Export.disabled = true;
+          const bar = el('div', { class: 'pbar' }, el('span'));
+          const line = el('div', { class: 'small' });
+          setKids(out, bar, line);
+          const tick = async () => {
+            let st;
+            try { st = await api.exportJob(); } catch { return; }
+            bar.firstChild.style.width = `${st.total ? Math.round((100 * st.done) / st.total) : 100}%`;
+            line.textContent = `${fmtNum(st.done)} / ${fmtNum(st.total)} files · ${fmtBytes(st.bytes_done)}`;
+            if (st.running) { setTimeout(tick, 400); return; }
+            const r = st.result || {};
+            setKids(out, el('div', { class: r.failed ? 'err' : 'ok', text: `${r.cancelled ? 'Stopped' : 'Done'}: ${fmtNum(r.copied)} copied, ${fmtNum(r.unchanged)} unchanged${r.failed ? `, ${r.failed} failed` : ''}` }),
+              el('div', { class: 'small' }, 'Folder: ', el('code', { text: r.folder || '' }),
+                el('button', { class: 'btn small', text: 'Copy path', onclick: () => navigator.clipboard?.writeText(r.folder || '') })),
+              st.errors?.length ? el('div', { class: 'err small', text: st.errors.slice(0, 5).join(' · ') }) : null);
+          };
+          tick();
+        } }],
+    });
+    if (dest.value) preview();
+    return d;
   }
 
   /** New project, or edit one: name, colour, and live sources (tags, folders, other projects). */

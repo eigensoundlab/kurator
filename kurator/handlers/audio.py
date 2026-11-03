@@ -74,21 +74,27 @@ def _decode(data: bytes, ext: str):
     return None, None, None, None
 
 
+LONG_SOUND = 30.0   # seconds: longer sounds (music, ambiences) get warm orange waveforms, effects stay blue
+_BLUE = ((70, 98, 168), (140, 176, 255), (122, 162, 255))
+_ORANGE = ((168, 92, 36), (255, 172, 92), (250, 150, 70))
+
+
 def _waveform(peaks: list[float], duration: float | None, size: int = 512, rms: list[float] | None = None) -> Image.Image:
     w, h = size, size // 2
     img = Image.new("RGB", (w, h), (28, 31, 38))
     d = ImageDraw.Draw(img)
     mid = h / 2
     d.line([(0, mid), (w, mid)], fill=(55, 60, 72))
+    pal = _ORANGE if (duration or 0) >= LONG_SOUND else _BLUE
     if peaks:
         n = len(peaks)
         for x in range(w):
             k = min(n - 1, int(x * n / w))
             y = max(1.0, peaks[k] * (h * 0.42))
-            d.line([(x, mid - y), (x, mid + y)], fill=(70, 98, 168) if rms else (122, 162, 255))
+            d.line([(x, mid - y), (x, mid + y)], fill=pal[0] if rms else pal[2])
             if rms:  # loudness body inside the peak outline, like most audio editors
                 r = max(1.0, rms[min(len(rms) - 1, k)] * (h * 0.42))
-                d.line([(x, mid - r), (x, mid + r)], fill=(140, 176, 255))
+                d.line([(x, mid - r), (x, mid + r)], fill=pal[1])
     if duration:
         m, s = divmod(int(round(duration)), 60)
         label = f"{m}:{s:02d}" if duration >= 1 else f"{duration:.2f}s"
@@ -159,6 +165,8 @@ def load(data: bytes, path: str, target: int | None) -> Loaded:
             meta["samplerate"] = int(sr)
     meta["peaks"] = peaks
     img = _waveform(peaks, meta.get("duration"), rms=meta.get("rms_env"))
+    if (meta.get("duration") or 0) >= LONG_SOUND:
+        meta["long"] = True
     return Loaded(img, meta, found, None)
 
 

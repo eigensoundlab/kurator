@@ -182,3 +182,40 @@ def test_scanner_stops_quickly(tmp_path):
     assert time.time() - t < 8
     pending = db.cat.execute("SELECT COUNT(*) FROM files WHERE status = 0").fetchone()[0]
     assert pending > 0   # left for the next start
+
+
+def test_blend_3d_view_through_blender(samples, tmp_path, monkeypatch):
+    """With Blender installed, .blend files open in the 3D viewer (converted once to a cached GLB).
+    A stand-in 'blender' checks that scripts in the file can't run (--disable-autoexec)."""
+    import stat
+    import sys
+    folder, _ = samples
+    glb = os.path.join(folder, "scene.glb")
+    fake = tmp_path / "blender"
+    log = tmp_path / "calls.txt"
+    fake.write_text(f"""#!{sys.executable}
+import shutil, sys
+a = sys.argv[1:]
+open({str(log)!r}, "a").write(" ".join(a[:4]) + "\\n")
+assert "--disable-autoexec" in a and "--factory-startup" in a and "--background" in a
+assert a.index("--disable-autoexec") < a.index("--python-expr")
+shutil.copy({glb!r}, a[a.index("--") + 1])
+""")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("KURATOR_BLENDER", str(fake))
+    db = Database(str(tmp_path / "data"))
+    rid = db.add_root(folder, "library")
+    sc = Scanner(db, workers=1)
+    sc.walk_root(rid, folder)
+    from kurator.processing import process_file
+    db.store_results([process_file(r[0], (256,)) for r in db.cat.execute("SELECT path FROM files WHERE name = 'scene.blend'")])
+    c = TestClient(create_app(db, sc, 8765), base_url=BASE)
+    assert "blend" in c.get("/api/state").json()["types"]["meshes"]
+    bid = db.cat.execute("SELECT id FROM files WHERE name = 'scene.blend'").fetchone()[0]
+    for _ in range(2):
+        body = c.get(f"/api/mesh/{bid}").content
+        assert body[:4] == b"KMSH"
+    assert len(log.read_text().splitlines()) == 1          # converted once, then cached
+    monkeypatch.setenv("KURATOR_BLENDER", "off")
+    c2 = TestClient(create_app(db, sc, 8765), base_url=BASE)
+    assert "blend" not in c2.get("/api/state").json()["types"]["meshes"]

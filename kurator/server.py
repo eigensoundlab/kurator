@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from importlib import resources
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import __version__, backup, dates, fileops, projects, rclone, rules, tags, xmp
+from . import __version__, assets, backup, dates, fileops, projects, rclone, rules, tags, xmp
 from .backup import BackupError
 from .backup_targets import TargetError
 from .db import Database
@@ -124,6 +125,15 @@ class ConnectIn(BaseModel):
     name: str
 
 
+def _types() -> dict:
+    t = supported_types()
+    from . import blender
+    t["blender"] = bool(blender.find())
+    if t["blender"]:   # Blender installed: .blend files open in the 3D viewer too
+        t["meshes"] = sorted(set(t["meshes"]) | {"blend", "blend1", "blend2"})
+    return t
+
+
 def _tv(h: str, tver: int | None) -> str:
     """Version tag in thumbnail URLs: content hash, plus the preview version if it was remade."""
     return h[:12] + (f".{tver}" if tver else "")
@@ -197,6 +207,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.exception_handler(TargetError)
     @app.exception_handler(rclone.RcloneError)
     @app.exception_handler(projects.ProjectError)
+    @app.exception_handler(assets.ExportError)
     @app.exception_handler(AIError)
     @app.exception_handler(AIUnavailable)
     @app.exception_handler(VLMError)
@@ -218,7 +229,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             "job": jobs.status(),
             "ai_job": dict(ai.state) if ai else {"running": False},
             "extensions": supported_extensions(),
-            "types": supported_types(),
+            "types": _types(),
             "date_sources": list(dates.SOURCES),
             "sep": os.sep,
         })
@@ -305,8 +316,12 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         exclude: str | None = None,
         project: int | None = None,
         member_of: int | None = None,
+        dupes: bool = False,
     ):
         where, args = [], []
+        if dupes:   # the same content in more than one place (exact copies), shown next to each other
+            where.append("hash IN (SELECT hash FROM files WHERE hash IS NOT NULL AND status = 1 AND "
+                         "root_id IN (SELECT id FROM roots WHERE kind = 'library') GROUP BY hash HAVING COUNT(*) > 1)")
         # tag/project membership includes a project's live sources (tags, folders, other projects)
         if project:   # the active project: the top filter, everything else filters inside it
             sql_, a_ = projects.member_clause(db, project)
@@ -358,6 +373,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             where.append("date_source IN ('file-created','file-modified')")
         o = "ASC" if order.lower() == "asc" else "DESC"
         order_sql = SORTS.get(sort, SORTS["date"]).format(o=o)
+        if dupes:
+            order_sql = "hash, " + order_sql
         if suggested:
             where.append("id IN (SELECT file_id FROM suggestions" + (" WHERE profile_id = ?)" if profile else ")"))
             if profile:
@@ -413,6 +430,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         h = handler_for(out["ext"])
         out["viewable"] = bool(h and h.browser_viewable)
         out["tags"] = [r[0] for r in db.cat.execute("SELECT tag_id FROM file_tags WHERE file_id = ?", (item_id,))]
+        out["twins"] = [{"id": r[0], "path": r[1]} for r in db.cat.execute(   # the same file elsewhere
+            "SELECT id, path FROM files WHERE hash = ? AND id != ? ORDER BY path LIMIT 50", (out["hash"], item_id))] if out["hash"] else []
         out["tag_sources"] = {str(r[0]): [r[1], r[2]] for r in db.cat.execute(
             "SELECT tag_id, source, confidence FROM file_tags WHERE file_id = ?", (item_id,))}
         out["captions"] = [{"model": m, "text": tx} for m, tx in db.cat.execute(
@@ -504,7 +523,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                     q_, a_ = projects.member_clause(db, t["id"])
                     t["count"] = db.cat.execute(f"SELECT COUNT(*) FROM files WHERE {q_} AND {scope}", a_ + sargs).fetchone()[0]
                     t["live"] = True
-        return _json({"tags": lst, "untagged": untagged, "facets": tags.FACETS, "missing": missing})
+        dupes = db.cat.execute(f"SELECT COALESCE(SUM(n), 0) FROM (SELECT COUNT(*) AS n FROM files WHERE hash IS NOT NULL AND status = 1 "
+                               f"AND {scope} GROUP BY hash HAVING COUNT(*) > 1)", sargs).fetchone()[0]
+        return _json({"tags": lst, "untagged": untagged, "facets": tags.FACETS, "missing": missing, "duplicates": dupes})
 
     @app.get("/api/projects")
     def get_projects():
@@ -564,6 +585,69 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.post("/api/xmp/import")
     def xmp_import(body: IdsIn):
         return _json(xmp.import_keywords(db, body.ids))
+
+    # -- game assets: texture sets, model companions, project export ----------------------
+    exporter = assets.ExportJob(db)
+
+    @app.get("/api/items/{item_id}/related")
+    def item_related(item_id: int):
+        return _json(assets.related(db, item_id))
+
+    @app.get("/api/export/presets")
+    def export_presets():
+        return _json({k: v["label"] for k, v in assets.PRESETS.items()})
+
+    def _export_plan(body: dict) -> dict:
+        return assets.plan_export(db, int(body.get("project") or 0), str(body.get("dest") or ""),
+                                  str(body.get("preset") or "folders"), bool(body.get("by_subject")),
+                                  bool(body.get("companions", True)), body.get("ids"))
+
+    @app.post("/api/export/plan")
+    def export_plan(body: dict):
+        return _json(assets.summary(_export_plan(body)))
+
+    @app.post("/api/export/run")
+    def export_run(body: dict):
+        return _json(exporter.start(_export_plan(body)))
+
+    @app.get("/api/export/job")
+    def export_job():
+        return _json(exporter.state)
+
+    @app.post("/api/export/cancel")
+    def export_cancel():
+        exporter.cancel()
+        return _json({"ok": True})
+
+    # -- saved views ("smart folders"): a name for the grid's current filters -----------------
+    VIEW_KEYS = {"folder", "recursive", "q", "ext", "sort", "order", "guessed", "tag", "exclude", "missing",
+                 "untagged", "project", "dupes", "suggested"}
+
+    @app.get("/api/views")
+    def get_views():
+        return _json([{"id": r[0], "name": r[1], "query": json.loads(r[2])} for r in
+                      db.cat.execute("SELECT id, name, query FROM saved_views ORDER BY position, name COLLATE NOCASE")])
+
+    @app.post("/api/views")
+    def add_view(body: dict):
+        name = str(body.get("name") or "").strip()[:80]
+        if not name:
+            raise HTTPException(400, "Give the view a name")
+        q = {k: v for k, v in (body.get("query") or {}).items() if k in VIEW_KEYS and v not in (None, "", False)}
+        with db.write_lock:
+            row = db.cat.execute("SELECT id FROM saved_views WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+            if row:
+                db.cat.execute("UPDATE saved_views SET query = ? WHERE id = ?", (json.dumps(q), row[0]))
+            else:
+                db.cat.execute("INSERT INTO saved_views(name, query, position, created) VALUES (?, ?, "
+                               "(SELECT COALESCE(MAX(position), 0) + 1 FROM saved_views), ?)", (name, json.dumps(q), time.time()))
+        return get_views()
+
+    @app.delete("/api/views/{view_id}")
+    def delete_view(view_id: int):
+        with db.write_lock:
+            db.cat.execute("DELETE FROM saved_views WHERE id = ?", (view_id,))
+        return get_views()
 
     @app.get("/api/rules")
     def get_rules():
@@ -834,21 +918,33 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         """Geometry for the 3D viewer: 'KMSH', u32 JSON length, JSON, then float32 positions,
         uint32 indices and uint8 RGB per vertex (each part padded to 4 bytes)."""
         from .mesh3d import MeshError, read_mesh, thin
-        row = db.cat.execute("SELECT path, ext, size, mtime_ns FROM files WHERE id = ?", (item_id,)).fetchone()
+        row = db.cat.execute("SELECT path, ext, size, mtime_ns, hash FROM files WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(404)
         h = handler_for(row[1])
-        if not (h and h.load.__name__ == "load_mesh_file"):
+        is_blend = row[1] in (".blend", ".blend1", ".blend2")
+        if not (h and (h.load.__name__ == "load_mesh_file" or is_blend)):
             raise HTTPException(415, "no 3D view for this format")
+        if is_blend:
+            from . import blender
+            if not blender.find():
+                raise HTTPException(415, "Install Blender to view .blend files in 3D (or set KURATOR_BLENDER to blender.exe)")
         if not os.path.isfile(row[0]):
             raise HTTPException(404, "file is missing on disk")
         key = (row[0], row[2], row[3])
         body = mesh_cache.get(key)
         if body is None:
-            with open(row[0], "rb") as f:
+            src = row[0]
+            if is_blend:   # Blender (if installed) converts it once; the glTF is cached by content hash
+                from . import blender
+                try:
+                    src = blender.to_glb(row[0], row[4] or f"id{item_id}", os.path.join(db.data_dir, "cache", "blend"))
+                except blender.BlenderError as e:
+                    raise HTTPException(422, str(e)) from None
+            with open(src, "rb") as f:
                 data = f.read()
             try:
-                m = thin(read_mesh(data, row[0]), 2_000_000)
+                m = thin(read_mesh(data, src), 2_000_000)
             except MeshError as e:
                 raise HTTPException(422, str(e)) from None
             import numpy as np
@@ -869,7 +965,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             if len(mesh_cache) >= 2:
                 mesh_cache.pop(next(iter(mesh_cache)))
             mesh_cache[key] = body
-        return Response(body, media_type="application/octet-stream", headers={"Cache-Control": "private, no-cache"})
+        return Response(body, media_type="application/octet-stream",
+                        headers={"Cache-Control": "private, no-cache", "X-Mesh-Bytes": str(len(body))})   # for progress (gzip changes the length)
 
     @app.get("/f/{item_id}")
     def original(item_id: int):

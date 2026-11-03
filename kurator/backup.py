@@ -133,14 +133,15 @@ def save_set(db: Database, data: dict, set_id: int | None = None) -> dict:
     with db.write_lock:
         c.execute("BEGIN")
         try:
-            vals = (name, layout, tmpl, policy, mode, int(bool(data.get("verify", True))), json.dumps(scope))
+            vals = (name, layout, tmpl, policy, mode, int(bool(data.get("verify", True))), json.dumps(scope),
+                    int(bool(data.get("dedupe", True))))
             if set_id is None:
-                set_id = c.execute("INSERT INTO backup_sets(name, layout, tag_template, policy, mode, verify, scope, created) "
-                                   "VALUES (?,?,?,?,?,?,?,?)", (*vals, time.time())).lastrowid
+                set_id = c.execute("INSERT INTO backup_sets(name, layout, tag_template, policy, mode, verify, scope, dedupe, created) "
+                                   "VALUES (?,?,?,?,?,?,?,?,?)", (*vals, time.time())).lastrowid
             else:
                 if not c.execute("SELECT 1 FROM backup_sets WHERE id=?", (set_id,)).fetchone():
                     raise BackupError("No such backup set")
-                c.execute("UPDATE backup_sets SET name=?, layout=?, tag_template=?, policy=?, mode=?, verify=?, scope=? WHERE id=?",
+                c.execute("UPDATE backup_sets SET name=?, layout=?, tag_template=?, policy=?, mode=?, verify=?, scope=?, dedupe=? WHERE id=?",
                           (*vals, set_id))
             existing = {r[0]: r[1] for r in c.execute("SELECT id, location FROM backup_targets WHERE set_id=?", (set_id,))}
             keep = set()
@@ -325,7 +326,35 @@ def plan(db: Database, set_id: int) -> dict:
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
     ops, skipped = [], []
-    counts = {"new": 0, "changed": 0, "missing": 0, "relocate": 0, "relink": 0, "unchanged": 0, "archive": 0, "kept": 0}
+    counts = {"new": 0, "changed": 0, "missing": 0, "relocate": 0, "relink": 0, "unchanged": 0, "archive": 0, "kept": 0,
+              "same_as": 0}
+    # Identical files (same content in several folders) are stored once: the others point to that copy.
+    # A backed-up copy several files point to is never overwritten, moved by a non-owner or archived
+    # while others still need it.
+    dedupe = bool(s.get("dedupe", 1))
+    users: dict[tuple, list[int]] = {}
+    for fid, r in rows.items():
+        users.setdefault((r["target_id"], r["dest"].lower()), []).append(fid)
+    shared = lambda row: len(users.get((row["target_id"], row["dest"].lower()), [])) > 1  # noqa: E731
+    holds: dict[str, tuple] = {}       # content hash -> (target, dest) holding it after this plan
+    if dedupe:   # the copy that already exists first, then the best-tagged one
+        files.sort(key=lambda f: (f["hash"] or "", 0 if f["id"] in rows else 1, -len(f["tags"]), f["path"].lower()))
+    by_id = {f["id"]: f for f in files}
+    wants = {f["id"]: layout_dest(s, f, root_names, pri) for f in files}
+    same_file = lambda row, f: (row["size"] == f["size"] and row["mtime_ns"] == f["mtime_ns"]  # noqa: E731
+                                and (not f["hash"] or not row["hash"] or row["hash"] == f["hash"]))
+    # A shared copy belongs to the file whose natural place it is (else the first by path). If that file
+    # changed, its new version goes there and the others get a copy of their own (or share another).
+    owner: dict[tuple, int] = {}
+    rewritten: set[tuple] = set()
+    for key, fids in users.items():
+        live = [u for u in fids if u in by_id]
+        if len(fids) < 2 or not live:
+            continue
+        nat = [u for u in live if _is_variant(rows[u]["dest"], wants[u])]
+        owner[key] = (nat or sorted(live, key=lambda u: by_id[u]["path"].lower()))[0]
+        if not same_file(rows[owner[key]], by_id[owner[key]]):
+            rewritten.add(key)
 
     def allocate(size: int) -> int | None:
         cands = [t for t in order if info[t]["available"]]
@@ -342,7 +371,7 @@ def plan(db: Database, set_id: int) -> dict:
         return None
 
     for f in files:
-        want = layout_dest(s, f, root_names, pri)
+        want = wants[f["id"]]
         row = rows.get(f["id"])
         if row is None and f["hash"] and orphans_by_hash.get(f["hash"]):
             row = orphans_by_hash[f["hash"]].pop()  # same content backed up under an old catalog id
@@ -352,15 +381,37 @@ def plan(db: Database, set_id: int) -> dict:
         if row is not None and info.get(row["target_id"], {}).get("available") is False:
             counts["unchanged"] += 1  # target offline: leave as is
             continue
+        h_ = f["hash"]
+        if row is not None and shared(row):
+            key = (row["target_id"], row["dest"].lower())
+            if owner.get(key) != f["id"]:   # another file decides where this copy lives
+                if key not in rewritten and same_file(row, f) and targets[row["target_id"]].exists(row["dest"]):
+                    counts["same_as"] += 1
+                    if h_:
+                        holds.setdefault(h_, (row["target_id"], row["dest"]))
+                    if row["src_path"] != f["path"] or json.loads(row["tags"] or "[]") != f["tags"] or row["date_ts"] != f["date_ts"]:
+                        ops.append({"op": "meta", "id": f["id"]})
+                    continue
+                row = None   # this file changed: it needs a copy of its own (the shared one stays)
+                ops.append({"op": "forget", "id": f["id"]})
+        if row is None and dedupe and h_ and h_ in holds:
+            t_, d_ = holds[h_]
+            ops.append({"op": "alias", "id": f["id"], "target": t_, "dest": d_})
+            counts["same_as"] += 1
+            continue
         if row is not None:
             same = (row["size"] == f["size"] and row["mtime_ns"] == f["mtime_ns"]
                     and (not f["hash"] or not row["hash"] or row["hash"] == f["hash"]))
             present = targets[row["target_id"]].exists(row["dest"]) if row["target_id"] in targets else False
             if same and present:
+                if h_:
+                    holds.setdefault(h_, (row["target_id"], row["dest"]))
                 if not _is_variant(row["dest"], want):  # e.g. re-tagged: move it inside the backup
                     dest = _unique(want, taken, f["id"], f["hash"])
                     taken.add(dest.lower())
                     ops.append({"op": "relocate", "id": f["id"], "target": row["target_id"], "from": row["dest"], "to": dest})
+                    if h_:
+                        holds[h_] = (row["target_id"], dest)
                     counts["relocate"] += 1
                 else:
                     counts["unchanged"] += 1
@@ -369,16 +420,21 @@ def plan(db: Database, set_id: int) -> dict:
                         ops.append({"op": "meta", "id": f["id"]})  # moved/re-tagged in the library
                 continue
             reason = "changed" if present else "missing"
-            dest = row["dest"] if _is_variant(row["dest"], want) else _unique(want, taken, f["id"], f["hash"])
+            key = (row["target_id"], row["dest"].lower())
+            # a shared copy is only overwritten by its owner (the others are re-homed above)
+            keep_shared = present and shared(row) and owner.get(key) != f["id"]
+            dest = row["dest"] if _is_variant(row["dest"], want) and not keep_shared else _unique(want, taken, f["id"], f["hash"])
             taken.add(dest.lower())
             t = allocate(f["size"])
             if t is None:
                 skipped.append({"id": f["id"], "path": f["path"], "reason": "not enough space on any target"})
                 continue
             op = {"op": "copy", "id": f["id"], "target": t, "dest": dest, "src": f["path"], "size": f["size"], "reason": reason}
-            if present:
+            if present and not keep_shared:
                 op["archive"] = {"target": row["target_id"], "from": row["dest"], "to": f"{ARCHIVE_DIR}/{stamp}/{row['dest']}"}
             ops.append(op)
+            if h_:
+                holds.setdefault(h_, (t, dest))
             counts[reason] += 1
             continue
         dest = _unique(want, taken, f["id"], f["hash"])
@@ -388,6 +444,8 @@ def plan(db: Database, set_id: int) -> dict:
             skipped.append({"id": f["id"], "path": f["path"], "reason": "not enough space on any target"})
             continue
         ops.append({"op": "copy", "id": f["id"], "target": t, "dest": dest, "src": f["path"], "size": f["size"], "reason": "new"})
+        if h_:
+            holds.setdefault(h_, (t, dest))
         counts["new"] += 1
 
     # Backed-up files that left the library (or the set's scope)
@@ -395,7 +453,11 @@ def plan(db: Database, set_id: int) -> dict:
     for fid, r in rows.items():
         if fid in in_scope or fid in relinked:
             continue
-        if s["mode"] == "mirror" and info.get(r["target_id"], {}).get("available"):
+        still_needed = [u for u in users.get((r["target_id"], r["dest"].lower()), []) if u != fid and u in in_scope]
+        if s["mode"] == "mirror" and still_needed:
+            ops.append({"op": "forget", "id": fid})   # the copy stays: identical files still point to it
+            counts["kept"] += 1
+        elif s["mode"] == "mirror" and info.get(r["target_id"], {}).get("available"):
             ops.append({"op": "archive", "id": fid, "target": r["target_id"], "from": r["dest"],
                         "to": f"{ARCHIVE_DIR}/{stamp}/{r['dest']}"})
             counts["archive"] += 1
@@ -492,12 +554,12 @@ class Jobs:
         st["bytes_total"] = p["bytes"]
         st["set"] = s["name"]
         files = {f["id"]: f for f in _scope_files(db, s)}
-        done = {"copied": 0, "relocated": 0, "relinked": 0, "archived": 0, "failed": 0}
+        done = {"copied": 0, "relocated": 0, "relinked": 0, "archived": 0, "failed": 0, "same_as": 0}
 
         def upsert(f: dict, target_id: int, dest: str, h: str | None, birth: float | None):
             with db.write_lock:
-                c.execute("DELETE FROM backup_files WHERE target_id = ? AND dest = ? COLLATE NOCASE AND NOT (set_id = ? AND file_id = ?)",
-                          (target_id, dest, set_id, f["id"]))
+                c.execute("DELETE FROM backup_files WHERE target_id = ? AND dest = ? COLLATE NOCASE AND NOT (set_id = ? AND file_id = ?) "
+                          "AND (hash IS NULL OR hash != ?)", (target_id, dest, set_id, f["id"], h))
                 c.execute("INSERT OR REPLACE INTO backup_files(set_id, file_id, target_id, dest, src_path, hash, size, mtime_ns, birth, "
                           "date_ts, date_source, tags, backed_up) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                           (set_id, f["id"], target_id, dest, f["path"], h, f["size"], f["mtime_ns"], birth,
@@ -513,13 +575,27 @@ class Jobs:
                     done["relinked"] += 1
                 elif o["op"] == "relocate":
                     targets[o["target"]].move(o["from"], o["to"])
-                    with db.write_lock:
-                        c.execute("UPDATE backup_files SET dest = ? WHERE set_id = ? AND file_id = ?", (o["to"], set_id, o["id"]))
+                    with db.write_lock:   # identical files pointing to this copy move along
+                        c.execute("UPDATE backup_files SET dest = ? WHERE target_id = ? AND dest = ? COLLATE NOCASE",
+                                  (o["to"], o["target"], o["from"]))
                         self._refresh_meta(set_id, files.get(o["id"]))
                     done["relocated"] += 1
                 elif o["op"] == "meta":
                     with db.write_lock:
                         self._refresh_meta(set_id, files.get(o["id"]))
+                elif o["op"] == "forget":
+                    with db.write_lock:
+                        c.execute("DELETE FROM backup_files WHERE set_id = ? AND file_id = ?", (set_id, o["id"]))
+                elif o["op"] == "alias":   # same content as a file already in the backup: point to that copy
+                    f = files.get(o["id"])
+                    if f:
+                        with db.write_lock:
+                            c.execute("INSERT OR REPLACE INTO backup_files(set_id, file_id, target_id, dest, src_path, hash, size, mtime_ns, birth, "
+                                      "date_ts, date_source, tags, backed_up) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                      (set_id, f["id"], o["target"], o["dest"], f["path"], f["hash"], f["size"], f["mtime_ns"],
+                                       getattr(os.stat(f["path"]), "st_birthtime", None) if os.path.exists(f["path"]) else None,
+                                       f["date_ts"], f["date_source"], json.dumps(f["tags"], ensure_ascii=False), time.time()))
+                        done["same_as"] += 1
                 elif o["op"] == "archive":
                     targets[o["target"]].move(o["from"], o["to"])
                     with db.write_lock:

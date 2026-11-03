@@ -107,6 +107,10 @@ export class Panel {
         m.peak_dbfs != null ? el('tr', {}, el('th', { text: 'Level' }), el('td', { text: `peak ${m.peak_dbfs} dBFS · RMS ${m.rms_dbfs ?? '—'} dBFS` })) : null,
         m.ucs_catid ? el('tr', {}, el('th', { text: 'UCS' }), el('td', { text: m.ucs_catid, title: 'Universal Category System CatID from the file name' })) : null,
         (m.placeholder || m.preview) && !m.preview_note && !m.video ? el('tr', {}, el('th', { text: 'Preview' }), el('td', { class: 'muted', text: m.placeholder ? 'not available for this format - use Open' : m.preview === 'windows' ? 'from Windows (installed app)' : m.preview === 'rendered' ? 'rendered by Kurator - Enter for the 3D view' : 'stored in the file' })) : null,
+        d.twins?.length ? el('tr', {}, el('th', { text: 'Also in', title: 'The same file (identical content) in other places' }),
+          el('td', {}, d.twins.slice(0, 6).map((t) => el('div', {}, el('a', { href: '#', class: 'twin', title: t.path, text: t.path,
+            onclick: (e) => { e.preventDefault(); this.app.openPath(t.path.replace(/[\\/][^\\/]*$/, '')); } }))),
+          d.twins.length > 6 ? el('div', { class: 'muted small', text: `… ${d.twins.length - 6} more` }) : null)) : null,
         el('tr', {}, el('th', { text: 'File' }), el('td', { text: `${fmtBytes(d.size)} · ${(m.format || d.ext.slice(1)).toUpperCase()}${m.mode ? ' · ' + m.mode : ''}${m.frames ? ` · ${m.frames} frames` : ''}` })),
         d.alpha ? el('tr', {}, el('th', { text: 'Alpha' }), el('td', { text: 'transparent pixels' })) : null,
         d.status === 2 ? el('tr', {}, el('th', { text: 'Error' }), el('td', { class: 'err', text: d.error || 'cannot read' })) : null,
@@ -149,8 +153,34 @@ export class Panel {
       if (Object.keys(t).length) parts.push(section('Text chunks', kvTable(t)));
     }
     if (m.xmp) parts.push(section('XMP', pre(m.xmp)));
+    this.relBox = el('div');
+    parts.splice(parts.indexOf(this.tagBox) + 1, 0, this.relBox);   // texture set / what a model uses, under the tags
     setKids(this.body, ...parts);
+    this.loadRelated(d);
     this.renderTags();
+  }
+
+  /** Texture maps of the same set, the files a model uses, models using a texture. */
+  async loadRelated(d) {
+    let r;
+    try { r = await api.related(d.id); } catch { return; }
+    if (this.detail !== d || !this.relBox) return;
+    const app = this.app;
+    const go = (id, name) => {
+      if (id == null) return;
+      const i = app.indexOf(id);
+      if (i >= 0) app.setFocus(i); else app.toast(`${name} isn't in the current view`);
+    };
+    const chip = (x, label) => el('button', { class: 'chip small' + (x.id === d.id ? ' full' : ''), type: 'button', title: x.name,
+      disabled: x.id == null, onclick: () => go(x.id, x.name) }, el('span', { text: label }));
+    const rows = [];
+    if (r.set) rows.push(el('div', { class: 'rel' }, el('span', { class: 'tb-group', text: `Texture set "${r.set.base}"` }),
+      r.set.maps.map((m) => chip(m, m.role))));
+    if (r.uses?.length) rows.push(el('div', { class: 'rel' }, el('span', { class: 'tb-group', text: 'Uses' }),
+      r.uses.map((u) => chip(u, u.role ? `${u.role}: ${u.name}` : u.name))));
+    if (r.models?.length) rows.push(el('div', { class: 'rel' }, el('span', { class: 'tb-group', text: 'Used by' }),
+      r.models.map((m) => chip(m, m.name))));
+    setKids(this.relBox, rows);
   }
 
   /** Small player for sounds: play/stop, seek, time. One shared audio element (app.audio). */

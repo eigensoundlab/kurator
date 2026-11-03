@@ -349,7 +349,7 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .cell.playing .th { box-shadow: 0 0 0 2px var(--accent); }
 .cell.audio .ext { left: 42px; top: 13px; }
 .viewer.mode3d .v-2d { display: none; }
-.v-zoom { white-space: nowrap; }
+.v-zoom { white-space: nowrap; width: auto; min-width: 52px; margin-right: 6px; }
 /* projects: switcher, path bar, membership */
 .projswitch { position: relative; }
 .projbtn { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; }
@@ -396,3 +396,18 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .viewer.mode-video .v-img { visibility: hidden; }
 .viewer.mode-video .v-2d { display: none; }
 .viewer.mode-video .v-fit { display: none; }
+
+/* viewer: way back to the grid, loading progress */
+.v-back { position: absolute; left: 14px; top: 14px; z-index: 3; display: inline-flex; gap: 8px; align-items: center;
+  background: #000a; color: #fff; border: 1px solid #fff3; border-radius: 18px; padding: 6px 12px; font: inherit; cursor: pointer; }
+.v-back:hover { background: #000d; border-color: #fff6; }
+.v-key { font-size: 10px; border: 1px solid #fff5; border-radius: 3px; padding: 0 4px; color: #fffb; }
+.v-loading { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 3; display: none;
+  background: #000c; color: #fff; padding: 14px 18px; border-radius: 10px; min-width: 300px; text-align: center; }
+.v-loading.on { display: block; }
+.v-loading .pbar { margin-top: 10px; }
+.pbar.busy span { width: 30% !important; animation: pbar-busy 1.2s ease-in-out infinite; }
+@keyframes pbar-busy { 0% { margin-left: 0; } 50% { margin-left: 70%; } 100% { margin-left: 0; } }
+.twin { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; color: var(--accent); font-size: 12px; }
+.rel { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 6px 0; }
+.projdlg label.chk { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); font-size: 13px; margin: 4px 0; }

@@ -29,6 +29,8 @@ export class Sidebar {
     this.roots = [];
 
     this.pinSec = section('pins', 'Pinned');
+    this.viewSec = section('views', 'Saved views');
+    this.views = [];
     this.libSec = section('lib', 'Library');
     this.tagSec = section('tags', 'Tags', el('button', { class: 'mini', title: 'New tag', text: '+', onclick: () => app.tags.editDialog(null) }));
     this.fsSec = section('fs', 'Browse');
@@ -49,12 +51,44 @@ export class Sidebar {
     this.fsChildren = new Map();   // path -> [{name, path}]
     this.fsOpen = new Set();
 
-    this.root.append(this.pinSec.box, this.libSec.box, this.tagSec.box, this.fsSec.box);
+    this.root.append(this.pinSec.box, this.viewSec.box, this.libSec.box, this.tagSec.box, this.fsSec.box);
     this.loadPins();
+    this.loadViews();
     this.loadPlaces();
   }
 
   get tagContainer() { return this.tagSec.body; }
+
+  // ------------------------------------------------------------ saved views
+  async loadViews(list) {
+    try { this.views = list || await api.views(); } catch { return; }
+    this.renderViews();
+  }
+
+  renderViews() {
+    const rows = this.views.map((v) => el('div', { class: 'node' + (this.app.activeView === v.id ? ' active' : ''), title: this.describeView(v.query),
+      onclick: () => this.app.openSavedView(v) },
+    el('span', { class: 'tw', text: '⌕' }), el('span', { class: 'nm fit', text: v.name }),
+    el('span', { class: 'rm', title: 'Delete this saved view', text: '×', onclick: async (e) => { e.stopPropagation(); this.loadViews(await api.deleteView(v.id)); } })));
+    if (!rows.length) rows.push(el('div', { class: 'p-hint small', text: 'Set up filters, then ☆ Save view in the path bar.' }));
+    this.viewSec.body.replaceChildren(...rows);
+  }
+
+  describeView(q) {
+    const t = this.app.tags;
+    const name = (id) => t.byId.get(+id)?.name || '?';
+    const parts = [];
+    if (q.project) parts.push(`project ${name(q.project)}`);
+    if (q.folder) parts.push(`in ${q.folder}`);
+    if (q.tag) parts.push(String(q.tag).split(',').map(name).join(' + '));
+    if (q.exclude) parts.push('not ' + String(q.exclude).split(',').map(name).join(', '));
+    if (q.missing) parts.push(`no ${q.missing}`);
+    if (q.ext) parts.push(String(q.ext).split(',').slice(0, 6).join(' '));
+    if (q.q) parts.push(`"${q.q}"`);
+    if (q.dupes) parts.push('duplicates');
+    if (q.guessed) parts.push('guessed dates');
+    return parts.join(' · ') || 'everything';
+  }
 
   // ---------------------------------------------------------------- pins
   async loadPins() {
@@ -132,6 +166,10 @@ export class Sidebar {
       return out;
     };
     const rows = [all];
+    const dupes = this.app.tags?.duplicates || 0;
+    if (dupes) rows.push(el('div', { class: 'node' + (this.app.query.dupes ? ' active' : ''), title: 'The same file in more than one folder (exact copies), shown next to each other',
+      onclick: () => this.app.setDupes(!this.app.query.dupes) },
+    el('span', { class: 'tw', text: '⧉' }), el('span', { class: 'nm', text: 'Duplicates' }), el('span', { class: 'ct', text: fmtNum(dupes) })));
     for (const r of byParent.get('') || []) rows.push(...build(r, 0));
     if (!this.nodes.length) rows.push(el('div', { class: 'p-hint small', text: 'Add a folder with your images below, or open any folder under Browse.' }));
     this.libTree.replaceChildren(...rows);

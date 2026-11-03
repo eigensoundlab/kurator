@@ -44,6 +44,9 @@ def main(argv: list[str] | None = None) -> None:
 
     db = Database(os.path.abspath(args.data_dir))
     db.cleanup()
+    if db.get_setting("previews.audio", 0) < 2:   # once: long sounds (music) got orange waveforms in 0.9
+        db.remake_previews("kind = 'audio' AND json_extract(meta, '$.duration') >= 30")
+        db.set_setting("previews.audio", 2)
     from .handlers.video import tool
     if tool("ffmpeg") and tool("ffprobe"):   # ffmpeg installed since videos were indexed: real previews now
         n = db.remake_previews("kind = 'video' AND (json_extract(meta, '$.placeholder') IS NOT NULL "

@@ -32,6 +32,8 @@ export class Tags {
     try { r = await api.tags(this.app.query.project); } catch { return; }
     this.list = r.tags;
     this.untagged = r.untagged;
+    this.duplicates = r.duplicates || 0;
+    this.app.sidebar.renderLibrary?.();
     this.facets = r.facets || DEFAULT_FACETS;
     this.missing = r.missing || {};
     this.byId = new Map(this.list.map((t) => [t.id, t]));

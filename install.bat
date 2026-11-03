@@ -75,7 +75,7 @@ echo [Kurator] WARNING: could not enable the GPU. See https://pytorch.org/get-st
 
 :audit
 echo [Kurator] Checking installed packages for known vulnerabilities (pip-audit) ...
-"%VPY%" -m pip_audit --progress-spinner off
+"%VPY%" tools\audit_deps.py
 if errorlevel 1 (
     echo [Kurator] WARNING: pip-audit reported a problem ^(see above^). Run update.bat later to get fixed versions.
 )

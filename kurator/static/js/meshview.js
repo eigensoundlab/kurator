@@ -51,11 +51,10 @@ const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a
 const norm = (a) => { const l = Math.hypot(...a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 
 export class MeshView {
-  constructor(parent, { onStatus } = {}) {
+  constructor(parent) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'meshview';
     parent.append(this.canvas);
-    this.onStatus = onStatus || (() => {});
     this.gl = this.canvas.getContext('webgl2', { antialias: true, alpha: true, premultipliedAlpha: true });
     this.ok = !!this.gl;
     this.token = 0;
@@ -87,19 +86,34 @@ export class MeshView {
   }
 
   /** Fetch and show the geometry of a catalog item. Resolves to the header info. */
-  async load(id) {
+  async load(id, onProgress = () => {}) {
     const token = ++this.token;
     this.n = 0;
     this.draw();
     if (!this.ok) throw new Error('This browser has no WebGL 2 - the 3D view is not available.');
-    this.onStatus('Loading 3D model…');
+    onProgress(0, 0);   // 0 of unknown: the server is still reading (or Blender converting) the file
     const r = await fetch(`/api/mesh/${id}`);
     if (!r.ok) {
       let msg = r.statusText;
       try { msg = (await r.json()).detail || msg; } catch { /* binary */ }
       throw new Error(msg);
     }
-    const buf = await r.arrayBuffer();
+    const total = +(r.headers.get('X-Mesh-Bytes') || 0);
+    const parts = [];
+    let got = 0;
+    const reader = r.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (token !== this.token) { reader.cancel(); return null; }
+      parts.push(value);
+      got += value.length;
+      onProgress(got, total);
+    }
+    const all = new Uint8Array(got);
+    let o = 0;
+    for (const p of parts) { all.set(p, o); o += p.length; }
+    const buf = all.buffer;
     if (token !== this.token) return null;
     const dv = new DataView(buf);
     if (dv.getUint32(0, true) !== 0x48534d4b) throw new Error('bad mesh data');   // 'KMSH'
@@ -127,7 +141,6 @@ export class MeshView {
     this.center = [0, 1, 2].map((k) => (head.min[k] + head.max[k]) / 2);
     this.radius = Math.max(1e-9, Math.hypot(...[0, 1, 2].map((k) => head.max[k] - head.min[k])) / 2);
     this.reset();
-    this.onStatus('');
     return head;
   }
 

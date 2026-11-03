@@ -35,6 +35,13 @@ export class TypeFilter {
     this.paintButton();
   }
 
+  /** From a saved view: comma-separated extensions ('' = everything). Doesn't reload. */
+  setSelected(csv) {
+    this.selected = new Set((csv || '').split(',').filter(Boolean));
+    prefs.set('types', [...this.selected]);
+    this.paintButton();
+  }
+
   /** Value for the items API (comma-separated extensions) or '' for everything. */
   get param() { return [...this.selected].join(','); }
 

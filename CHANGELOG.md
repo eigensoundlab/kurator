@@ -2,6 +2,17 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.9.0 – export to games, texture sets, duplicates
+- **Project export** into Unity, Godot or Unreal folder layouts (or by type); models bring their
+  textures and materials at the same relative paths; re-runs copy only what changed.
+- **Texture sets** recognised by name; the side panel shows sets, what a model uses, and the models
+  that use a texture.
+- **Duplicates view**, and backups store identical files once (restores put them back everywhere).
+- **Saved views** in the sidebar.
+- `.blend` files open in the 3D viewer when Blender is installed (scripts switched off).
+- Loading progress for 3D models, a *Back* button in the viewer, orange waveforms for long sounds.
+- Install/update: a clean vulnerability report without the "kurator could not be audited" line.
+
 ## 0.8.0 – projects you work inside, and video
 - **Projects as the top filter:**
   - Pick a project in the switcher (or the sidebar) and all folders, tags and filters work inside it.

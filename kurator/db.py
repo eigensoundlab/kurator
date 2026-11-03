@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 CATALOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -182,6 +182,20 @@ MIGRATIONS = {
         # Thumbnail version: bumped when previews are made again for unchanged files (e.g. ffmpeg
         # was installed later), so browsers don't keep showing the old cached picture.
         "ALTER TABLE files ADD COLUMN tver INTEGER NOT NULL DEFAULT 0",
+    ],
+    6: [
+        # Backups store identical files once: several catalog files may point to one backed-up copy.
+        "DROP INDEX backup_files_dest",
+        "CREATE INDEX backup_files_dest ON backup_files(target_id, dest)",
+        "ALTER TABLE backup_sets ADD COLUMN dedupe INTEGER NOT NULL DEFAULT 1",
+        # Saved views ("smart folders"): a name and the filter state of the grid
+        """CREATE TABLE saved_views (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            query TEXT NOT NULL,          -- JSON: the grid's filters
+            position INTEGER NOT NULL DEFAULT 0,
+            created REAL
+        )""",
     ],
 }
 

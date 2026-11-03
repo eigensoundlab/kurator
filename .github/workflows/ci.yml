@@ -42,8 +42,4 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade --upgrade-strategy eager ".[audit,ai]" --extra-index-url https://download.pytorch.org/whl/cpu
       - name: pip-audit (known vulnerabilities)
-        # Kurator itself is not on PyPI, so audit the installed dependencies as a pinned list
-        # (local version tags such as +cpu stripped).
-        run: |
-          python -m pip freeze --exclude kurator --exclude-editable | sed -E 's/\+[A-Za-z0-9.]+$//' > audit-req.txt
-          python -m pip_audit -r audit-req.txt --no-deps --disable-pip --strict --progress-spinner off
+        run: python tools/audit_deps.py --strict

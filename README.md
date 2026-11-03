@@ -4,7 +4,7 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.8 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.9 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files, 3D models
 > (previews and a 3D viewer), **video**, **projects you work inside**, and optional local AI
@@ -31,7 +31,8 @@ packages are never touched.
 | Add the optional AI features | `install.bat ai` | `./install.sh ai` |
 
 - **Install** creates `.venv`, installs the **newest compatible versions** of all dependencies, then
-  runs [`pip-audit`](https://pypi.org/project/pip-audit/) to check them for known vulnerabilities.
+  runs [`pip-audit`](https://pypi.org/project/pip-audit/) to check them for known vulnerabilities
+  (`tools/audit_deps.py`: every installed package except Kurator itself, which isn't on PyPI).
 - **Update** does `git pull` (if you cloned the repository) and then the same upgrade + audit. Once
   the AI features are installed, updates keep them.
 - **`ai`** adds PyTorch and open_clip (2–3 GB). On Windows with an NVIDIA card, the script installs
@@ -150,6 +151,9 @@ the view has sounds) or **P** turns this off; then Space plays.
 | P | auto-play on / off |
 | O | open in your audio editor |
 
+**Long sounds are orange:** anything from 30 seconds up (music, ambiences, dialogue) gets a warm
+orange waveform, short effects stay blue, so the two are easy to tell apart at a glance.
+
 Formats the browser cannot play (AIFF, CAF, WMA…) are still indexed and shown; *Open* plays them in
 your default application. Reading M4A/AAC/WMA needs `ffmpeg` on the PATH; without it they're listed
 without a waveform.
@@ -221,7 +225,16 @@ group of the type filter.
   preview. Maya, 3ds Max, Cinema 4D, ZBrush, Alembic, Rhino and Substance files show the thumbnail
   Windows has for them (when the application is installed), or a card.
 - **3D viewer:** Enter or double-click opens a live view: drag to turn, right-drag (or Shift+drag) to
-  move, wheel to zoom, 0 or double-click to reset. ← → go to the next file as usual.
+  move, wheel to zoom, 0 or double-click to reset. ← → go to the next file as usual. A progress
+  bar shows while a big model loads; **← Back** (top left) or Esc returns to the grid.
+- **Blender files in 3D:** when Blender is installed (found on the PATH, in the usual install
+  folders, or via `KURATOR_BLENDER`), Enter on a `.blend` file converts it once in the background
+  to glTF and shows it in the 3D viewer; later views are instant. Blender runs with
+  `--disable-autoexec`, so scripts stored in a .blend file never run.
+- **Texture sets:** maps named like `rock_albedo.png`, `rock_normal_4k.png`, `rock_roughness.png`
+  are recognised as one set. The side panel shows the set (click a map to jump to it), the files a
+  model uses (OBJ materials and textures, glTF buffers and images, textures named in FBX/3DS/DAE),
+  and the models that use a texture.
 - **Side panel:** triangles, vertices, dimensions and units, meshes, materials, animations, the
   application that wrote the file, and the **texture files** the model uses. FBX, COLLADA and 3MF
   creation dates count as the file's date.
@@ -260,6 +273,33 @@ too. XMP sidecars only list projects you added by hand.
 
 A typical round: open *Game A* → *Add from library* → open a folder of new work → select → **+** →
 back to *In project* → tag and sort.
+
+### Exporting a project to a game
+
+*Export…* on an open project copies its files into your game project, sorted by type:
+
+| Layout | Goes to |
+|---|---|
+| Unity | `Assets/<Project>/Sprites`, `Textures`, `Models/<model>/`, `Audio`, `Video`, `_Source` |
+| Godot | `assets/<project>/sprites`, `textures`, `models/<model>/`, … with lower-case names |
+| Unreal | `SourceArt/<Project>/Textures`, `Meshes`, `Audio`, `Movies` (to import from) |
+| By type | `<Project>/Images`, `Textures`, `Models`, `Audio`, `Video`, `Source`, `Documents` |
+
+- **Models bring their textures and materials** (OBJ `.mtl` and maps, glTF buffers and images,
+  textures named in FBX/3DS/DAE, a texture set named like the model) at the **same relative paths**,
+  so they import with their textures.
+- Optional subfolders by subject (`Sprites/Creatures/Dragons`), or only the selected files.
+- **Preview first**, then copy. Run it again later: only new and changed files are copied. Identical
+  files are copied once. A `kurator_export.json` lists every file and where it came from.
+- Exports copy, never move. The destination can't be inside a library folder (the copies would
+  be catalogued twice).
+
+### Saved views and duplicates
+
+- **☆ Save view** in the path bar remembers the current folder, project, tags, types, search and sort
+  under a name in the sidebar (*Saved views*), e.g. "Game A – creatures without status".
+- **Duplicates** (in the sidebar when there are any) lists files whose exact content exists in more
+  than one place, next to each other. The side panel shows *Also in* with the other locations.
 
 ### Filters: how they combine
 
@@ -388,6 +428,10 @@ How runs work:
   overwrites, and it restores dates too.
 - **Coverage.** The Backup dialog shows how many library files are in no backup yet, or changed
   since their last one.
+- **Identical files are stored once.** If the same image sits in several folders, the backup holds
+  one copy and the others point to it (in the manifest too); a restore puts it back in every
+  folder. If one of them is edited later, it gets its own copy and the rest stay safe. The setting
+  *Store identical files once* is on by default.
 
 #### Cloud targets (Google Drive, OneDrive, Dropbox, NAS…)
 
@@ -486,6 +530,8 @@ kurator/
   fileops.py       safe moves + undo, Windows creation time, folder listing, reveal
   rules.py         move rules: tag -> destination template
   projects.py      projects with automatic sources (tags, folders, other projects)
+  assets.py        texture sets, model companions, project export to game folders
+  blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
   xmp.py           XMP sidecars (write), keyword import (XMP, Windows tags, sidecars)
   watcher.py       live folder watching (watchdog), debounced re-check of changed folders
   backup.py        backup sets, planner (layouts, spreading over targets, space), runner, restore
@@ -533,6 +579,8 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
 - **Dependencies:** FastAPI, Starlette, Uvicorn, Pillow (13.0+), h11, watchdog, numpy, pypdfium2,
   resvg-py, pi-heif, soundfile, tinytag and zstandard (plus PyTorch and open_clip for the AI add-on), at their
   newest versions as of November 2026; `pip-audit` reports no known vulnerabilities.
+- Blender (optional) converts .blend files with `--factory-startup --disable-autoexec`: no add-ons,
+  scripts or drivers from the file run.
 - 3D files are parsed by Kurator's own readers with size limits; XML-based formats with a DTD are
   refused, and a model may only pull extra files (glTF buffers, OBJ materials) from its own folder.
 - PDFs are rendered by pdfium without JavaScript; SVGs by resvg (no scripts, no external
@@ -584,9 +632,11 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
     on hover, Blender-rendered previews when Blender is installed.
 11. ~~Video: frame thumbnails, hover scrubbing, recording dates, playback~~ ✅;
     ~~projects as the top filter, with automatic sources~~ ✅
-    Next: texture sets grouped with their models; export a project to a game folder (Unity/Godot/
-    Unreal layout); saved searches; near-duplicate finder.
-12. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+12. ~~Texture sets, project export to Unity/Godot/Unreal, saved views, exact duplicates (also stored
+    once in backups), Blender files in 3D, long sounds in orange~~ ✅
+    Next: near-duplicate finder (similar, not identical images), contact sheets / PureRef export,
+    compare mode (2–4 images side by side), version stacks (sketch → lineart → colour).
+13. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 Other ideas: version stacks (sketch → lineart → colour), near-duplicate finder, compare mode (2–4 up),
 timeline scrubber, colour/aspect/transparency filters, contact sheets / PureRef export.

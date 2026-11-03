@@ -42,7 +42,7 @@ if [ "$EXTRAS" = "audit,ai" ]; then
 fi
 
 echo "[Kurator] Checking installed packages for known vulnerabilities (pip-audit) ..."
-if ! "$VPY" -m pip_audit --progress-spinner off; then
+if ! "$VPY" tools/audit_deps.py; then
     echo "[Kurator] WARNING: pip-audit reported a problem (see above). Run ./update.sh later to get fixed versions."
 fi
 

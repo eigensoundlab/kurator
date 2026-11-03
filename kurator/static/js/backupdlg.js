@@ -58,7 +58,7 @@ export async function openBackupDialog(app) {
   async function showEditor(s) {
     const isNew = !s;
     let rc = await api.rclone().catch(() => ({ installed: false, remotes: [] }));
-    const v = s ? JSON.parse(JSON.stringify(s)) : { name: 'My backup', layout: 'original', tag_template: '{tagpath}', policy: 'fill', mode: 'copy', verify: 1, scope: {}, targets: [] };
+    const v = s ? JSON.parse(JSON.stringify(s)) : { name: 'My backup', layout: 'original', tag_template: '{tagpath}', policy: 'fill', mode: 'copy', verify: 1, dedupe: 1, scope: {}, targets: [] };
     if (!v.targets.length) v.targets.push({ location: '', reserve: 1024 ** 3 });
     const name = el('input', { type: 'text', value: v.name });
     const tlist = el('div', { class: 'targets' });
@@ -152,11 +152,13 @@ export async function openBackupDialog(app) {
     mode.value = v.mode;
     const verify = el('input', { type: 'checkbox' });
     verify.checked = !!v.verify;
+    const dedupe = el('input', { type: 'checkbox' });
+    dedupe.checked = v.dedupe == null ? true : !!v.dedupe;
     const msg = el('div');
 
     const save = async () => {
       const payload = {
-        name: name.value, policy: policy.value, mode: mode.value, verify: verify.checked,
+        name: name.value, policy: policy.value, mode: mode.value, verify: verify.checked, dedupe: dedupe.checked,
         layout: layoutTags.checked ? 'tags' : 'original', tag_template: tmpl.value || '{tagpath}',
         scope: scopeSel.value === 'tags' ? { tags: [...chosen] } : {},
         targets: v.targets.filter((t) => (t.location || '').trim()).map((t) => ({ id: t.id, kind: t.kind || 'local', location: t.location, reserve_gb: (t.reserve ?? 1024 ** 3) / 1024 ** 3 })),
@@ -181,6 +183,8 @@ export async function openBackupDialog(app) {
       el('div', { class: 'row' }, scopeSel), tagBox,
       el('label', { class: 'chk' }, mode),
       el('label', { class: 'chk' }, verify, 'Verify every copy (read it back and compare checksums)'),
+      el('label', { class: 'chk', title: 'The same image in several folders is stored once; restoring puts it back in every folder' }, dedupe,
+        'Store identical files once (copies in other folders point to it)'),
       msg,
       footer(btn('Back', showList), btn(isNew ? 'Create backup set' : 'Save', save, 'primary')));
   }
@@ -203,11 +207,11 @@ export async function openBackupDialog(app) {
     const reasons = {};
     for (const x of p.skipped) reasons[x.reason] = (reasons[x.reason] || 0) + 1;
     const ex = p.examples.slice(0, 200).map((o) => el('div', { class: 'mv' },
-      el('span', { class: 'to', text: o.op === 'copy' ? `${o.reason === 'new' ? '+' : '↻'} ${o.dest}` : o.op === 'relocate' ? `→ ${o.from}  ⇒  ${o.to}` : `⌫ ${o.from} (to archive)` })));
+      el('span', { class: 'to', text: o.op === 'copy' ? `${o.reason === 'new' ? '+' : '↻'} ${o.dest}` : o.op === 'relocate' ? `→ ${o.from}  ⇒  ${o.to}` : o.op === 'alias' ? `= ${o.dest} (identical, stored once)` : `⌫ ${o.from} (to archive)` })));
     setKids(body,
       el('div', { class: 'move-sum' },
         el('b', { text: work ? `${fmtNum(c.new)} new · ${fmtNum(c.changed)} changed · ${fmtNum(c.missing)} missing in backup · ${fmtNum(c.relocate)} to move inside the backup${c.archive ? ` · ${fmtNum(c.archive)} to archive` : ''}` : 'Everything is up to date ✓' }),
-        el('div', { text: `${fmtBytes(p.bytes)} to copy · ${fmtNum(c.unchanged)} unchanged${c.kept ? ` · ${fmtNum(c.kept)} kept from earlier (no longer in the library)` : ''}${c.relink ? ` · ${fmtNum(c.relink)} recognised after being moved outside Kurator` : ''}` }),
+        el('div', { text: `${fmtBytes(p.bytes)} to copy · ${fmtNum(c.unchanged)} unchanged${c.kept ? ` · ${fmtNum(c.kept)} kept from earlier (no longer in the library)` : ''}${c.relink ? ` · ${fmtNum(c.relink)} recognised after being moved outside Kurator` : ''}${c.same_as ? ` · ${fmtNum(c.same_as)} identical copies stored once` : ''}` }),
         p.same_disk?.length ? el('div', { class: 'warn', text: `On the same disk: ${p.same_disk.map((g) => g.join(' + ')).join('; ')} - they share one disk's free space, so spreading over them adds no room.` }) : null,
         p.unavailable.length ? el('div', { class: 'warn', text: `Not connected: ${p.unavailable.join(', ')} - files stored there are left as they are.` }) : null,
         Object.keys(reasons).length ? el('div', { class: 'warn', text: 'Skipped: ' + Object.entries(reasons).map(([r, n]) => `${fmtNum(n)} ${r}`).join(', ') + '. Add another target or free some space.' }) : null),

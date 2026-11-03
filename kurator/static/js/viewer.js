@@ -2,7 +2,7 @@
 
 import { originalUrl, thumbUrl } from './api.js';
 import { MeshView } from './meshview.js';
-import { el, extOf, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
+import { el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
 
 const BGS = ['dark', 'gray', 'light', 'checker'];
 
@@ -24,7 +24,10 @@ export class Viewer {
       el('button', { class: 'v-btn', title: 'Close (Esc)', text: '✕', onclick: () => this.close() }));
     this.prev = el('button', { class: 'v-nav v-prev', text: '‹', title: 'Previous (←)', onclick: () => this.step(-1) });
     this.next = el('button', { class: 'v-nav v-next', text: '›', title: 'Next (→)', onclick: () => this.step(1) });
-    this.root = el('div', { class: 'viewer', tabindex: '-1' }, this.stage, this.bar, this.prev, this.next);
+    this.back = el('button', { class: 'v-back', title: 'Back to the grid (Esc)', onclick: () => this.close() },
+      el('span', { text: '← Back' }), el('span', { class: 'v-key', text: 'Esc' }));
+    this.loading = el('div', { class: 'v-loading' }, el('div', { class: 'v-load-text' }), el('div', { class: 'pbar' }, el('span')));
+    this.root = el('div', { class: 'viewer', tabindex: '-1' }, this.stage, this.loading, this.back, this.bar, this.prev, this.next);
     document.body.append(this.root);
     this.bg = prefs.get('viewer.bg', 'dark');
     this.pixel = prefs.get('viewer.pixel', false);
@@ -55,6 +58,7 @@ export class Viewer {
     this.root.classList.remove('open');
     this.img.removeAttribute('src');
     this.mv?.clear();
+    this.setLoading(null);
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); }
     this.isVideo = false;
     this.root.classList.remove('mode3d', 'mesh-ready', 'mode-video');
@@ -107,20 +111,38 @@ export class Viewer {
     this.video.play().catch(() => {});
   }
 
+  /** Progress over the stage: text + bar (fraction 0..1, or null for "working…"). Null text hides it. */
+  setLoading(text, frac) {
+    this.loading.classList.toggle('on', !!text);
+    if (!text) return;
+    this.loading.firstChild.textContent = text;
+    const bar = this.loading.lastChild;
+    bar.classList.toggle('busy', frac == null);
+    bar.firstChild.style.width = frac == null ? '' : `${Math.round(frac * 100)}%`;
+  }
+
   /** 3D models: the rendered thumbnail shows until the geometry has loaded, then the live view. */
   show3d(id) {
     this.is3d = id != null;
     this.root.classList.toggle('mode3d', this.is3d);
     this.root.classList.remove('mesh-ready');
-    if (!this.is3d) { this.mv?.clear(); return; }
+    if (!this.is3d) { this.mv?.clear(); this.setLoading(null); return; }
     if (!this.mv) this.mv = new MeshView(this.stage);
-    this.mv.load(id).then((head) => {
-      if (head && this.isOpen && this.items.ids[this.i] === id) {
+    const blend = /^blend\d?$/.test(extOf(this.items.n[this.i]));
+    const mine = () => this.isOpen && this.items.ids[this.i] === id;
+    this.setLoading(blend ? 'Converting with Blender…' : 'Reading the 3D model…', null);
+    this.mv.load(id, (got, total) => {
+      if (!mine()) return;
+      if (!got) this.setLoading(blend ? 'Converting with Blender… (the first time takes a while)' : 'Reading the 3D model…', null);
+      else this.setLoading(`Loading 3D model… ${total ? Math.round((100 * got) / total) + '%' : fmtBytes(got)}`, total ? got / total : null);
+    }).then((head) => {
+      if (head && mine()) {
+        this.setLoading(null);
         this.root.classList.add('mesh-ready');
         this.zoomLbl.textContent = `${fmtNum(head.triangles)} triangles`;
       }
     }).catch((e) => {
-      if (this.isOpen && this.items.ids[this.i] === id) { this.root.classList.remove('mode3d'); this.app.toast(`3D view: ${e.message}`, 4000); }
+      if (mine()) { this.setLoading(null); this.root.classList.remove('mode3d'); this.app.toast(`3D view: ${e.message}`, 5000); }
     });
   }
 

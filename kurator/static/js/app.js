@@ -7,6 +7,7 @@
 
 import { api } from './api.js';
 import { openAIDialog } from './aidlg.js';
+import { openDialog } from './dialog.js';
 import { openBackupDialog } from './backupdlg.js';
 import { Grid } from './grid.js';
 import { openMoveDialog } from './movedlg.js';
@@ -256,9 +257,60 @@ class App {
 
   setUntagged(on) { this.setMissing(on ? 'subject' : ''); }
 
+  /** The filters a saved view remembers. */
+  viewQuery() {
+    const q = this.query;
+    return { folder: q.folder, recursive: q.recursive, q: q.q, ext: q.ext, sort: q.sort, order: q.order, guessed: q.guessed,
+      tag: q.tag, exclude: q.exclude, missing: q.missing, project: this.projects.active || '', dupes: q.dupes };
+  }
+
+  saveView() {
+    const q = this.viewQuery();
+    const input = el('input', { type: 'text', value: this.sidebar.describeView(q).slice(0, 60), spellcheck: 'false' });
+    const save = async (close) => {
+      const name = input.value.trim();
+      if (!name) return;
+      try { await this.sidebar.loadViews(await api.saveView(name, q)); close(); this.toast(`Saved view "${name}"`); } catch (e) { this.toast(e.message); }
+    };
+    const d = openDialog({ title: 'Save view', width: 440,
+      body: el('div', {}, el('label', {}, 'Name', input),
+        el('div', { class: 'p-hint small', text: `Remembers: ${this.sidebar.describeView(q)} (and the sort order). It appears under Saved views; a view with the same name is updated.` })),
+      buttons: [{ label: 'Cancel' }, { label: 'Save', primary: true, onClick: save }] });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(d.close); });
+    setTimeout(() => input.select(), 0);
+  }
+
+  openSavedView(v) {
+    const q = v.query || {};
+    Object.assign(this.query, { folder: q.folder || null, recursive: q.recursive ?? this.query.recursive, q: q.q || '', ext: q.ext || '',
+      sort: q.sort || this.query.sort, order: q.order || this.query.order, guessed: !!q.guessed, tag: q.tag || '', exclude: q.exclude || '',
+      missing: q.missing || '', dupes: !!q.dupes, untagged: false, suggested: false });
+    prefs.set('folder', this.query.folder);
+    this.typeFilter.setSelected?.(this.query.ext);
+    const s = $('#search');
+    if (s) s.value = this.query.q;
+    this.activeView = v.id;
+    this.activeViewKey = null;   // taken from the first path-bar render after applying
+    if ((q.project || null) !== (this.projects.active || null)) {
+      if (q.project) this.projects.activate(+q.project, { keepFilters: true }); else this.projects.leave();
+    } else {
+      this.sidebar.render(); this.sidebar.renderFs(); this.onFilterChanged();
+    }
+    this.sidebar.renderViews();
+  }
+
+  /** Exact duplicates: files whose content exists in more than one place, next to each other. */
+  setDupes(on) {
+    this.query.dupes = on;
+    if (on && this.query.folder) this.leaveFolder();
+    this.sidebar.renderLibrary();
+    this.onFilterChanged();
+  }
+
   clearFilters() {
     this.query.tag = '';
     this.query.exclude = '';
+    this.query.dupes = false;
     this.query.untagged = false;
     this.query.missing = '';
     this.query.suggested = false;
@@ -933,8 +985,17 @@ class App {
     return out;
   }
 
+  /** A saved view stays highlighted until the filters are changed by hand. */
+  checkView() {
+    if (!this.activeView) return;
+    const key = JSON.stringify(Object.entries(this.viewQuery()).filter(([, v]) => v !== '' && v != null && v !== false));
+    if (this.activeViewKey == null) this.activeViewKey = key;
+    else if (key !== this.activeViewKey) { this.activeView = null; this.sidebar.renderViews(); }
+  }
+
   renderPathBar() {
     if (!this.pathbar || !this.sidebar) return;
+    this.checkView();
     const q = this.query;
     const left = [...this.projects.pathBar()];
     if (left.length && q.folder) left.push(el('span', { class: 'sep', text: '›' }));
@@ -971,6 +1032,7 @@ class App {
         text: `− Remove ${fmtNum(this.selected.size)} from ${t.name.split('/').pop()}`,
         onclick: () => this.applyTag(t.id, { op: 'remove', targets: [...this.selected] }).then(() => this.renderPathBar()) }));
     }
+    if (q.dupes) filters.push(el('span', { class: 'chip small' }, el('span', { text: '⧉ Duplicates' }), el('span', { class: 'x', text: '×', onclick: () => this.setDupes(false) })));
     if (q.untagged) filters.push(el('span', { class: 'chip small' }, el('span', { text: 'Untagged' }), el('span', { class: 'x', text: '×', onclick: () => this.setUntagged(false) })));
     if (q.missing) {
       const f = this.tags.facets.find((x) => x.key === q.missing);
@@ -991,7 +1053,8 @@ class App {
     if (q.suggested) filters.push(el('span', { class: 'chip small ai' }, el('span', { text: 'AI suggestions' }), el('span', { class: 'x', text: '×', onclick: () => this.setSuggestedFilter(false) })));
     if (this.aiView) filters.push(el('span', { class: 'chip small ai' }, el('span', { text: this.aiView.kind === 'search' ? `AI search: ${this.aiView.q}` : `Similar to ${this.aiView.name}` }),
       el('span', { class: 'x', text: '×', onclick: () => this.setAIView(null) })));
-    if (filters.length || q.q || q.missing || q.exclude) right.push(el('button', { class: 'btn small', text: 'Clear filters', onclick: () => this.clearFilters() }));
+    right.push(el('button', { class: 'btn small', text: '☆ Save view', title: 'Remember these filters (folder, tags, types, project, sort) in the sidebar', onclick: () => this.saveView() }));
+    if (filters.length || q.q || q.missing || q.exclude || q.dupes) right.push(el('button', { class: 'btn small', text: 'Clear filters', onclick: () => this.clearFilters() }));
     right.push(el('button', { class: 'btn small', text: '⟳', title: 'Refresh the list (R) - drops items that no longer match the filter', onclick: () => this.reload() }));
     this.pathbar.replaceChildren(el('div', { class: 'crumbs' }, ...left), ...filters, el('div', { class: 'spacer' }), ...right);
   }
@@ -1023,6 +1086,9 @@ class App {
       ['T', 'Tag with any name (creates the tag if new)'],
       ['Projects', 'Pick one top left (or click it in the sidebar) to work inside it'],
       ['+ · −', 'With a project open: add the selection · take it out'],
+      ['Export… (path bar)', 'Copy the open project into a Unity / Godot / Unreal folder, models with their textures'],
+      ['☆ Save view', 'Remember the current filters under a name (sidebar: Saved views)'],
+      ['Duplicates (sidebar)', 'Files whose exact content is in more than one place'],
       ['Click a tag', 'Everything with it (in the whole library, or in the open project)'],
       ['Ctrl+click · Alt+click', 'Narrow the current view (e.g. a tag in this folder) · hide items with it'],
       ['M', 'Move selection to a folder (with preview, keeps dates, undoable)'],
