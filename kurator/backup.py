@@ -269,6 +269,10 @@ def _scope_files(db: Database, s: dict) -> list[dict]:
     for fid, tid in db.cat.execute("SELECT file_id, tag_id FROM file_tags"):
         ftags.setdefault(fid, []).append(names[tid])
         fgroups.setdefault(fid, {}).setdefault(facet[tid], []).append(names[tid])
+    from .projects import live_projects_by_file   # projects that include files automatically
+    for fid, pnames in live_projects_by_file(db).items():
+        ftags.setdefault(fid, []).extend(pnames)
+        fgroups.setdefault(fid, {}).setdefault("project", []).extend(pnames)
     roots = {r["id"]: r["path"] for r in db.roots("library")}
     scope = s["scope"]
     want_tags = None

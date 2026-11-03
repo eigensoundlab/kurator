@@ -98,11 +98,15 @@ export class Panel {
           : m.model?.triangles != null
             ? el('tr', {}, el('th', { text: 'Geometry' }), el('td', { text: `${fmtNum(m.model.triangles)} triangles · ${fmtNum(m.model.vertices)} vertices` }))
             : el('tr', {}, el('th', { text: 'Size' }), el('td', { text: d.width ? `${d.width} × ${d.height} px` : (m.canvas ? `${m.canvas} px` : '—') })),
+        m.video_info?.duration ? el('tr', {}, el('th', { text: 'Length' }), el('td', { text: [fmtDuration(m.video_info.duration),
+          m.video_info.fps ? `${m.video_info.fps} fps` : null, m.video_info.video_codec?.toUpperCase(),
+          m.video_info.audio_codec ? `${m.video_info.audio_codec.toUpperCase()} audio` : 'no audio'].filter(Boolean).join(' · ') })) : null,
+        m.preview_note ? el('tr', {}, el('th', { text: 'Preview' }), el('td', { class: 'muted', text: m.preview_note })) : null,
         m.model?.dimensions?.length === 3 ? el('tr', {}, el('th', { text: 'Dimensions' }), el('td', { text: `${m.model.dimensions.join(' × ')}${m.model.unit ? ' ' + ({ millimeter: 'mm', centimeter: 'cm', meter: 'm', inch: 'in' }[m.model.unit] || m.model.unit) : ''}` })) : null,
         m.pages ? el('tr', {}, el('th', { text: 'Pages' }), el('td', { text: String(m.pages) })) : null,
         m.peak_dbfs != null ? el('tr', {}, el('th', { text: 'Level' }), el('td', { text: `peak ${m.peak_dbfs} dBFS · RMS ${m.rms_dbfs ?? '—'} dBFS` })) : null,
         m.ucs_catid ? el('tr', {}, el('th', { text: 'UCS' }), el('td', { text: m.ucs_catid, title: 'Universal Category System CatID from the file name' })) : null,
-        m.placeholder || m.preview ? el('tr', {}, el('th', { text: 'Preview' }), el('td', { class: 'muted', text: m.placeholder ? 'not available for this format - use Open' : m.preview === 'windows' ? 'from Windows (installed app)' : m.preview === 'rendered' ? 'rendered by Kurator - Enter for the 3D view' : 'stored in the file' })) : null,
+        (m.placeholder || m.preview) && !m.preview_note && !m.video ? el('tr', {}, el('th', { text: 'Preview' }), el('td', { class: 'muted', text: m.placeholder ? 'not available for this format - use Open' : m.preview === 'windows' ? 'from Windows (installed app)' : m.preview === 'rendered' ? 'rendered by Kurator - Enter for the 3D view' : 'stored in the file' })) : null,
         el('tr', {}, el('th', { text: 'File' }), el('td', { text: `${fmtBytes(d.size)} · ${(m.format || d.ext.slice(1)).toUpperCase()}${m.mode ? ' · ' + m.mode : ''}${m.frames ? ` · ${m.frames} frames` : ''}` })),
         d.alpha ? el('tr', {}, el('th', { text: 'Alpha' }), el('td', { text: 'transparent pixels' })) : null,
         d.status === 2 ? el('tr', {}, el('th', { text: 'Error' }), el('td', { class: 'err', text: d.error || 'cannot read' })) : null,
@@ -118,6 +122,13 @@ export class Panel {
       parts.push(section('Generation', body, true));
     }
     if (m.document) parts.push(section('Document', kvTable(m.document), true));
+    if (m.video_info) {
+      const vi = { ...m.video_info };
+      for (const k of ['duration', 'width', 'height', 'fps', 'video_codec', 'audio_codec']) delete vi[k];
+      if (vi.bitrate_kbps) { vi.bitrate = `${fmtNum(vi.bitrate_kbps)} kbps`; delete vi.bitrate_kbps; }
+      if (vi.audio_rate) { vi.audio_rate = `${(vi.audio_rate / 1000).toFixed(1)} kHz`; }
+      if (Object.keys(vi).length) parts.push(section('Video', kvTable(vi), true));
+    }
     if (m.model) {
       const mm = { ...m.model };
       delete mm.triangles; delete mm.vertices; delete mm.dimensions; delete mm.unit;

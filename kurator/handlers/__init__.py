@@ -23,6 +23,7 @@ class Loaded:
     meta: dict = field(default_factory=dict)
     dates: dict = field(default_factory=dict)
     size: tuple[int, int] | None = None   # original pixel size (before any draft scaling)
+    extra: dict = field(default_factory=dict)   # extra pictures stored with the thumbnails, e.g. {1: hover strip}
 
 
 # Groups for the type filter, in display order.
@@ -33,17 +34,19 @@ GROUPS = [
     ("document", "Documents"),
     ("texture", "Game textures"),
     ("3d", "3D models"),
+    ("video", "Video"),
     ("audio", "Audio"),
 ]
 
 
 @dataclass(frozen=True)
 class Handler:
-    kind: str                       # "image", "audio" or "model" (what the thumbnail shows / how it opens)
+    kind: str                       # "image", "audio", "model" or "video" (what the thumbnail shows / how it opens)
     extensions: tuple[str, ...]     # lower-case, with dot
     load: Callable[[bytes, str, int | None], Loaded]  # (data, path, thumb_target_px) -> Loaded
     browser_viewable: bool = False  # can the browser show / play the original file directly?
     group: str = "image"            # type-filter group, see GROUPS
+    streams: bool = False           # big files (video): load() gets data=None and reads the path itself
 
 
 _REGISTRY: dict[str, Handler] = {}
@@ -71,6 +74,7 @@ def supported_types() -> dict:
             "viewable": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.browser_viewable),
             "audio": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.kind == "audio"),
             "models": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.kind == "model"),
+            "video": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.kind == "video"),
             "meshes": sorted(e.lstrip(".") for e, h in _REGISTRY.items() if h.load.__name__ == "load_mesh_file")}
 
 
@@ -81,4 +85,5 @@ from . import artapps as _artapps  # noqa: E402,F401
 from . import vector as _vector  # noqa: E402,F401
 from . import audio as _audio  # noqa: E402,F401
 from . import model3d as _model3d  # noqa: E402,F401
+from . import video as _video  # noqa: E402,F401
 from . import placeholder as _placeholder  # noqa: E402,F401

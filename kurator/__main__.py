@@ -44,6 +44,12 @@ def main(argv: list[str] | None = None) -> None:
 
     db = Database(os.path.abspath(args.data_dir))
     db.cleanup()
+    from .handlers.video import tool
+    if tool("ffmpeg") and tool("ffprobe"):   # ffmpeg installed since videos were indexed: real previews now
+        n = db.remake_previews("kind = 'video' AND (json_extract(meta, '$.placeholder') IS NOT NULL "
+                               "OR json_extract(meta, '$.preview') = 'windows')")
+        if n:
+            print(f"[Kurator] ffmpeg found: making previews for {n} videos")
     for lib in args.library:
         p = os.path.normpath(os.path.abspath(os.path.expanduser(lib)))
         if not os.path.isdir(p):

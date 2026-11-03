@@ -29,7 +29,7 @@ export class Tags {
 
   async refresh() {
     let r;
-    try { r = await api.tags(); } catch { return; }
+    try { r = await api.tags(this.app.query.project); } catch { return; }
     this.list = r.tags;
     this.untagged = r.untagged;
     this.facets = r.facets || DEFAULT_FACETS;
@@ -82,14 +82,22 @@ export class Tags {
       const tagRow = (t) => {
         const depth = t.name.split('/').length - 1;
         return el('div', {
-          class: 'node tagnode' + (active.has(t.id) ? ' active' : '') + (excluded.has(t.id) ? ' excluded' : '') + (t.archived ? ' archived' : ''), style: { paddingLeft: `${6 + depth * 14}px` },
+          class: 'node tagnode' + (active.has(t.id) || this.app.projects?.active === t.id ? ' active' : '') + (excluded.has(t.id) ? ' excluded' : '') + (t.archived ? ' archived' : ''), style: { paddingLeft: `${6 + depth * 14}px` },
           'data-tag-id': t.id,
-          title: `${t.name}\nClick: everything with this tag (whole library)\nCtrl+click: narrow the current view (e.g. a project within a folder)\nAlt+click: hide items with this tag\nDrop selected images here to tag them`,
-          onclick: (e) => this.app.setTagFilter(t.id, e.ctrlKey || e.metaKey, { exclude: e.altKey }),
+          title: t.facet === 'project' && !t.name.includes('/')
+            ? `${t.name}\nClick: work inside this project (click again to leave)\nCtrl+click: narrow the current view · Alt+click: hide its files\nDrop selected images here to add them`
+            : `${t.name}\nClick: everything with this tag (in the whole library, or in the open project)\nCtrl+click: narrow the current view (e.g. a folder)\nAlt+click: hide items with this tag\nDrop selected images here to tag them`,
+          onclick: (e) => {
+            // a project (top-level) is opened as the top filter; Ctrl/Alt+click filter like any tag
+            if (t.facet === 'project' && !t.name.includes('/') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              if (this.app.projects.active === t.id) this.app.projects.leave(); else this.app.projects.activate(t.id);
+            } else this.app.setTagFilter(t.id, e.ctrlKey || e.metaKey, { exclude: e.altKey });
+          },
         },
         el('span', { class: 'dot', style: { background: t.color || '#888' } }),
         el('span', { class: 'nm fit', text: t.name.split('/').pop() }),
         t.hotkey ? el('span', { class: 'hk', title: `Hotkey ${t.hotkey}`, text: t.hotkey }) : null,
+        t.live ? el('span', { class: 'live', text: '⟲', title: 'Includes tags, folders or projects automatically' }) : null,
         el('span', { class: 'grow' }),
         el('span', { class: 'ct', text: fmtNum(t.count) }),
         el('span', { class: 'rm edit', title: 'Edit tag', text: '✎', onclick: (e) => { e.stopPropagation(); this.editDialog(t); } }));

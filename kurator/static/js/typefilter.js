@@ -9,6 +9,8 @@ const PRESETS = [
   ['All images', 'image'],
   ['Work files', 'work'],
   ['Vector', 'vector'],
+  ['Video', 'video'],
+  ['3D', '3d'],
   ['Audio', 'audio'],
 ];
 

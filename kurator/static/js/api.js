@@ -18,7 +18,7 @@ async function req(method, url, body, signal) {
 
 export const api = {
   state: () => req('GET', '/api/state'),
-  folders: () => req('GET', '/api/folders'),
+  folders: (project) => req('GET', '/api/folders' + (project ? `?project=${project}` : '')),
   items: (params, signal) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined && v !== '' && v !== false) q.set(k, v === true ? 1 : v);
@@ -35,7 +35,9 @@ export const api = {
   pins: () => req('GET', '/api/pins'),
   setPins: (paths) => req('PUT', '/api/pins', { paths }),
   // tags
-  tags: () => req('GET', '/api/tags'),
+  tags: (project) => req('GET', '/api/tags' + (project ? `?project=${project}` : '')),
+  projects: () => req('GET', '/api/projects'),
+  setProjectSources: (id, sources) => req('PUT', `/api/projects/${id}/sources`, { sources }),
   createTag: (name, opts = {}) => req('POST', '/api/tags', { name, ...opts }),
   updateTag: (id, patch) => req('PATCH', `/api/tags/${id}`, patch),
   deleteTag: (id) => req('DELETE', `/api/tags/${id}`),

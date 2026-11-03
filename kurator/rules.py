@@ -95,6 +95,12 @@ def plan_entries(db: Database, ids: list[int]) -> tuple[list[dict], list[dict]]:
             groups.setdefault(fid, {}).setdefault(facet[tid], []).append(names[tid])
         for fid, ts in db.cat.execute(f"SELECT id, date_ts FROM files WHERE id IN ({q})", chunk):
             dates[fid] = ts
+    from .projects import live_projects_by_file   # projects that include files automatically
+    wanted = set(ids)
+    for fid, pnames in live_projects_by_file(db).items():
+        if fid in wanted:
+            file_tags.setdefault(fid, []).extend(pnames)
+            groups.setdefault(fid, {}).setdefault("project", []).extend(pnames)
     entries, skipped = [], []
     for fid in ids:
         tags_here = file_tags.get(fid, [])

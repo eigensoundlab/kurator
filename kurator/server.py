@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import __version__, backup, dates, fileops, rclone, rules, tags, xmp
+from . import __version__, backup, dates, fileops, projects, rclone, rules, tags, xmp
 from .backup import BackupError
 from .backup_targets import TargetError
 from .db import Database
@@ -29,7 +29,7 @@ from .handlers import handler_for, supported_extensions, supported_types
 from .processing import THUMB_SIZES, process_file
 from .scanner import Scanner
 
-ITEM_COLS = "id, hash, color, date_ts, name, width, height, date_source, alpha, status, frames"
+ITEM_COLS = "id, hash, color, date_ts, name, width, height, date_source, alpha, status, frames, tver"
 SORTS = {
     "date": "date_ts {o}, id {o}",
     "name": "name COLLATE NOCASE {o}, id {o}",
@@ -44,7 +44,9 @@ MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".jfif": "image/jpeg", ".jp
         ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
         ".avif": "image/avif", ".svg": "image/svg+xml",
         ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
-        ".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac"}
+        ".flac": "audio/flac", ".m4a": "audio/mp4", ".aac": "audio/aac",
+        # .mov is usually H.264 inside: browsers play it when it is announced as MP4
+        ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/mp4", ".webm": "video/webm", ".ogv": "video/ogg"}
 
 
 class RootIn(BaseModel):
@@ -122,6 +124,11 @@ class ConnectIn(BaseModel):
     name: str
 
 
+def _tv(h: str, tver: int | None) -> str:
+    """Version tag in thumbnail URLs: content hash, plus the preview version if it was remade."""
+    return h[:12] + (f".{tver}" if tver else "")
+
+
 def _json(data, status: int = 200) -> Response:
     return Response(json.dumps(data, separators=(",", ":"), ensure_ascii=False),
                     status_code=status, media_type="application/json")
@@ -189,6 +196,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.exception_handler(BackupError)
     @app.exception_handler(TargetError)
     @app.exception_handler(rclone.RcloneError)
+    @app.exception_handler(projects.ProjectError)
     @app.exception_handler(AIError)
     @app.exception_handler(AIUnavailable)
     @app.exception_handler(VLMError)
@@ -246,8 +254,12 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     # -- folders -----------------------------------------------------------
     @app.get("/api/folders")
-    def folders():
-        rows = db.cat.execute("SELECT root_id, dir, COUNT(*) FROM files GROUP BY root_id, dir").fetchall()
+    def folders(project: int | None = None):
+        if project:   # project mode: only folders that hold files of the project, with those counts
+            ps, pa = projects.member_clause(db, project)
+            rows = db.cat.execute(f"SELECT root_id, dir, COUNT(*) FROM files WHERE {ps} GROUP BY root_id, dir", pa).fetchall()
+        else:
+            rows = db.cat.execute("SELECT root_id, dir, COUNT(*) FROM files GROUP BY root_id, dir").fetchall()
         roots = {r["id"]: r["path"] for r in db.roots("library")}
         nodes: dict[str, dict] = {}
         for rp in roots.values():
@@ -291,29 +303,32 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         suggested: bool = False,
         profile: int | None = None,
         exclude: str | None = None,
+        project: int | None = None,
+        member_of: int | None = None,
     ):
         where, args = [], []
+        # tag/project membership includes a project's live sources (tags, folders, other projects)
+        if project:   # the active project: the top filter, everything else filters inside it
+            sql_, a_ = projects.member_clause(db, project)
+            where.append(sql_); args += a_
         for t in (exclude or "").split(","):   # "everything except ..." (Alt+click a tag)
             if t.strip().isdigit():
-                ids = tags.descendant_ids(db, int(t))
-                if ids:
-                    where.append(f"id NOT IN (SELECT file_id FROM file_tags WHERE tag_id IN ({','.join('?' * len(ids))}))")
-                    args += ids
-        if tag:
-            for t in tag.split(","):
-                if not t.strip().isdigit():
-                    continue
-                ids = tags.descendant_ids(db, int(t))
-                if not ids:
-                    continue
-                where.append(f"id IN (SELECT file_id FROM file_tags WHERE tag_id IN ({','.join('?' * len(ids))}))")
-                args += ids
+                sql_, a_ = projects.member_clause(db, int(t))
+                where.append(f"NOT {sql_}"); args += a_
+        for t in (tag or "").split(","):
+            if t.strip().isdigit():
+                sql_, a_ = projects.member_clause(db, int(t))
+                where.append(sql_); args += a_
         if untagged:
             where.append("id NOT IN (SELECT file_id FROM file_tags)")
         for fct in (missing or "").split(","):
-            if fct.strip() in tags.FACET:  # e.g. "no project yet"
+            fct = fct.strip()
+            if fct == "project" and projects.has_sources(db):
+                sql_, a_ = projects.any_project_clause(db)
+                where.append(f"NOT {sql_}"); args += a_
+            elif fct in tags.FACET:  # e.g. "no project yet"
                 where.append("id NOT IN (SELECT ft.file_id FROM file_tags ft JOIN tags t ON t.id = ft.tag_id WHERE t.facet = ?)")
-                args.append(fct.strip())
+                args.append(fct)
         if folder:
             f = os.path.normpath(folder)
             if recursive:
@@ -348,7 +363,11 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             if profile:
                 args.append(profile)
         sql = (f"SELECT {ITEM_COLS} FROM files" + (" WHERE " + " AND ".join(where) if where else "") + f" ORDER BY {order_sql}")
-        return _json(_payload(db.cat.execute(sql, args)))
+        out = _payload(db.cat.execute(sql, args))
+        if member_of:   # "add from library" mode: which items are already in the active project
+            mem = projects.member_ids(db, member_of)
+            out["m"] = [1 if i in mem else 0 for i in out["ids"]]
+        return _json(out)
 
     def _payload(rows, scores: dict | None = None) -> dict:
         ids, v, c, d, n, w, h, ds, a, t, f, sg = [], [], [], [], [], [], [], [], [], [], [], []
@@ -359,7 +378,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             sg.append(sugg.get(row[0], 0))
             f.append(1 if (row[10] or 0) > 1 else 0)
             ids.append(row[0])
-            v.append(row[1][:12] if row[1] else ("e" if row[9] == 2 else ""))
+            v.append(_tv(row[1], row[11]) if row[1] else ("e" if row[9] == 2 else ""))
             c.append(row[2] if row[2] is not None else -1)
             d.append(int(row[3]) if row[3] is not None else 0)
             n.append(row[4])
@@ -454,15 +473,46 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     # -- tags ----------------------------------------------------------------
     @app.get("/api/tags")
-    def get_tags():
+    def get_tags(project: int | None = None):
+        """Tags with counts. With ?project=, counts are inside that project (the sidebar in project mode)."""
         lib = "root_id IN (SELECT id FROM roots WHERE kind = 'library')"
-        untagged = db.cat.execute(f"SELECT COUNT(*) FROM files WHERE id NOT IN (SELECT file_id FROM file_tags) AND {lib}").fetchone()[0]
+        scope, sargs = lib, []
+        if project:
+            ps, pa = projects.member_clause(db, project)
+            scope, sargs = f"{lib} AND {ps}", pa
+        untagged = db.cat.execute(f"SELECT COUNT(*) FROM files WHERE id NOT IN (SELECT file_id FROM file_tags) AND {scope}", sargs).fetchone()[0]
         missing = {}
+        live = projects.has_sources(db)
         for f in tags.FACETS:
+            if f["key"] == "project" and live:
+                q_, a_ = projects.any_project_clause(db)
+                missing["project"] = db.cat.execute(f"SELECT COUNT(*) FROM files WHERE NOT {q_} AND {scope}", a_ + sargs).fetchone()[0]
+                continue
             missing[f["key"]] = db.cat.execute(
                 "SELECT COUNT(*) FROM files WHERE id NOT IN (SELECT ft.file_id FROM file_tags ft JOIN tags t ON t.id = ft.tag_id "
-                f"WHERE t.facet = ?) AND {lib}", (f["key"],)).fetchone()[0]
-        return _json({"tags": tags.list_tags(db), "untagged": untagged, "facets": tags.FACETS, "missing": missing})
+                f"WHERE t.facet = ?) AND {scope}", (f["key"], *sargs)).fetchone()[0]
+        lst = tags.list_tags(db)
+        if project:
+            counts = dict(db.cat.execute(f"SELECT ft.tag_id, COUNT(*) FROM file_tags ft JOIN files ON files.id = ft.file_id "
+                                         f"WHERE {scope} GROUP BY ft.tag_id", sargs).fetchall())
+            for t in lst:
+                t["count"] = counts.get(t["id"], 0)
+        if live:   # projects that include things automatically: count what is really in them
+            with_src = {r[0] for r in db.cat.execute("SELECT DISTINCT tag_id FROM project_sources")}
+            for t in lst:
+                if t["id"] in with_src:
+                    q_, a_ = projects.member_clause(db, t["id"])
+                    t["count"] = db.cat.execute(f"SELECT COUNT(*) FROM files WHERE {q_} AND {scope}", a_ + sargs).fetchone()[0]
+                    t["live"] = True
+        return _json({"tags": lst, "untagged": untagged, "facets": tags.FACETS, "missing": missing})
+
+    @app.get("/api/projects")
+    def get_projects():
+        return _json(projects.overview(db))
+
+    @app.put("/api/projects/{tag_id}/sources")
+    def put_project_sources(tag_id: int, body: dict):
+        return _json(projects.set_sources(db, tag_id, list(body.get("sources") or [])))
 
     @app.post("/api/tags")
     def create_tag(body: TagIn):
@@ -741,21 +791,25 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.get("/t/{item_id}")
     def thumb(item_id: int, request: Request, s: int = Query(256), v: str | None = None):
-        if s not in THUMB_SIZES:
+        strip = s == 1   # the hover-scrub strip of a video (made together with its thumbnails)
+        if s not in THUMB_SIZES and not strip:
             raise HTTPException(400, "bad size")
-        row = db.cat.execute("SELECT path, hash, status FROM files WHERE id = ?", (item_id,)).fetchone()
+        row = db.cat.execute("SELECT path, hash, status, tver FROM files WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(404)
-        path, h, status = row
+        path, h, status, tver = row
         data = db.get_thumb(h, s) if h and status == 1 else None
+        if data is None and strip and status == 1:
+            raise HTTPException(404, "no strip for this file")
         if data is None:
-            if status == 2 and s == 256:
+            if status == 2 and s in (1, 256):
                 raise HTTPException(422, "cannot decode")
-            key = (item_id, s)
+            gen = 256 if strip else s
+            key = (item_id, gen)
             with inflight_lock:  # coalesce duplicate requests for the same thumbnail
                 fut = inflight.get(key)
                 if fut is None:
-                    fut = inflight[key] = ondemand.submit(_generate, item_id, path, s, status != 1)
+                    fut = inflight[key] = ondemand.submit(_generate, item_id, path, gen, status != 1)
             try:
                 r = fut.result(timeout=120)
             finally:
@@ -764,11 +818,13 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             if "error" in r:
                 raise HTTPException(422, r["error"])
             h = r["hash"]
-            data = r["thumbs"][s]
-        etag = f'"{h[:16]}-{s}"'
+            data = r["thumbs"].get(s)
+            if data is None:
+                raise HTTPException(404, "no strip for this file")
+        etag = f'"{h[:16]}-{s}-{tver or 0}"'
         if request.headers.get("if-none-match") == etag:
             return Response(status_code=304, headers={"ETag": etag})
-        cache = "private, max-age=31536000, immutable" if v and h.startswith(v) else "private, no-cache"
+        cache = "private, max-age=31536000, immutable" if v and v == _tv(h, tver) else "private, no-cache"
         return Response(data, media_type="image/webp", headers={"Cache-Control": cache, "ETag": etag})
 
     mesh_cache: dict = {}

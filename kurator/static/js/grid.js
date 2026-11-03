@@ -3,7 +3,7 @@
 // so 100k items cost the same as 100. Layout is pure arithmetic - no image has to load first.
 
 import { originalUrl, thumbUrl } from './api.js';
-import { AUDIO, el, extOf, fmtMonth, VIEWABLE } from './util.js';
+import { AUDIO, el, extOf, fmtMonth, VIDEO, VIEWABLE } from './util.js';
 
 const PAD = 12;
 const GAP = 8;
@@ -42,6 +42,7 @@ export class Grid {
       this.hovered = cell;
       if (!cell || !this.app.animateOnHover) return;
       const i = +cell.dataset.i;
+      if (VIDEO.has(extOf(this.items.n[i])) && this.items.v[i] !== 'e') { this.startScrub(cell, i); return; }
       if (!this.items.f?.[i] || !VIEWABLE.has(extOf(this.items.n[i])) || this.items.v[i] === 'e') return;
       this.hoverTimer = setTimeout(() => {
         if (this.hovered !== cell || +cell.dataset.i !== i) return;
@@ -50,13 +51,45 @@ export class Grid {
       }, 250);
     });
     this.layer.addEventListener('pointerleave', () => this.stopHover());
+    this.layer.addEventListener('pointermove', (e) => { if (this.hovered?._scrub) this.scrub(this.hovered, e); });
     new ResizeObserver(() => this.relayout()).observe(this.el);
+  }
+
+  /** Videos: moving the mouse across the thumbnail runs through a strip of frames. */
+  startScrub(cell, i) {
+    const items = this.items;
+    const url = `/t/${items.ids[i]}?s=1` + (items.v[i] ? `&v=${items.v[i]}` : '');
+    const im = new Image();
+    im.onload = () => {
+      if (this.hovered !== cell || +cell.dataset.i !== i) return;
+      const w = items.w[i] || 16, h = items.h[i] || 9;
+      const n = Math.max(1, Math.round(im.naturalWidth / (im.naturalHeight * (w / h))));
+      if (!cell._strip) { cell._strip = el('div', { class: 'strip' }); cell._th.append(cell._strip); }
+      cell._strip.style.backgroundImage = `url("${url}")`;
+      cell._scrub = { n, aspect: w / h };
+      cell.classList.add('scrubbing');
+      if (this._lastMove) this.scrub(cell, this._lastMove);
+    };
+    im.src = url;
+  }
+
+  scrub(cell, e) {
+    this._lastMove = e;
+    const r = cell._th.getBoundingClientRect();
+    const { n, aspect } = cell._scrub;
+    const k = Math.min(n - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * n)));
+    // the same "contain" box the thumbnail uses
+    const fw = aspect >= 1 ? r.width : r.height * aspect, fh = aspect >= 1 ? r.width / aspect : r.height;
+    Object.assign(cell._strip.style, { backgroundSize: `${fw * n}px ${fh}px`, backgroundPosition: `${(r.width - fw) / 2 - k * fw}px ${(r.height - fh) / 2}px` });
+    cell._strip.dataset.k = `${k + 1}/${n}`;
   }
 
   stopHover() {
     clearTimeout(this.hoverTimer);
     const c = this.hovered;
     this.hovered = null;
+    this._lastMove = null;
+    if (c && c._scrub) { c._scrub = null; c.classList.remove('scrubbing'); }
     if (c && c._anim) {
       c._anim = false;
       if (c._img.dataset.url) c._img.src = c._img.dataset.url;
@@ -188,7 +221,7 @@ export class Grid {
     const name = it.n[i];
     const ext = extOf(name);
     const anim = it.f?.[i];
-    cell._ext.textContent = anim ? `▶ ${ext.toUpperCase()}` : BADGE_EXT.has(ext) ? ext.toUpperCase() : '';
+    cell._ext.textContent = anim || VIDEO.has(ext) ? `▶ ${ext.toUpperCase()}` : BADGE_EXT.has(ext) ? ext.toUpperCase() : '';
     cell._ext.style.display = cell._ext.textContent ? '' : 'none';
     cell.classList.toggle('audio', AUDIO.has(ext) && VIEWABLE.has(ext));   // ▶ only where the browser can play it
     if (this.labels) cell._label.textContent = name;
@@ -203,6 +236,7 @@ export class Grid {
     cell.classList.toggle('focus', i === app.focusIndex);
     cell.classList.toggle('dim', !app.matchesFilter(i));
     cell.classList.toggle('playing', id === app.playingId);
+    cell.classList.toggle('member', !!this.items.m?.[i]);   // "add from library": already in the project
     this.paintTags(cell, i);
   }
 

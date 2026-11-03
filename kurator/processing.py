@@ -66,13 +66,21 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
         st = os.stat(path)
         out["size"] = st.st_size
         out["mtime_ns"] = st.st_mtime_ns
-        with open(path, "rb") as f:
-            data = f.read()
-        out["hash"] = file_hash(data)
         ext = os.path.splitext(path)[1].lower()
         handler = handler_for(ext)
         if handler is None:
             raise ValueError(f"unsupported type {ext}")
+        if handler.streams:   # videos: hash in chunks, never hold the whole file in memory
+            h = hashlib.blake2b(digest_size=16)
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(8 << 20), b""):
+                    h.update(chunk)
+            out["hash"] = h.hexdigest()
+            data = None
+        else:
+            with open(path, "rb") as f:
+                data = f.read()
+            out["hash"] = file_hash(data)
         loaded = handler.load(data, path, max(sizes) if sizes else None)
         del data
         out["kind"] = handler.kind
@@ -96,7 +104,7 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
             if orientation in (5, 6, 7, 8):
                 full_w, full_h = full_h, full_w
             out["width"], out["height"] = full_w, full_h
-            if (loaded.meta.get("audio") or loaded.meta.get("placeholder") or "model" in loaded.meta
+            if (loaded.meta.get("audio") or (loaded.meta.get("placeholder") and not loaded.size) or "model" in loaded.meta
                     or (loaded.size is None and loaded.meta.get("preview"))):
                 out["width"] = out["height"] = None  # the thumbnail is a waveform / a card, not the content
             img = ImageOps.exif_transpose(img) if orientation != 1 else img
@@ -105,6 +113,10 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
             # waveforms: the cell behind the 2:1 picture gets the waveform's background, not its average
             out["color"] = _avg_color(img.crop((0, 0, img.width, 4))) if loaded.meta.get("audio") else _avg_color(img)
             out["thumbs"] = {s: _encode(img, s) for s in sizes}
+            for key, extra in (loaded.extra or {}).items():   # e.g. the video hover strip, stored as it is
+                buf = io.BytesIO()
+                extra.convert("RGB").save(buf, "WEBP", quality=72, method=4)
+                out["thumbs"][key] = buf.getvalue()
             out["alpha"] = img.mode == "RGBA" and img.getchannel("A").getextrema()[0] < 255
     except Exception as e:  # report, don't crash the pool
         out["error"] = f"{type(e).__name__}: {e}"

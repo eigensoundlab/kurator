@@ -88,7 +88,7 @@ export class Sidebar {
   // ------------------------------------------------------------- library
   async refresh(roots) {
     this.roots = (roots || this.roots).filter((r) => r.kind !== 'browse');
-    try { this.nodes = await api.folders(); } catch { return; }
+    try { this.nodes = await api.folders(this.app.query.project); } catch { return; }
     this.renderLibrary();
   }
 
@@ -109,10 +109,12 @@ export class Sidebar {
     }
     const current = this.app.query.folder || null;
     const total = this.nodes.filter((n) => n.parent == null).reduce((a, n) => a + n.total, 0);
+    const proj = this.app.query.project && this.app.projects?.current;
     const all = el('div', { class: 'node' + (current === null ? ' active' : ''), onclick: () => this.app.setFolder(null) },
-      el('span', { class: 'tw' }), el('span', { class: 'nm', text: 'All library items' }), el('span', { class: 'ct', text: fmtNum(total) }));
+      el('span', { class: 'tw' }), el('span', { class: 'nm', text: proj ? `All of ${proj.name}` : 'All library items' }), el('span', { class: 'ct', text: fmtNum(total) }));
     const build = (n, depth) => {
-      const kids = byParent.get(n.path) || [];
+      if (proj && !n.total) return [];   // project mode: only folders that hold project files
+      const kids = (byParent.get(n.path) || []).filter((k) => !proj || k.total);
       const open = this.expanded.has(n.path) || (n.parent == null && !this.expanded.has('!' + n.path));
       const isRoot = n.parent == null;
       const row = el('div', {

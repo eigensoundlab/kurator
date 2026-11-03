@@ -4,11 +4,12 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.7 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.8 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
-> (Google Drive and others via rclone), vector/document/art-app previews, sound files, **3D models**
-> (previews and a 3D viewer), and optional local AI (search by description, find similar, tag
-> suggestions from a pool you choose) work. See the [Roadmap](#roadmap).
+> (Google Drive and others via rclone), vector/document/art-app previews, sound files, 3D models
+> (previews and a 3D viewer), **video**, **projects you work inside**, and optional local AI
+> (search by description, find similar, tag suggestions from a pool you choose) work.
+> See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
 
 **Author:** Daniel Sandner. See [eigensound.com](https://eigensound.com/) (sound research) and
 [sandner.art](https://sandner.art/) (AI/ML techniques for art and science).
@@ -118,6 +119,7 @@ Nothing ticked means all types. The choice is remembered.
 | Vector | **svg svgz** (resvg), **ai** (PDF-based Illustrator files), **eps** (embedded preview; Ghostscript if installed), **cdr** (embedded thumbnail), afdesign, fig, sketch, xd | rendered or embedded |
 | Documents | **pdf** (first page, pdfium), **indd** (XMP thumbnail), afpub, sla | first page / embedded |
 | Game textures | tga, dds, blp | full |
+| Video | **mp4 m4v mov webm ogv** (play in Kurator), mkv avi wmv flv mpg mpeg m2ts mts ts 3gp mxf vob | a frame + hover scrubbing (needs ffmpeg) |
 | 3D models | **glb gltf obj fbx stl ply dae 3mf 3ds off usda usdz vox**, **blend** (also .blend1), usd usdc ma mb max c4d ztl zpr abc 3dm skp lwo hip spp sbs sbsar | rendered by Kurator / Blender's saved thumbnail / embedded (3MF, SketchUp) / Windows |
 | Audio | wav, mp3, ogg, oga, opus, flac, m4a, aac, aif/aiff/aifc, caf, w64, rf64, wma | waveform |
 
@@ -188,6 +190,22 @@ the models run on your computer. The first use of a model downloads it once from
 Embeddings are stored in `embeddings.db` (one per image content and model; duplicates share one),
 next to the catalog.
 
+### Video
+
+Videos are catalogued like everything else, with their **recording date** (phones and cameras store
+it in the file), length, resolution, frame rate and codecs.
+
+- **Thumbnails** show a frame and the length. **Move the mouse across a video** in the grid to run
+  through 8 frames of it (hover scrubbing, uses the *▶ Hover* switch).
+- **Enter** plays MP4 (H.264), WebM, Ogg and most MOV files in the viewer: Space pauses,
+  Shift+← → jumps 5 s, ← → go to the next file. Other formats (MKV, AVI…) open in your player with
+  **O**.
+- Previews need **ffmpeg** (free): on Windows `winget install ffmpeg`, on macOS `brew install ffmpeg`,
+  on Linux your package manager. Restart Kurator, then *Rescan*. Kurator finds it on the PATH, or set
+  `KURATOR_FFMPEG` to its folder. Without ffmpeg, Windows still shows its own video thumbnails, and
+  MP4/MOV files still get their length, size and recording date.
+- Big videos are read in chunks, never loaded into memory as a whole.
+
 ### 3D models
 
 3D files are catalogued like images: tag them, move them, back them up, filter with the **3D models**
@@ -210,29 +228,51 @@ group of the type filter.
 - Draco- or meshopt-compressed glTF files and binary USD (`.usdc`) can't be read yet; they are
   listed with a card or the Windows thumbnail.
 
-### Folders, tags and projects: how they combine
+### Projects: work inside one
 
-The sidebar has **places** (library folders, pinned and browsed folders) and **tags** (subjects,
-projects, status, source). The path bar above the grid always shows what you're looking at.
+A project (*Game A*, *Client B*, *Artbook*) is a container that can span all your library folders.
+Pick it in the **project switcher** at the top left (or click it under *Projects* in the sidebar)
+and Kurator works **inside** it: the folder tree shows only folders with project files, tag counts
+are counted inside the project, and every filter (folders, tags, types, dates, search, AI search)
+narrows the project down. Click the project again, or × in the path bar, to leave it.
+
+**What belongs to a project:**
+
+- **Files you add by hand:** drag selected images onto the project (sidebar, tag bar or the
+  project chip in the path bar), press **+**, use the project's hotkey (1–9) or click it in the tag
+  bar.
+- **Things it includes automatically** (*Edit…* on the project), kept up to date as you work:
+  - **tags**: everything tagged *Creatures*, including *Creatures/Dragons*, now and later;
+  - **folders**: everything in `D:\Game A\Concepts`, including new files;
+  - **other projects**: *Game A* can include *Game A – DLC*, which keeps its own contents.
+
+**Two modes**, switched in the path bar:
+
+| Mode | Shows | Use it to |
+|---|---|---|
+| **In project** | only the project's files | browse, tag, sort and move what's in it; **−** takes the selection out |
+| **Add from library** | the whole library, project files marked ◆ | find more files for it; **+** or dragging adds them |
+
+Files that are in the project only because of an automatic rule can't be removed one by one; *Edit…*
+the rule instead (Kurator says so when you press −). Undo (Ctrl+Z) works for adding and removing.
+Move rules, backup folders (`{project}`), backup scopes and *No project* all count automatic members
+too. XMP sidecars only list projects you added by hand.
+
+A typical round: open *Game A* → *Add from library* → open a folder of new work → select → **+** →
+back to *In project* → tag and sort.
+
+### Filters: how they combine
+
+The path bar above the grid always shows what you're looking at: the project, the folder, and one
+chip per filter (× removes it, *Clear filters* removes all but the project).
 
 | Action | Result |
 |---|---|
 | Click a folder | That folder (and its subfolders if *Subfolders* is on). Tag filters stay. |
-| Click a tag or project | **Everything with it, in the whole library**, like opening an album |
-| Ctrl+click a tag | Narrow the current view: *Game A* within this folder, *Icons* within *Game A* |
-| Alt+click a tag | Hide items with it: everything **except** what's already in *Game A* |
-| *No project*, *Untagged*… | What's left to sort in the whole library (Ctrl+click: in this folder) |
-| × on a chip in the path bar | Remove just that filter; *Clear filters* removes all |
-
-**Adding to and removing from a project:**
-
-- **Drag** selected images onto a project (or any tag) in the sidebar or the tag bar.
-- Or use the project's **hotkey (1–9)**, or click it in the **tag bar**: it adds, or removes it when
-  all selected images already have it.
-- In a project's view, select images and click **− Remove N from Game A** in the path bar. They stay
-  visible (dimmed) until you press **R**, and Ctrl+Z puts them back.
-- A typical round: open a folder of new work → *No project* (Ctrl+click) → select → drag onto the
-  project → R.
+| Click a tag | **Everything with it**, in the whole library (or in the open project) |
+| Ctrl+click a tag | Narrow the current view: *Icons* within this folder |
+| Alt+click a tag or project | Hide items with it: everything **except** what's already in *Game B* |
+| *No project*, *Untagged*… | What's left to sort (Ctrl+click: only in this folder) |
 
 ### Tags
 
@@ -245,8 +285,8 @@ projects, status, source). The path bar above the grid always shows what you're 
   | **Status** | concept, WIP, final | one (setting *final* replaces *WIP*) |
   | **Source** | own, reference, AI-generated | one |
 
-  - Filters combine across groups: click *Game A*, then Ctrl+click *Icons* to get the icons used in
-    Game A (see [Folders, tags and projects](#folders-tags-and-projects-how-they-combine)).
+  - Filters combine across groups: open *Game A*, then click *Icons* to get the icons used in Game A
+    (see [Projects](#projects-work-inside-one) and [Filters](#filters-how-they-combine)).
   - Each group has its own "none" view: *Untagged*, *No project*, *No status*.
   - Finished projects can be **archived**: hidden from the tag bar, still searchable.
   - Folder layouts use the Subjects group. Projects, status and source are available as the
@@ -397,6 +437,7 @@ by filter"*.
 | B | backup |
 | O | open in the default application |
 | S · A · Shift+A | AI: find similar · accept suggestions · reject suggestions |
+| + · − | with a project open: add the selection to it · take it out (otherwise: thumbnail size) |
 | P | auto-play sounds on focus |
 | R | refresh (drop items that no longer match the filter) |
 | Backspace | parent folder |
@@ -444,6 +485,7 @@ kurator/
   tags.py          tag hierarchy, hotkeys, apply/toggle
   fileops.py       safe moves + undo, Windows creation time, folder listing, reveal
   rules.py         move rules: tag -> destination template
+  projects.py      projects with automatic sources (tags, folders, other projects)
   xmp.py           XMP sidecars (write), keyword import (XMP, Windows tags, sidecars)
   watcher.py       live folder watching (watchdog), debounced re-check of changed folders
   backup.py        backup sets, planner (layouts, spreading over targets, space), runner, restore
@@ -456,6 +498,7 @@ kurator/
     vector.py      SVG (resvg), PDF/AI (pdfium), EPS, InDesign
     audio.py       sound: tags, BWF/iXML, levels, waveform (soundfile)
     model3d.py     3D: rendered previews, Blender thumbnails, embedded/Windows previews
+    video.py       video: ffmpeg/ffprobe frames, hover strip, metadata; MP4 box reader
     placeholder.py formats without a readable preview (Windows thumbnail or a card)
     common.py      embedded XMP/zip previews, Windows shell thumbnails, cards
   mesh3d/          3D geometry without a 3D library
@@ -539,8 +582,10 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
 10. ~~3D: previews for glTF/FBX/OBJ/STL/3MF/VOX and more, Blender thumbnails, 3D viewer~~ ✅
     Next: texture sets (albedo/normal/roughness grouped with their model), Draco glTF, turntable
     on hover, Blender-rendered previews when Blender is installed.
-11. **Video (optional, needs ffmpeg):** frame thumbnails, hover scrubbing, duration/codec/resolution,
-    playback of browser-friendly formats (MP4/WebM).
+11. ~~Video: frame thumbnails, hover scrubbing, recording dates, playback~~ ✅;
+    ~~projects as the top filter, with automatic sources~~ ✅
+    Next: texture sets grouped with their models; export a project to a game folder (Unity/Godot/
+    Unreal layout); saved searches; near-duplicate finder.
 12. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 Other ideas: version stacks (sketch → lineart → colour), near-duplicate finder, compare mode (2–4 up),

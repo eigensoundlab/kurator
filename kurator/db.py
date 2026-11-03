@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 CATALOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -168,6 +168,20 @@ MIGRATIONS = {
             model TEXT NOT NULL, text TEXT NOT NULL, created REAL,
             PRIMARY KEY (file_id, model)
         ) WITHOUT ROWID""",
+    ],
+    5: [
+        # Projects that include things automatically: a tag, a folder or another project (live).
+        """CREATE TABLE project_sources (
+            id INTEGER PRIMARY KEY,
+            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,          -- 'tag' | 'folder' | 'project'
+            ref TEXT NOT NULL,           -- tag id, or folder path
+            created REAL
+        )""",
+        "CREATE INDEX project_sources_tag ON project_sources(tag_id)",
+        # Thumbnail version: bumped when previews are made again for unchanged files (e.g. ffmpeg
+        # was installed later), so browsers don't keep showing the old cached picture.
+        "ALTER TABLE files ADD COLUMN tver INTEGER NOT NULL DEFAULT 0",
     ],
 }
 
@@ -323,6 +337,13 @@ class Database:
             self._orphan_tags_where(c, "f.root_id = ?", (root_id,))
             c.execute("DELETE FROM roots WHERE id = ?", (root_id,))
             c.execute("COMMIT")
+
+    def remake_previews(self, where: str, args: tuple = ()) -> int:
+        """Process matching files again (their previews could be better now) on the next scan."""
+        with self.write_lock:
+            n = self.cat.execute(f"UPDATE files SET status = 0, tver = tver + 1 WHERE status = 1 AND ({where})", args).rowcount
+            self.cat.commit()
+        return n
 
     def cleanup(self, browse_days: float = 14, orphan_days: float = 180) -> None:
         """Forget browse folders not visited for a while and very old orphaned tags."""

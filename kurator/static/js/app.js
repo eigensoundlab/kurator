@@ -11,12 +11,13 @@ import { openBackupDialog } from './backupdlg.js';
 import { Grid } from './grid.js';
 import { openMoveDialog } from './movedlg.js';
 import { Panel } from './panel.js';
+import { Projects } from './projects.js';
 import { openRulesDialog } from './rulesdlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
 import { Sidebar } from './sidebar.js';
 import { Tags } from './tags.js';
 import { TypeFilter } from './typefilter.js';
-import { AUDIO, MESHES, VIEWABLE, extOf } from './util.js';
+import { AUDIO, MESHES, VIDEO, VIEWABLE, extOf } from './util.js';
 import { $, debounce, el, fmtNum, isTyping, prefs } from './util.js';
 import { Viewer } from './viewer.js';
 
@@ -70,6 +71,7 @@ class App {
     this.pathbar = $('#pathbar');
     this.sidebar = new Sidebar($('#sidebar'), this);
     this.viewer = new Viewer(this);
+    this.projects = new Projects(this);
     this.grid.setOptions({ size: prefs.get('size', 170), fit: prefs.get('fit', 'contain'), labels: prefs.get('labels', false) });
 
     this.buildToolbar();
@@ -78,6 +80,7 @@ class App {
     this.bindGridPointer();
     this.bindKeys();
     this.tags.refresh();
+    this.projects.refresh();
     this.refreshState().then(async () => {
       if (this.query.folder) {  // re-open the last folder (registers it again if it was a browsed one)
         try { await api.browse(this.query.folder); } catch { this.query.folder = null; prefs.set('folder', null); }
@@ -150,6 +153,7 @@ class App {
       VIEWABLE.clear(); for (const e of st.types.viewable) VIEWABLE.add(e);
       AUDIO.clear(); for (const e of st.types.audio) AUDIO.add(e);
       if (st.types.meshes) { MESHES.clear(); for (const e of st.types.meshes) MESHES.add(e); }
+      if (st.types.video) { VIDEO.clear(); for (const e of st.types.video) VIDEO.add(e); }
     }
     const scan = st.scan;
     if (scan.version !== this.scanVersion) {
@@ -157,6 +161,7 @@ class App {
       this.scanVersion = scan.version;
       this.sidebar.refresh(st.roots);
       this.tags.refreshSoon();
+      this.projects.refresh();
       // While indexing, refresh the grid at most every 2.5 s; selection/scroll/focus are kept.
       if (!first && (scan.phase === 'idle' || performance.now() - this.lastReload > 2500)) this.reload();
     }
@@ -418,7 +423,7 @@ class App {
       this.tags.renderBar();
       // the "− Remove N from <project>" button in the path bar follows the selection
       const single = (this.query.tag || '').split(',').filter(Boolean).length === 1;
-      if (single) this.renderPathBar();
+      if (single || this.projects.active) this.renderPathBar();
     });
   }
 
@@ -767,6 +772,8 @@ class App {
       else if (k === 'Backspace' || (e.altKey && k === 'ArrowUp')) { const p = this.query.folder && this.parentOf(this.query.folder); if (p) this.openPath(p); }
       else if (k === 'Escape') this.clearSelection();
       else if (k === '/' || (ctrl && (k === 'f' || k === 'F'))) $('#search').focus();
+      else if ((k === '+' || k === '=') && this.projects.active) this.projects.addSelection('add');
+      else if (k === '-' && this.projects.active) this.projects.addSelection('remove');
       else if (k === '+' || k === '=') this.setSize(this.grid.size * 1.15);
       else if (k === '-') this.setSize(this.grid.size / 1.15);
       else if (k === '?') this.toggleHelp(true);
@@ -836,7 +843,7 @@ class App {
     anim.classList.toggle('on', this.animateOnHover);
     anim.onclick = () => { this.animateOnHover = !this.animateOnHover; prefs.set('animHover', this.animateOnHover); anim.classList.toggle('on', this.animateOnHover); };
 
-    bar.append(el('div', { class: 'brand', text: 'Kurator' }), search, type, dates, sort, order, rec,
+    bar.append(el('div', { class: 'brand', text: 'Kurator' }), this.projects.wrap, search, type, dates, sort, order, rec,
       el('div', { class: 'spacer' }), this.sizeInput, fit, labels, anim, rescan,
       el('button', { class: 'btn', title: 'Back up to other disks, restore', text: 'Backup', onclick: () => openBackupDialog(this) }),
       el('button', { class: 'btn', title: 'AI tagging from tag pools, search by description, similar images', text: 'AI', onclick: () => openAIDialog(this) }),
@@ -929,14 +936,15 @@ class App {
   renderPathBar() {
     if (!this.pathbar || !this.sidebar) return;
     const q = this.query;
-    const left = [];
+    const left = [...this.projects.pathBar()];
+    if (left.length && q.folder) left.push(el('span', { class: 'sep', text: '›' }));
     if (q.folder) {
       const cs = this.crumbs(q.folder);
       cs.forEach((c, i) => {
         if (i) left.push(el('span', { class: 'sep', text: '›' }));
         left.push(el('button', { class: 'crumb' + (i === cs.length - 1 ? ' last' : ''), text: c.name, title: c.path, onclick: () => this.openPath(c.path) }));
       });
-    } else {
+    } else if (!this.projects.active) {
       left.push(el('span', { class: 'crumb last', text: 'All library items' }));
     }
     const filters = [];
@@ -952,7 +960,12 @@ class App {
         el('span', { class: 'x', text: '×', title: 'Remove filter', onclick: () => this.setTagFilter(id, false, { exclude: true }) })));
     }
     const only = (q.tag || '').split(',').filter(Boolean).map(Number);
-    if (only.length === 1 && this.selected.size) {
+    const proj = this.projects.current;
+    if (proj && this.selected.size) {
+      filters.push(this.projects.mode === 'add'
+        ? el('button', { class: 'btn small primary', text: `+ Add ${fmtNum(this.selected.size)} to ${proj.name}`, title: 'Add the selection to the project (+)', onclick: () => this.projects.addSelection('add') })
+        : el('button', { class: 'btn small', text: `− Remove ${fmtNum(this.selected.size)} from ${proj.name}`, title: 'Take the selection out of the project (−). R drops them from the view; Ctrl+Z undoes.', onclick: () => this.projects.addSelection('remove') }));
+    } else if (only.length === 1 && this.selected.size) {
       const t = this.tags.byId.get(only[0]);
       if (t) filters.push(el('button', { class: 'btn small', title: `Remove the selected items from ${t.name} (Ctrl+Z undoes). Press R afterwards to drop them from this view.`,
         text: `− Remove ${fmtNum(this.selected.size)} from ${t.name.split('/').pop()}`,
@@ -994,7 +1007,8 @@ class App {
       ['O', 'Open the file in its application (Krita, Photoshop, audio editor…)'],
       ['Click / arrows on a sound', 'Plays it (auto-play; switch with P or the ♪ button in the status bar)'],
       ['Space · ▶ on a sound', 'Play / stop (▶ doesn\'t change the selection)'],
-      ['Ctrl + wheel, + / −', 'Thumbnail size'],
+      ['Ctrl + wheel, + / −', 'Thumbnail size (+ / − add to / remove from a project while one is open)'],
+      ['Mouse over a video', 'Runs through its frames'],
       ['/  or  Ctrl+F', 'Search names'],
       ['Selecting', ''],
       ['Click / Ctrl+click / Shift+click', 'Select one / toggle / range'],
@@ -1007,8 +1021,10 @@ class App {
       ['Tagging & sorting', ''],
       ['1 … 9', 'Add/remove the tag on that hotkey (selection, or the focused image)'],
       ['T', 'Tag with any name (creates the tag if new)'],
-      ['Click a tag / project', 'Everything with it, in the whole library'],
-      ['Ctrl+click · Alt+click', 'Narrow the current view (e.g. a project in this folder) · hide items with it'],
+      ['Projects', 'Pick one top left (or click it in the sidebar) to work inside it'],
+      ['+ · −', 'With a project open: add the selection · take it out'],
+      ['Click a tag', 'Everything with it (in the whole library, or in the open project)'],
+      ['Ctrl+click · Alt+click', 'Narrow the current view (e.g. a tag in this folder) · hide items with it'],
       ['M', 'Move selection to a folder (with preview, keeps dates, undoable)'],
       ['B', 'Backup (sets, plan with free space, restore)'],
       ['AI', ''],
@@ -1024,6 +1040,7 @@ class App {
       ['1 … 9, T', 'Tag the shown image'],
       ['Wheel, drag, double-click', 'Zoom at cursor, pan, toggle fit/100%'],
       ['3D models', 'Drag: turn · right-drag or Shift+drag: move · wheel: zoom · 0 or double-click: reset'],
+      ['Videos', 'Space: play / pause · Shift+← →: 5 s back / forward · O: open in your player'],
       ['0 / Z', 'Fit / toggle 100%'],
       ['B', 'Background: dark, gray, light, checkerboard'],
       ['N', 'Pixel-art mode (sharp pixels when zoomed)'],

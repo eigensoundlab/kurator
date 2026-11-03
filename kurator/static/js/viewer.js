@@ -2,7 +2,7 @@
 
 import { originalUrl, thumbUrl } from './api.js';
 import { MeshView } from './meshview.js';
-import { el, extOf, fmtDate, fmtNum, MESHES, prefs, VIEWABLE } from './util.js';
+import { el, extOf, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
 
 const BGS = ['dark', 'gray', 'light', 'checker'];
 
@@ -19,7 +19,7 @@ export class Viewer {
     this.bar = el('div', { class: 'v-bar' }, this.selBadge, this.title, this.tagsEl, this.info, this.zoomLbl,
       el('button', { class: 'v-btn', title: 'Background (B)', text: 'BG', onclick: () => this.cycleBg() }),
       el('button', { class: 'v-btn v-2d', title: 'Pixel-art zoom (N)', text: 'PX', onclick: () => this.togglePixel() }),
-      el('button', { class: 'v-btn', title: 'Fit / reset view (0)', text: 'Fit', onclick: () => (this.is3d ? this.mv?.reset() : this.fitView()) }),
+      el('button', { class: 'v-btn v-fit', title: 'Fit / reset view (0)', text: 'Fit', onclick: () => (this.is3d ? this.mv?.reset() : this.fitView()) }),
       el('button', { class: 'v-btn v-2d', title: '100% (Z)', text: '1:1', onclick: () => this.zoomTo(1) }),
       el('button', { class: 'v-btn', title: 'Close (Esc)', text: '✕', onclick: () => this.close() }));
     this.prev = el('button', { class: 'v-nav v-prev', text: '‹', title: 'Previous (←)', onclick: () => this.step(-1) });
@@ -55,7 +55,9 @@ export class Viewer {
     this.root.classList.remove('open');
     this.img.removeAttribute('src');
     this.mv?.clear();
-    this.root.classList.remove('mode3d', 'mesh-ready');
+    if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); }
+    this.isVideo = false;
+    this.root.classList.remove('mode3d', 'mesh-ready', 'mode-video');
     this.app.onViewerClosed(this.i);
   }
 
@@ -69,20 +71,40 @@ export class Viewer {
     const ext = extOf(it.n[i]);
     this.viewable = VIEWABLE.has(ext) && it.v[i] !== 'e';
     // Animated GIF/WebP/APNG: load the original so the animation plays. Otherwise the 1600px preview.
-    const animated = this.viewable && (it.f?.[i] || ext === 'gif');
+    const isVideo = VIDEO.has(ext);
+    const animated = !isVideo && this.viewable && (it.f?.[i] || ext === 'gif');
     const src = animated ? originalUrl(it, i) : thumbUrl(it, i, 1600);
     this.full = !!animated;
     this.img.classList.remove('ready');
     this.img.src = src;
     this.show3d(MESHES.has(ext) && it.v[i] !== 'e' ? it.ids[i] : null);
+    this.showVideo(isVideo && this.viewable ? it.ids[i] : null);
     if (this.w && this.h) this.fitView();
     this.title.textContent = it.n[i];
     this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
-      + (this.is3d ? ' · drag: turn · right-drag: move · wheel: zoom · 0: reset' : '');
+      + (this.is3d ? ' · drag: turn · right-drag: move · wheel: zoom · 0: reset' : '')
+      + (this.isVideo ? ' · Space: play/pause · Shift+← →: 5 s' : isVideo ? ' · this format plays in your video app (O)' : '');
     this.paintSel();
     this.paintTags();
     this.root.classList.toggle('alpha', !!it.a[i]);
     this.preload(i + 1); this.preload(i - 1);
+  }
+
+  /** Videos the browser can play (MP4/H.264, WebM, Ogg; most MOV) play right here. */
+  showVideo(id) {
+    this.isVideo = id != null;
+    this.root.classList.toggle('mode-video', this.isVideo);
+    if (!this.video) {
+      if (!this.isVideo) return;
+      this.video = el('video', { class: 'v-video', controls: true, playsinline: true, preload: 'metadata' });
+      for (const ev of ['pointerdown', 'wheel', 'dblclick']) this.video.addEventListener(ev, (e) => e.stopPropagation());
+      this.video.addEventListener('error', () => { if (this.isVideo && this.video.getAttribute('src')) this.app.toast('This video can\'t play in the browser - press O to open it in your player', 4000); });
+      this.stage.append(this.video);
+    }
+    if (!this.isVideo) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); return; }
+    this.app.stopAudio?.();
+    this.video.src = `/f/${id}`;
+    this.video.play().catch(() => {});
   }
 
   /** 3D models: the rendered thumbnail shows until the geometry has loaded, then the live view. */
@@ -233,6 +255,8 @@ export class Viewer {
   onKey(e) {
     const k = e.key;
     if (k === 'Escape' || k === 'Enter') { this.close(); return true; }
+    if (this.isVideo && k === ' ' && !this.quick) { if (this.video.paused) this.video.play(); else this.video.pause(); return true; }
+    if (this.isVideo && e.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) { this.video.currentTime += k === 'ArrowLeft' ? -5 : 5; return true; }
     if (k === ' ' && !e.ctrlKey) { if (!e.repeat) this.close(); return true; }
     if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown') { this.step(1); return true; }
     if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp') { this.step(-1); return true; }
