@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import math
+import os
 import re
 import shutil
 import struct
@@ -120,7 +121,7 @@ def load(data: bytes, path: str, target: int | None) -> Loaded:
             v = getattr(t, k, None)
             if v not in (None, "", 0):
                 meta[k] = round(v, 3) if isinstance(v, float) else v
-        extra = getattr(t, "other", None) or getattr(t, "extra", None) or {}
+        extra = (t.other if hasattr(t, "other") else getattr(t, "extra", None)) or {}
         for k in ("bpm", "key", "initial_key", "copyright", "publisher", "isrc"):
             v = extra.get(k)
             if v:
@@ -164,6 +165,9 @@ def load(data: bytes, path: str, target: int | None) -> Loaded:
         if sr and "samplerate" not in meta and channels:
             meta["samplerate"] = int(sr)
     meta["peaks"] = peaks
+    if os.path.isfile(path):   # loudness (LUFS) always; tempo and key for longer sounds
+        from ..audio_analysis import analyse
+        meta.update(analyse(path, meta.get("duration")))
     img = _waveform(peaks, meta.get("duration"), rms=meta.get("rms_env"))
     if (meta.get("duration") or 0) >= LONG_SOUND:
         meta["long"] = True

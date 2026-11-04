@@ -44,9 +44,10 @@ def main(argv: list[str] | None = None) -> None:
 
     db = Database(os.path.abspath(args.data_dir))
     db.cleanup()
-    if db.get_setting("previews.audio", 0) < 2:   # once: long sounds (music) got orange waveforms in 0.9
-        db.remake_previews("kind = 'audio' AND json_extract(meta, '$.duration') >= 30")
-        db.set_setting("previews.audio", 2)
+    ver = db.get_setting("previews.audio", 0)
+    if ver < 3:   # once: orange waveforms for long sounds (0.9); loudness, tempo and key (0.11)
+        db.remake_previews("kind = 'audio'")
+        db.set_setting("previews.audio", 3)
     from .handlers.video import tool
     if tool("ffmpeg") and tool("ffprobe"):   # ffmpeg installed since videos were indexed: real previews now
         n = db.remake_previews("kind = 'video' AND (json_extract(meta, '$.placeholder') IS NOT NULL "
@@ -72,6 +73,10 @@ def main(argv: list[str] | None = None) -> None:
     if not args.no_scan and db.roots():
         scanner.request_scan()
 
+    # fill in picture fingerprints and colours for catalogs from older versions, once things are calm
+    later = threading.Timer(20, app.state.backfill.start)
+    later.daemon = True
+    later.start()
     url = f"http://127.0.0.1:{args.port}/"
     print(f"Kurator running at {url}  (data: {db.data_dir})  Ctrl+C to quit")
     if not args.no_browser:

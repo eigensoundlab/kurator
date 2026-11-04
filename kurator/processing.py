@@ -74,6 +74,58 @@ def dhash(img: Image.Image) -> int:
     return v - (1 << 64) if v >= 1 << 63 else v
 
 
+HUE_NAMES = ["red", "orange", "yellow", "lime", "green", "teal", "cyan", "azure", "blue", "violet", "magenta", "pink",
+             "black", "gray", "white"]
+
+
+def colour_info(img: Image.Image) -> tuple[int, list]:
+    """(bitmask of the colours that cover a good part of the picture, palette [[hex, share], ...]).
+    Bits 0-11: 12 hues of 30 degrees starting at red; 12 black, 13 gray, 14 white."""
+    t = img.copy()
+    if t.mode == "RGBA":   # only what is visible counts
+        bg = Image.new("RGBA", t.size, (128, 128, 128, 0))
+        t = Image.alpha_composite(bg, t)
+        alpha = t.getchannel("A")
+    else:
+        alpha = None
+    t.thumbnail((64, 64), Image.Resampling.BILINEAR)
+    rgb = t.convert("RGB")
+    hsv = rgb.convert("HSV")
+    hb, sb, vb = (hsv.getchannel(k).tobytes() for k in "HSV")
+    ab = alpha.resize(rgb.size).tobytes() if alpha is not None else None
+    counts = [0] * 15
+    total = 0
+    for k in range(len(hb)):
+        if ab is not None and ab[k] < 128:
+            continue
+        total += 1
+        sv, vv = sb[k], vb[k]
+        if vv < 50:
+            counts[12] += 1
+        elif sv < 50:
+            counts[14 if vv > 215 else 13] += 1
+        else:
+            counts[((hb[k] * 360 // 256) + 15) // 30 % 12] += 1
+    mask = 0
+    if total:
+        top = sorted(range(15), key=lambda c: -counts[c])[:3]
+        for c in range(15):
+            if counts[c] / total >= 0.12 or (c in top and counts[c] / total >= 0.05):
+                mask |= 1 << c
+    pal = []
+    try:
+        q = rgb.quantize(colors=5, method=Image.Quantize.MEDIANCUT)
+        cols = q.getcolors() or []
+        p = q.getpalette() or []
+        n = sum(c for c, _ in cols) or 1
+        for c, idx in sorted(cols, reverse=True)[:5]:
+            r_, g_, b_ = p[idx * 3: idx * 3 + 3]
+            pal.append([f"#{r_:02x}{g_:02x}{b_:02x}", round(c / n, 2)])
+    except Exception:
+        pass
+    return mask, pal
+
+
 def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
     """Return a result dict; never raises (errors are reported in result['error'])."""
     out: dict = {"path": path}
@@ -135,6 +187,7 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
             out["alpha"] = img.mode == "RGBA" and img.getchannel("A").getextrema()[0] < 255
             if handler.kind in ("image", "video") and not loaded.meta.get("placeholder"):
                 out["phash"] = dhash(img)
+                out["hues"], loaded.meta["palette"] = colour_info(img)
     except Exception as e:  # report, don't crash the pool
         out["error"] = f"{type(e).__name__}: {e}"
         out["trace"] = traceback.format_exc(limit=3)

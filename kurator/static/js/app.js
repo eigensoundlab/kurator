@@ -11,6 +11,8 @@ import { Compare } from './compare.js';
 import { openDialog } from './dialog.js';
 import { openBackupDialog } from './backupdlg.js';
 import { Grid } from './grid.js';
+import { LookFilter } from './lookfilter.js';
+import { Timeline } from './timeline.js';
 import { openMoveDialog } from './movedlg.js';
 import { Panel } from './panel.js';
 import { Projects } from './projects.js';
@@ -27,7 +29,8 @@ import { Viewer } from './viewer.js';
 const EMPTY = { count: 0, ids: [], v: [], c: [], d: [], n: [], w: [], h: [], ds: [], a: [], t: [], f: [], s: [] };
 const HISTORY_MAX = 100;
 
-const SORTS = { date: 'Date', name: 'Name', folder: 'Folder', type: 'Type', size: 'File size', dimensions: 'Dimensions' };
+const SORTS = { date: 'Date', name: 'Name', folder: 'Folder', type: 'Type', size: 'File size', dimensions: 'Dimensions',
+  length: 'Length', bpm: 'Tempo', loudness: 'Loudness' };
 
 class App {
   constructor() {
@@ -52,9 +55,12 @@ class App {
     this.audio = new Audio();
     this.audio.preload = 'none';
     this.playingId = null;
-    this.audio.addEventListener('ended', () => { this.playingId = null; this.panel.paintPlayer?.(); this.grid?.refreshStates(); });
+    this.audio.addEventListener('ended', () => { this.playingId = null; this.panel.paintPlayer?.(); this.grid?.refreshStates(); this.panel.wave?.draw(); this.viewer.wave?.draw(); });
     this.audio.addEventListener('timeupdate', () => this.panel.paintPlayer?.());
+    this.audio.addEventListener('play', () => { this.panel.wave?.loop(); this.viewer.wave?.loop(); });
+    this.audio.addEventListener('pause', () => { this.panel.wave?.draw(); this.viewer.wave?.draw(); });
     this.typeFilter = new TypeFilter(this);
+    this.lookFilter = new LookFilter(this);
     this.filterSets = [];
     this.allItems = EMPTY;
     this.items = EMPTY;
@@ -71,6 +77,7 @@ class App {
     this.lastReload = 0;
 
     this.grid = new Grid($('#grid'), this);
+    this.timeline = new Timeline(this.grid, this);
     this.panel = new Panel($('#panel'), this);
     this.tags = new Tags(this);
     this.pathbar = $('#pathbar');
@@ -145,6 +152,7 @@ class App {
     this.focusIndex = this.focusId != null ? this.indexOf(this.focusId) : -1;
     this.anchor = Math.min(this.anchor, it.ids.length - 1);
     this.grid.setItems(it, { keepScroll });
+    this.timeline.update();
     this.panel.show(this.focusIndex);
     this.updateStatus();
   }
@@ -266,7 +274,8 @@ class App {
   viewQuery() {
     const q = this.query;
     return { folder: q.folder, recursive: q.recursive, q: q.q, ext: q.ext, sort: q.sort, order: q.order, guessed: q.guessed,
-      tag: q.tag, exclude: q.exclude, missing: q.missing, project: this.projects.active || '', dupes: q.dupes, similar: q.similar };
+      tag: q.tag, exclude: q.exclude, missing: q.missing, project: this.projects.active || '', dupes: q.dupes, similar: q.similar,
+      hues: q.hues, shape: q.shape, alpha: q.alpha, minside: q.minside, bpm_min: q.bpm_min, bpm_max: q.bpm_max, key: q.key, len_min: q.len_min, len_max: q.len_max };
   }
 
   saveView() {
@@ -289,7 +298,10 @@ class App {
     const q = v.query || {};
     Object.assign(this.query, { folder: q.folder || null, recursive: q.recursive ?? this.query.recursive, q: q.q || '', ext: q.ext || '',
       sort: q.sort || this.query.sort, order: q.order || this.query.order, guessed: !!q.guessed, tag: q.tag || '', exclude: q.exclude || '',
-      missing: q.missing || '', dupes: !!q.dupes, similar: +q.similar || 0, untagged: false, suggested: false });
+      missing: q.missing || '', dupes: !!q.dupes, similar: +q.similar || 0, untagged: false, suggested: false,
+      hues: +q.hues || 0, shape: q.shape || '', alpha: !!q.alpha, minside: +q.minside || 0, bpm_min: q.bpm_min ?? '', bpm_max: q.bpm_max ?? '',
+      key: q.key || '', len_min: q.len_min ?? '', len_max: q.len_max ?? '' });
+    this.lookFilter.paint();
     prefs.set('folder', this.query.folder);
     this.typeFilter.setSelected?.(this.query.ext);
     const s = $('#search');
@@ -390,6 +402,7 @@ class App {
     this.query.suggested = false;
     this.aiView = null;
     this.query.q = '';
+    this.lookFilter.reset();
     const s = $('#search');
     if (s) s.value = '';
     this.onFilterChanged();
@@ -651,6 +664,23 @@ class App {
   }
 
   stopAudio() { if (!this.audio.paused) this.audio.pause(); this.playingId = null; this.panel.paintPlayer?.(); this.grid.refreshStates(); }
+
+  /** Play sound `id` from `t` seconds (the waveform view: click / drag to seek). */
+  playAt(id, t) {
+    const i = this.indexOf(id);
+    const name = i >= 0 ? this.items.n[i] : (this.panel.detail?.id === id ? this.panel.detail.name : '');
+    if (!VIEWABLE.has(extOf(name))) { this.toast(`${extOf(name).toUpperCase()} can't play in the browser - use Open to play it in your audio app`); return; }
+    const a = this.audio;
+    const seek = () => { try { a.currentTime = t; } catch { /* not seekable yet */ } };
+    if (this.playingId !== id) {
+      a.src = `/f/${id}`;
+      this.playingId = id;
+      a.addEventListener('loadedmetadata', seek, { once: true });
+    } else seek();
+    a.play().catch(() => {});
+    this.panel.paintPlayer?.();
+    this.grid.refreshStates();
+  }
 
   setAutoPlay(on) {
     this.autoPlay = on;
@@ -982,7 +1012,7 @@ class App {
     anim.classList.toggle('on', this.animateOnHover);
     anim.onclick = () => { this.animateOnHover = !this.animateOnHover; prefs.set('animHover', this.animateOnHover); anim.classList.toggle('on', this.animateOnHover); };
 
-    bar.append(el('div', { class: 'brand', text: 'Kurator' }), this.projects.wrap, search, type, dates, sort, order, rec,
+    bar.append(el('div', { class: 'brand', text: 'Kurator' }), this.projects.wrap, search, type, this.lookFilter.wrap, dates, sort, order, rec,
       el('div', { class: 'spacer' }), this.sizeInput, fit, labels, this.stacksBtn, anim, rescan,
       el('button', { class: 'btn', title: 'Back up to other disks, restore', text: 'Backup', onclick: () => openBackupDialog(this) }),
       el('button', { class: 'btn', title: 'AI tagging from tag pools, search by description, similar images', text: 'AI', onclick: () => openAIDialog(this) }),
@@ -1013,7 +1043,7 @@ class App {
       el('button', { class: 'btn small', text: 'Clear', title: 'Clear selection (Esc)', onclick: () => this.clearSelection() }),
       this.showSelBtn,
       el('button', { class: 'btn small', text: 'Undo', title: 'Undo last change - selection, tags or move (Ctrl+Z)', onclick: () => this.undo() }),
-      el('button', { class: 'btn small', text: 'Join / sheet…', title: 'Join the selected images into one, or make a contact sheet (J)', onclick: () => openSheetsDialog(this) }),
+      el('button', { class: 'btn small', text: 'Join / sheet…', title: 'Join the selected images into one, make a contact sheet, a sprite sheet or a texture atlas (J)', onclick: () => openSheetsDialog(this) }),
       el('button', { class: 'btn small', text: 'Rules…', title: 'Move files into folders by tag (Shift+M)', onclick: () => openRulesDialog(this) }),
       el('button', { class: 'btn small primary', text: 'Move to…', title: 'Move the selected files to a folder (M)', onclick: () => this.moveDialog() }));
     this.toastEl = el('div', { class: 'toast' });
@@ -1148,6 +1178,8 @@ class App {
       const parent = this.parentOf(q.folder);
       if (parent) right.push(el('button', { class: 'btn small', text: '↑', title: 'Parent folder (Backspace)', onclick: () => this.openPath(parent) }));
     }
+    if (this.lookFilter?.active.length) filters.push(el('span', { class: 'chip small', title: 'Look filter: colours, shape, size, sound tempo/key/length' },
+      el('span', { text: `◐ ${this.lookFilter.summary()}` }), el('span', { class: 'x', text: '×', onclick: () => this.lookFilter.clear() })));
     if (q.suggested) filters.push(el('span', { class: 'chip small ai' }, el('span', { text: 'AI suggestions' }), el('span', { class: 'x', text: '×', onclick: () => this.setSuggestedFilter(false) })));
     if (this.aiView) filters.push(el('span', { class: 'chip small ai' }, el('span', { text: this.aiView.kind === 'search' ? `AI search: ${this.aiView.q}` : `Similar to ${this.aiView.name}` }),
       el('span', { class: 'x', text: '×', onclick: () => this.setAIView(null) })));
@@ -1188,7 +1220,9 @@ class App {
       ['☆ Save view', 'Remember the current filters under a name (sidebar: Saved views)'],
       ['Duplicates (sidebar)', 'Files whose exact content is in more than one place'],
       ['Similar images (sidebar)', 'Groups of pictures that look nearly the same'],
-      ['J', 'Join the selected images (side by side, stacked, grid) or make a contact sheet'],
+      ['Look ▾ (top bar)', 'Filter by colour, shape, transparency, size; sounds by tempo, key and length'],
+      ['Timeline (right edge)', 'When sorted by date: drag along it to jump through years and months'],
+      ['J', 'Join the selected images (side by side, stacked, grid), contact sheet, sprite sheet or texture atlas'],
       ['Ctrl+G · Ctrl+Shift+G', 'Stack the selection as versions (newest on top) · unstack'],
       ['▤ on a thumbnail', 'A version stack: click to see all versions'],
       ['C', 'Compare 2–4 selected images side by side, zooming together (S in compare: swipe A/B)'],
@@ -1210,6 +1244,7 @@ class App {
       ['Wheel, drag, double-click', 'Zoom at cursor, pan, toggle fit/100%'],
       ['3D models', 'Drag: turn · right-drag or Shift+drag: move · wheel: zoom · 0 or double-click: reset'],
       ['Videos', 'Space: play / pause · Shift+← →: 5 s back / forward · O: open in your player'],
+      ['Sounds', 'Click the waveform to jump · wheel: zoom · Space: play / pause · the menu switches waveform styles'],
       ['0 / Z', 'Fit / toggle 100%'],
       ['B', 'Background: dark, gray, light, checkerboard'],
       ['N', 'Pixel-art mode (sharp pixels when zoomed)'],

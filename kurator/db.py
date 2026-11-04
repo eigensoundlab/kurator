@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 CATALOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -208,6 +208,10 @@ MIGRATIONS = {
             cover_id INTEGER,            -- the file shown for the stack (default: the newest)
             created REAL
         )""",
+    ],
+    8: [
+        # Colours that cover a good part of the picture (bitmask, see processing.colour_info)
+        "ALTER TABLE files ADD COLUMN hues INTEGER",
     ],
 }
 
@@ -438,7 +442,7 @@ class Database:
                 r["hash"], r.get("width"), r.get("height"), r.get("color"), int(bool(r.get("alpha"))),
                 (r.get("meta") or {}).get("frames"),
                 r["date_ts"], r["date_source"], json.dumps(r.get("meta") or {}, ensure_ascii=False, default=str),
-                r.get("kind", "image"), r["size"], r["mtime_ns"], r.get("phash"), r["path"],
+                r.get("kind", "image"), r["size"], r["mtime_ns"], r.get("phash"), r.get("hues"), r["path"],
             ))
             for s, d in (r.get("thumbs") or {}).items():
                 thumbs.append((r["hash"], s, d))
@@ -451,7 +455,7 @@ class Database:
             c.execute("BEGIN")
             c.executemany(
                 "UPDATE files SET hash=?, width=?, height=?, color=?, alpha=?, frames=?, date_ts=?, date_source=?, meta=?, "
-                "kind=?, size=?, mtime_ns=?, phash=?, status=1, error=NULL WHERE path=?",
+                "kind=?, size=?, mtime_ns=?, phash=?, hues=?, status=1, error=NULL WHERE path=?",
                 ok,
             )
             c.executemany("UPDATE files SET status=2, error=? WHERE path=?", bad)

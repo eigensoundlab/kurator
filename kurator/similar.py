@@ -8,12 +8,13 @@ background. Grouping uses band buckets (no all-pairs comparison), so it stays fa
 from __future__ import annotations
 
 import io
+import json
 import threading
 
 from PIL import Image
 
 from .db import Database
-from .processing import dhash
+from .processing import colour_info, dhash
 
 LEVELS = {"strict": 4, "normal": 8, "loose": 12}
 _BANDS = [(s, 16) for s in (0, 16, 32, 48)] + [(s, 16) for s in (8, 24, 40)]   # 16-bit slices, overlapping
@@ -58,7 +59,8 @@ def groups(items: list[tuple[int, int]], dist: int) -> list[list[int]]:
 
 
 class Backfill:
-    """Makes the missing hashes from cached thumbnails, in the background."""
+    """Makes missing fingerprints and colour masks from cached thumbnails, in the background
+    (catalogs from before they existed)."""
 
     def __init__(self, db: Database):
         self.db = db
@@ -68,7 +70,7 @@ class Backfill:
 
     def pending(self) -> int:
         return self.db.cat.execute(
-            "SELECT COUNT(*) FROM files WHERE status = 1 AND phash IS NULL AND hash IS NOT NULL AND kind IN ('image', 'video') "
+            "SELECT COUNT(*) FROM files WHERE status = 1 AND (phash IS NULL OR hues IS NULL) AND hash IS NOT NULL AND kind IN ('image', 'video') "
             "AND (meta IS NULL OR json_extract(meta, '$.placeholder') IS NULL)").fetchone()[0]
 
     def start(self) -> bool:
@@ -86,22 +88,28 @@ class Backfill:
         try:
             while True:
                 rows = self.db.cat.execute(
-                    "SELECT id, hash FROM files WHERE status = 1 AND phash IS NULL AND hash IS NOT NULL AND kind IN ('image', 'video') "
+                    "SELECT id, hash FROM files WHERE status = 1 AND (phash IS NULL OR hues IS NULL) AND hash IS NOT NULL AND kind IN ('image', 'video') "
                     "AND (meta IS NULL OR json_extract(meta, '$.placeholder') IS NULL) LIMIT 500").fetchall()
                 if not rows:
                     break
                 upd = []
                 for fid, h in rows:
                     data = self.db.get_thumb(h, 256)
-                    v = 0   # no thumbnail: mark as done with a neutral value so we don't retry forever
+                    v, hues, pal = 0, 0, None   # no thumbnail: neutral values so we don't retry forever
                     if data:
                         try:
-                            v = dhash(Image.open(io.BytesIO(data)))
+                            im = Image.open(io.BytesIO(data))
+                            im.load()
+                            v = dhash(im)
+                            hues, pal = colour_info(im.convert("RGBA") if im.mode in ("RGBA", "LA", "P") else im.convert("RGB"))
                         except Exception:
                             pass
-                    upd.append((v, fid))
+                    upd.append((v, hues, json.dumps(pal) if pal else None, fid))
                 with self.db.write_lock:
-                    self.db.cat.executemany("UPDATE files SET phash = ? WHERE id = ?", upd)
+                    self.db.cat.executemany(
+                        "UPDATE files SET phash = ?, hues = ?, meta = CASE WHEN ? IS NULL OR meta IS NULL THEN meta "
+                        "ELSE json_set(meta, '$.palette', json(?)) END WHERE id = ?",
+                        [(v, hu, p, p, fid) for v, hu, p, fid in upd])
                 self.done += len(upd)
         finally:
             self.running = False

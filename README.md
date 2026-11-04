@@ -4,11 +4,13 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.10 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.11 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
-> (Google Drive and others via rclone), vector/document/art-app previews, sound files, 3D models
-> (previews and a 3D viewer), **video**, **projects you work inside**, and optional local AI
-> (search by description, find similar, tag suggestions from a pool you choose) work.
+> (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
+> **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
+> you work inside, similar images, version stacks, **colour and shape filters, a timeline**,
+> **sprite sheets and texture atlases**, and optional local AI (search by description, find similar,
+> tag suggestions from a pool you choose) work.
 > See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
 
 **Author:** Daniel Sandner. See [eigensound.com](https://eigensound.com/) (sound research) and
@@ -150,6 +152,27 @@ the view has sounds) or **P** turns this off; then Space plays.
 | Space | play / stop the focused sound |
 | P | auto-play on / off |
 | O | open in your audio editor |
+
+**Waveform view:** clicking a sound shows its waveform with a **playhead** in the side panel; Enter
+(or double-click) opens it full size with a time ruler. Click anywhere to play from there, drag to
+scrub, use the wheel to zoom into a part and double-click to see the whole sound again. The menu in the
+corner switches between styles:
+
+| Style | Shows |
+|---|---|
+| Peak + RMS | the classic look: peaks, with the average level inside |
+| Min / max, clipping | exact sample extremes; samples at full scale are marked red |
+| Level (dB) | a logarithmic scale from −60 to 0 dBFS with guides, so quiet tails are visible |
+| Stereo lanes | each channel in its own lane |
+| Spectrogram | frequencies over time (log scale up to 10 kHz) |
+
+More styles will follow; the choice is remembered.
+
+**Loudness, tempo and key:** every sound gets its integrated **loudness (LUFS, ITU-R BS.1770 /
+EBU R128)** and its loudest moment. Sounds of 8 seconds and longer also get an estimated **tempo
+(BPM)** and **key**, shown as *estimated* in the side panel (they are guesses from the audio, like in
+DJ software). Sort by *Length*, *Tempo* or *Loudness*, and filter by tempo, key and length in
+**Look ▾**.
 
 **Long sounds are orange:** anything from 30 seconds up (music, ambiences, dialogue) gets a warm
 orange waveform, short effects stay blue, so the two are easy to tell apart at a glance.
@@ -306,6 +329,27 @@ back to *In project* → tag and sort.
   the current folder, project and filters. (A 64-bit picture fingerprint is made while indexing;
   for an existing catalog Kurator makes them from the thumbnails the first time you open the view.)
 
+### Look filter: colours, shape, size, transparency (and sounds)
+
+**Look ▾** in the toolbar narrows any view:
+
+- **Colours:** 12 hues plus black, gray and white. A picture matches when the colour covers a good
+  part of it (pick several for *any of them*). The side panel shows each picture's main colours;
+  click one to copy its hex code.
+- **Shape:** landscape, portrait, square, panorama (2:1 and wider), tall (1:2 and taller).
+- **Size:** at least 512 / 1024 / 2048 / 4096 px on the long side. **Has transparency.**
+- **Sounds:** tempo from–to, key, length from–to (seconds).
+
+The active look filters show as one chip in the path bar, are kept in saved views, and *Clear filters*
+removes them. Colours of an existing catalog are filled in from the thumbnails in the background a
+little after the start.
+
+### Timeline
+
+When the grid is sorted by **date**, a timeline appears on its right edge: years and months where
+their pictures start, with a bar showing how many each month holds. Hover to see the month and count,
+click to jump to the start of a month, drag to move through the years quickly.
+
 ### Version stacks
 
 Sketch → lineart → colour, or v01 → v02 → final: **stack** them and the grid shows one item, the
@@ -326,7 +370,7 @@ Select 2–4 images and press **C**: they appear side by side, and zooming (whee
 moves all of them together, so the same detail stays lined up. **S** (two images) switches to a
 swipe view: one over the other, the divider follows the mouse. **0** fits, **1** is 100%, Esc goes back.
 
-### Join images and contact sheets (J)
+### Join images, contact sheets, sprite sheets and atlases (J)
 
 **J** (or *Join / sheet…* in the status bar) works on the selection (or the whole view), in grid order:
 
@@ -334,6 +378,14 @@ swipe view: one over the other, the divider follows the mouse. **0** fits, **1**
   height/width; gap; background colour or transparent; optional result width/height. PNG, JPEG or WebP.
 - **Contact sheet:** A4/A3/A5/Letter/Tabloid (portrait or landscape, 100–300 dpi) or any pixel size;
   columns; captions (name, date, tags); title; page numbers; background. One PDF, or PNG/JPEG pages.
+- **Sprites / atlas** (for games):
+  - **Texture atlas:** the images packed tightly (MaxRects), transparent borders trimmed, padding and
+    edge **extrusion** against bleeding, optional power-of-two size, maximum size and scale.
+  - **Sprite sheet:** equal cells in a grid for animation frames (columns, a fixed cell size if you
+    like). Animated GIF / WebP / APNG files are split into their frames.
+  - Saves a **PNG and a JSON** file in the TexturePacker *JSON Hash* layout (frame rectangles, trim
+    offsets, source sizes, and `animations` for frame groups), which Phaser, PixiJS, Godot and Unity
+    importers read.
 - A live preview shows the result before saving. New files never overwrite existing ones; save into
   a library folder and they appear in the grid.
 
@@ -570,6 +622,8 @@ kurator/
   similar.py       picture fingerprints (dHash) and grouping of similar images
   stacks.py        version stacks
   sheets.py        contact sheets and joined images
+  atlas.py         sprite sheets and packed texture atlases (+ TexturePacker JSON)
+  audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms
   blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
   xmp.py           XMP sidecars (write), keyword import (XMP, Windows tags, sidecars)
   watcher.py       live folder watching (watchdog), debounced re-check of changed folders
@@ -665,7 +719,7 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
    Next: dataset export (images + caption `.txt`, dedupe, train/val split); near-duplicate finder;
    OpenAI-compatible endpoints (llama.cpp, LM Studio).
 9. ~~Audio: waveforms, player, auto-play, tags, BWF/iXML, UCS, levels~~ ✅
-   Next: LUFS, BPM and key; CLAP text-to-sound search; region export.
+   LUFS, BPM and key and the waveform view followed in 0.11.
 10. ~~3D: previews for glTF/FBX/OBJ/STL/3MF/VOX and more, Blender thumbnails, 3D viewer~~ ✅
     Next: texture sets (albedo/normal/roughness grouped with their model), Draco glTF, turntable
     on hover, Blender-rendered previews when Blender is installed.
@@ -674,12 +728,12 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
 12. ~~Texture sets, project export to Unity/Godot/Unreal, saved views, exact duplicates (also stored
     once in backups), Blender files in 3D, long sounds in orange~~ ✅
 13. ~~Similar images, version stacks, compare mode, join images and contact sheets~~ ✅
-    Next: colour / aspect / transparency filters, a timeline scrubber, LUFS/BPM/key for sounds,
-    sprite sheets and texture atlases for game export. (PureRef's board format isn't open, so boards
-    are best made by dragging images into PureRef.)
-14. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
-
-Other ideas: timeline scrubber, colour/aspect/transparency filters.
+14. ~~Waveform view with playhead and styles, LUFS/BPM/key, colour / shape / transparency filters,
+    timeline, sprite sheets and texture atlases~~ ✅
+    Next: more waveform styles (in development), region export from the waveform view, CLAP
+    text-to-sound search, Godot/Unity-native atlas resources. (PureRef's board format isn't open, so
+    boards are best made by dragging images into PureRef.)
+15. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License
 

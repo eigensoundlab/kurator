@@ -2,6 +2,18 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.11.0 – waveform view, sound analysis, look filters, timeline, sprite sheets and atlases
+- **Waveform view** for sounds: playhead, click to play from there, drag to scrub, zoom, time ruler;
+  styles: peak + RMS, min/max with clipping, level in dB, stereo lanes, spectrogram.
+- **Loudness (LUFS), tempo (BPM) and key** for sounds; sort and filter by them and by length.
+- **Look ▾ filter:** colours, shape (landscape, portrait, square, panorama, tall), size, transparency.
+  Main colours in the side panel.
+- **Timeline** beside the grid when sorted by date: drag through years and months.
+- **Sprite sheets and texture atlases** (J → *Sprites / atlas*): packing, trim, padding, extrusion,
+  power-of-two; animated GIF/WebP/APNG split into frames; PNG + TexturePacker JSON.
+- The toolbar wraps on narrower windows instead of pushing the side panel off screen; an empty
+  *Save into* no longer saves into the start folder.
+
 ## 0.10.0 – similar images, version stacks, compare, join and contact sheets
 - **Similar images:** groups of near-identical pictures (resized, re-saved, slightly edited), three
   strictness levels, inside any folder, project or filter.

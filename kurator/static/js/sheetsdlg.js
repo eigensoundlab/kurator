@@ -5,6 +5,7 @@ import { openDialog } from './dialog.js';
 import { debounce, el, fmtNum, prefs, setKids } from './util.js';
 
 export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
+  if (!['join', 'contact', 'atlas'].includes(tab)) tab = 'join';
   const ids = app.selected.size ? app.items.ids.filter((id) => app.selected.has(id)) : [...app.items.ids];   // in grid order
   if (!ids.length) { app.toast('Select some images first'); return; }
   const firstDir = app.panel.detail?.dir || app.query.folder || '';
@@ -35,6 +36,18 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
   const cBg = sel([['white', 'White'], ['light', 'Light gray'], ['dark', 'Dark'], ['black', 'Black']], P.cbackground || 'white');
   const cNum = chk(P.page_numbers !== false);
   const cFmt = sel([['pdf', 'PDF (all pages in one file)'], ['png', 'PNG (one file per page)'], ['jpg', 'JPEG (one file per page)']], P.cformat || 'pdf');
+  // sprite sheet / texture atlas
+  const aMode = sel([['atlas', 'Texture atlas (packed tightly)'], ['frames', 'Sprite sheet (equal cells, animation frames)']], P.amode || 'atlas');
+  const aCols = num(P.acolumns, 0, 200, 'auto');
+  aCols.style.width = '60px';
+  const aCW = num(P.cell_w, 0, 8192, 'auto'); const aCH = num(P.cell_h, 0, 8192, 'auto');
+  const aPad = num(P.padding ?? 2, 0, 64);
+  const aExt = num(P.extrude ?? 0, 0, 8);
+  const aTrim = chk(P.trim !== false);
+  const aPot = chk(P.pot);
+  const aMax = sel([['1024', '1024'], ['2048', '2048'], ['4096', '4096'], ['8192', '8192'], ['16384', '16384']], String(P.max_side || 4096));
+  const aScale = sel([['1', '100 %'], ['0.5', '50 %'], ['0.25', '25 %'], ['2', '200 %']], String(P.scale || 1));
+  const aExp = chk(P.expand !== false);
   // shared
   const dest = el('input', { type: 'text', value: P.dest || firstDir, spellcheck: 'false', placeholder: 'Folder to save into' });
   const name = el('input', { type: 'text', value: '', spellcheck: 'false', placeholder: 'file name (optional)' });
@@ -52,15 +65,29 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
     el('div', { class: 'row' }, field('Width', cW), field('Height', cH)), field('Resolution', cDpi), field('Columns', cCols),
     field('Captions', cCap), field('Title', cTitle), field('Background', cBg), el('label', { class: 'chk' }, cNum, 'Page numbers'), field('Format', cFmt));
 
-  const kind = () => (tab === 'join' ? 'join' : 'contact');
-  const opts = () => (tab === 'join'
+  const atlasBox = el('div', {}, field('Kind', aMode),
+    el('div', { class: 'row frames-only' }, field('Columns', aCols), field('Cell', aCW), field('×', aCH)),
+    el('div', { class: 'row' }, field('Padding (px)', aPad), field('Extrude', aExt)),
+    el('div', { class: 'p-hint small sheet-hint', text: 'Padding: empty pixels between sprites. Extrude: repeats the edge pixels around each sprite so filtering never bleeds in its neighbours.' }),
+    el('label', { class: 'chk atlas-only' }, aTrim, 'Trim transparent borders (offsets kept in the JSON)'),
+    el('div', { class: 'row' }, field('Max size', aMax), field('Scale', aScale)),
+    el('label', { class: 'chk' }, aPot, 'Power-of-two size (older engines, mipmaps)'),
+    el('label', { class: 'chk' }, aExp, 'Split animated GIF / WebP / APNG into frames'),
+    el('div', { class: 'p-hint small', text: 'Saves a PNG and a JSON file (TexturePacker JSON Hash) next to each other - Phaser, PixiJS, Godot and Unity importers read it. Frames of one animation are listed under "animations".' }));
+  const kind = () => tab;
+  const opts = () => (tab === 'atlas'
+    ? { mode: aMode.value, columns: +aCols.value || 0, cell_w: +aCW.value || null, cell_h: +aCH.value || null, padding: +aPad.value || 0,
+      extrude: +aExt.value || 0, trim: aTrim.checked, pot: aPot.checked, max_side: +aMax.value, scale: +aScale.value, expand: aExp.checked }
+    : tab === 'join'
     ? { layout: jLayout.value, columns: +jCols.value, size: jSize.value, gap: +jGap.value || 0, target_width: +jTW.value || null,
       target_height: +jTH.value || null, background: jBg.value, transparent: jTr.checked, format: jFmt.value }
     : { page: cPage.value, landscape: cLand.checked, dpi: +cDpi.value, width: +cW.value, height: +cH.value, columns: +cCols.value,
       caption: cCap.value, title: cTitle.value, background: cBg.value, page_numbers: cNum.checked, format: cFmt.value });
   const remember = () => {
     const o = opts();
-    const keep = tab === 'join'
+    const keep = tab === 'atlas'
+      ? { amode: o.mode, acolumns: o.columns || '', cell_w: o.cell_w, cell_h: o.cell_h, padding: o.padding, extrude: o.extrude, trim: o.trim, pot: o.pot, max_side: o.max_side, scale: o.scale, expand: o.expand }
+      : tab === 'join'
       ? { layout: o.layout, columns: o.columns, size: o.size, gap: o.gap, target_width: o.target_width, target_height: o.target_height, background: o.background, transparent: o.transparent, jformat: o.format }
       : { page: o.page, landscape: o.landscape, dpi: o.dpi, width: o.width, height: o.height, ccolumns: o.columns, caption: o.caption, title: o.title, cbackground: o.background, page_numbers: o.page_numbers, cformat: o.format };
     prefs.set('sheets', { ...prefs.get('sheets', {}), ...keep, dest: dest.value.trim() });
@@ -77,26 +104,33 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
       prevImg.src = r.url;
       const size = (r.headers.get('X-Size') || '').replace('x', ' × ');
       const pages = r.headers.get('X-Pages');
-      info.textContent = `${fmtNum(ids.length)} images · ${size} px${pages ? ` · ${pages} page${pages === '1' ? '' : 's'} (preview: page 1)` : ''}`;
+      const sprites = r.headers.get('X-Sprites'), fill = r.headers.get('X-Fill');
+      info.textContent = sprites
+        ? `${fmtNum(+sprites)} sprites · ${size} px${fill ? ` · ${Math.round(fill * 100)} % filled` : ''}`
+        : `${fmtNum(ids.length)} images · ${size} px${pages ? ` · ${pages} page${pages === '1' ? '' : 's'} (preview: page 1)` : ''}`;
       setKids(msg);
     } catch (e) { if (e.name !== 'AbortError') { info.textContent = ''; setKids(msg, el('div', { class: 'err', text: e.message })); } }
   }, 350);
 
   const render = () => {
-    setKids(tabs, [['join', 'Join images'], ['contact', 'Contact sheet']].map(([k, t]) =>
+    setKids(tabs, [['join', 'Join images'], ['contact', 'Contact sheet'], ['atlas', 'Sprites / atlas']].map(([k, t]) =>
       el('button', { class: 'seg' + (tab === k ? ' on' : ''), type: 'button', text: t, onclick: () => { tab = k; prefs.set('sheets.tab', k); render(); preview(); } })));
-    setKids(body, tab === 'join' ? joinBox : sheetBox);
+    setKids(body, tab === 'join' ? joinBox : tab === 'atlas' ? atlasBox : sheetBox);
+    prevImg.classList.toggle('checker', tab === 'atlas' || (tab === 'join' && jTr.checked));
+    for (const x of atlasBox.querySelectorAll('.frames-only')) x.style.display = aMode.value === 'frames' ? '' : 'none';
+    for (const x of atlasBox.querySelectorAll('.atlas-only')) x.style.display = aMode.value === 'atlas' ? '' : 'none';
     const custom = cPage.value === 'custom';
     cW.parentElement.parentElement.style.display = custom ? '' : 'none';
     cLand.parentElement.style.display = custom ? 'none' : '';
     cDpi.parentElement.style.display = custom ? 'none' : '';
   };
-  for (const x of [jLayout, jCols, jSize, jGap, jTW, jTH, jBg, jTr, cPage, cLand, cDpi, cW, cH, cCols, cCap, cTitle, cBg, cNum]) {
+  for (const x of [jLayout, jCols, jSize, jGap, jTW, jTH, jBg, jTr, cPage, cLand, cDpi, cW, cH, cCols, cCap, cTitle, cBg, cNum,
+    aMode, aCols, aCW, aCH, aPad, aExt, aTrim, aPot, aMax, aScale, aExp]) {
     x.addEventListener(x.tagName === 'INPUT' && x.type !== 'checkbox' ? 'input' : 'change', () => { render(); preview(); });
   }
 
   const d = openDialog({
-    title: `Join or make a contact sheet - ${fmtNum(ids.length)} ${app.selected.size ? 'selected' : 'images in view'}`, width: 980,
+    title: `Join, contact sheet, sprites - ${fmtNum(ids.length)} ${app.selected.size ? 'selected' : 'images in view'}`, width: 980,
     body: el('div', { class: 'sheetdlg' },
       el('div', { class: 'sheetcol' }, tabs, body, field('Save into', dest), field('Name', name), msg),
       el('div', { class: 'sheetcol prevcol' }, prevImg, info)),
@@ -105,7 +139,7 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
       try {
         const r = await api.sheet(kind(), { ids, ...opts(), dest: dest.value.trim(), name: name.value.trim() });
         const folder = r.files[0].replace(/[\\/][^\\/]*$/, '');
-        setKids(msg, el('div', { class: 'ok', text: `Saved ${r.files.length === 1 ? r.files[0].split(/[\\/]/).pop() : `${r.files.length} files`}` }),
+        setKids(msg, el('div', { class: 'ok', text: `Saved ${r.files.length <= 2 ? r.files.map((f) => f.split(/[\\/]/).pop()).join(' + ') : `${r.files.length} files`}` }),
           el('div', { class: 'row' }, el('button', { class: 'btn small', text: 'Show the folder', onclick: () => { d.close(); app.openPath(folder); } }),
             el('button', { class: 'btn small', text: 'Copy path', onclick: () => navigator.clipboard?.writeText(r.files[0]) })));
       } catch (e) { setKids(msg, el('div', { class: 'err', text: e.message })); }

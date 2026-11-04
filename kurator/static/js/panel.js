@@ -1,7 +1,8 @@
 // Right-hand panel: preview + metadata of the focused item, and a summary of the selection.
 
 import { api, originalUrl, thumbUrl } from './api.js';
-import { el, extOf, setKids, fmtBytes, fmtDate, fmtDuration, fmtNum, SOURCE_LABEL, VIEWABLE } from './util.js';
+import { AUDIO, el, extOf, setKids, fmtBytes, fmtDate, fmtDuration, fmtNum, SOURCE_LABEL, VIEWABLE } from './util.js';
+import { WaveView } from './waveview.js';
 
 const MAX_PRE = 20000;
 
@@ -42,10 +43,20 @@ export class Panel {
       this.shownId = null;
       this.preview.removeAttribute('src');
       this.previewBox.classList.add('empty');
+      this.previewBox.classList.remove('sound');
+      if (this.wave?.root.isConnected) { this.wave.root.remove(); this.wave.id = null; }
       this.body.replaceChildren(el('div', { class: 'p-hint', text: 'Nothing focused. Click an image, or use the arrow keys.' }));
       return;
     }
     this.previewBox.classList.remove('empty');
+    // sounds: an interactive waveform with a playhead instead of the picture
+    const sound = AUDIO.has(extOf(it.n[i]));
+    this.previewBox.classList.toggle('sound', sound);
+    if (sound) {
+      if (!this.wave) { this.wave = new WaveView(this.app, { bins: 1200 }); }
+      if (!this.wave.root.isConnected) this.previewBox.append(this.wave.root);
+      if (this.wave.id !== it.ids[i]) this.wave.load(it.ids[i], 0);
+    } else if (this.wave?.root.isConnected) this.wave.root.remove();
     this.previewBox.classList.toggle('alpha', !!it.a[i]);
     const c = it.c[i];
     this.previewBox.style.backgroundColor = c >= 0 && !it.a[i] ? `#${c.toString(16).padStart(6, '0')}` : '';
@@ -105,6 +116,10 @@ export class Panel {
         m.model?.dimensions?.length === 3 ? el('tr', {}, el('th', { text: 'Dimensions' }), el('td', { text: `${m.model.dimensions.join(' × ')}${m.model.unit ? ' ' + ({ millimeter: 'mm', centimeter: 'cm', meter: 'm', inch: 'in' }[m.model.unit] || m.model.unit) : ''}` })) : null,
         m.pages ? el('tr', {}, el('th', { text: 'Pages' }), el('td', { text: String(m.pages) })) : null,
         m.peak_dbfs != null ? el('tr', {}, el('th', { text: 'Level' }), el('td', { text: `peak ${m.peak_dbfs} dBFS · RMS ${m.rms_dbfs ?? '—'} dBFS` })) : null,
+        m.lufs != null ? el('tr', {}, el('th', { text: 'Loudness', title: 'Integrated loudness, ITU-R BS.1770 / EBU R128' }),
+          el('td', { text: `${m.lufs} LUFS${m.max_momentary_lufs != null ? ` · loudest moment ${m.max_momentary_lufs} LUFS` : ''}` })) : null,
+        m.bpm || m.key ? el('tr', {}, el('th', { text: 'Music', title: 'Estimated from the sound - check before relying on it' }),
+          el('td', { text: [m.bpm ? `${m.bpm} BPM` : null, m.key].filter(Boolean).join(' · ') + ' (estimated)' })) : null,
         m.ucs_catid ? el('tr', {}, el('th', { text: 'UCS' }), el('td', { text: m.ucs_catid, title: 'Universal Category System CatID from the file name' })) : null,
         (m.placeholder || m.preview) && !m.preview_note && !m.video ? el('tr', {}, el('th', { text: 'Preview' }), el('td', { class: 'muted', text: m.placeholder ? 'not available for this format - use Open' : m.preview === 'windows' ? 'from Windows (installed app)' : m.preview === 'rendered' ? 'rendered by Kurator - Enter for the 3D view' : 'stored in the file' })) : null,
         d.twins?.length ? el('tr', {}, el('th', { text: 'Also in', title: 'The same file (identical content) in other places' }),
@@ -112,6 +127,10 @@ export class Panel {
             onclick: (e) => { e.preventDefault(); this.app.openPath(t.path.replace(/[\\/][^\\/]*$/, '')); } }))),
           d.twins.length > 6 ? el('div', { class: 'muted small', text: `… ${d.twins.length - 6} more` }) : null)) : null,
         el('tr', {}, el('th', { text: 'File' }), el('td', { text: `${fmtBytes(d.size)} · ${(m.format || d.ext.slice(1)).toUpperCase()}${m.mode ? ' · ' + m.mode : ''}${m.frames ? ` · ${m.frames} frames` : ''}` })),
+        m.palette?.length ? el('tr', {}, el('th', { text: 'Colours', title: 'Main colours - click one to copy its hex code' }),
+          el('td', { class: 'palette' }, m.palette.map(([hex, share]) => el('span', { class: 'pal', title: `${hex} · ${Math.round(share * 100)} %`,
+            style: { background: hex, flexGrow: String(Math.max(share, 0.04)) },
+            onclick: () => navigator.clipboard?.writeText(hex).then(() => this.app.toast(`${hex} copied`)) })))) : null,
         d.alpha ? el('tr', {}, el('th', { text: 'Alpha' }), el('td', { text: 'transparent pixels' })) : null,
         d.status === 2 ? el('tr', {}, el('th', { text: 'Error' }), el('td', { class: 'err', text: d.error || 'cannot read' })) : null,
         d.status === 0 ? el('tr', {}, el('th', { text: 'Status' }), el('td', { text: 'waiting for indexing' })) : null),

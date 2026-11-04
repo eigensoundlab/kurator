@@ -99,6 +99,8 @@ def _unique(path: str) -> str:
 
 
 def _out_dir(dest: str) -> str:
+    if not (dest or "").strip():
+        raise SheetError("Choose a folder to save into")
     dest = os.path.normpath(os.path.abspath(os.path.expanduser(dest or "")))
     if not os.path.isdir(dest):
         if not (dest and os.path.isdir(os.path.dirname(dest))):

@@ -36,6 +36,9 @@ from .scanner import Scanner
 ITEM_COLS = "id, hash, color, date_ts, name, width, height, date_source, alpha, status, frames, tver, stack_id"
 SORTS = {
     "date": "date_ts {o}, id {o}",
+    "length": "json_extract(meta, '$.duration') {o}, name COLLATE NOCASE",
+    "bpm": "json_extract(meta, '$.bpm') {o}, name COLLATE NOCASE",
+    "loudness": "json_extract(meta, '$.lufs') {o}, name COLLATE NOCASE",
     "name": "name COLLATE NOCASE {o}, id {o}",
     "size": "size {o}, id {o}",
     "folder": "dir COLLATE NOCASE {o}, name COLLATE NOCASE {o}",
@@ -325,8 +328,41 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         similar: int = 0,
         stacks: str = "collapse",
         stack: int | None = None,
+        hues: int = 0,
+        shape: str = "",
+        alpha: bool = False,
+        minside: int = 0,
+        bpm_min: float | None = None,
+        bpm_max: float | None = None,
+        key: str = "",
+        len_min: float | None = None,
+        len_max: float | None = None,
     ):
         where, args = [], []
+        # the look of a picture / the character of a sound
+        if hues:
+            where.append("(hues & ?) != 0")
+            args.append(int(hues))
+        shapes = {"landscape": "width > height * 1.1", "portrait": "height > width * 1.1",
+                  "square": "width BETWEEN height * 0.9 AND height * 1.1",
+                  "panorama": "width >= height * 2", "tall": "height >= width * 2"}
+        if shape in shapes:
+            where.append(f"width > 0 AND height > 0 AND {shapes[shape]}")
+        if alpha:
+            where.append("alpha = 1")
+        if minside:
+            where.append("MAX(width, height) >= ?")
+            args.append(int(minside))
+        for col, lo, hi in (("bpm", bpm_min, bpm_max), ("duration", len_min, len_max)):
+            if lo is not None:
+                where.append(f"json_extract(meta, '$.{col}') >= ?")
+                args.append(lo)
+            if hi is not None:
+                where.append(f"json_extract(meta, '$.{col}') <= ?")
+                args.append(hi)
+        if key:
+            where.append("json_extract(meta, '$.key') = ?")
+            args.append(key)
         if stack:   # the versions in one stack, oldest first
             where.append("stack_id = ?")
             args.append(stack)
@@ -655,7 +691,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         return _json({"ok": True})
 
     # -- contact sheets and joined images -------------------------------------------------
-    from . import sheets
+    from . import atlas, sheets
 
     def _num(v):
         try:
@@ -690,6 +726,69 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         path = sheets.save_image(img, str(body.get("dest") or ""), str(body.get("name") or ""), str(body.get("format") or "png"))
         return _json({"files": [path], "width": img.width, "height": img.height})
 
+    @app.post("/api/sheets/atlas")
+    def sheet_atlas(body: dict):
+        mode = str(body.get("mode") or "atlas")
+        try:
+            scale = float(body.get("scale") or 1)
+        except (TypeError, ValueError):
+            scale = 1.0
+        img, sprites, stats = atlas.build(
+            db, list(body.get("ids") or []), mode=mode, columns=_num(body.get("columns")) or 0,
+            padding=_num(body.get("padding")) or 0, extrude=_num(body.get("extrude")) or 0, trim=body.get("trim", True) is not False,
+            pot=bool(body.get("pot")), max_side=_num(body.get("max_side")) or 4096, scale=scale, expand=body.get("expand", True) is not False,
+            cell_w=_num(body.get("cell_w")), cell_h=_num(body.get("cell_h")))
+        if body.get("preview"):
+            return Response(sheets.preview_png(img), media_type="image/png",
+                            headers={"X-Size": f"{img.width}x{img.height}", "X-Sprites": str(stats["sprites"]),
+                                     "X-Fill": str(stats.get("fill", "")), "Cache-Control": "no-store"})
+        files = atlas.save(img, sprites, mode, str(body.get("dest") or ""), str(body.get("name") or ""))
+        return _json({"files": files, **stats})
+
+    # -- sound: detailed waveform and spectrogram for the waveform view ------------------------
+    wave_cache: dict = {}
+
+    def _sound(item_id: int) -> tuple:
+        row = db.cat.execute("SELECT path, kind, size, mtime_ns FROM files WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(404)
+        if row[1] != "audio":
+            raise HTTPException(415, "not a sound")
+        if not os.path.isfile(row[0]):
+            raise HTTPException(404, "file is missing on disk")
+        return row
+
+    def _cached(key, make):
+        v = wave_cache.get(key)
+        if v is None:
+            v = make()
+            if len(wave_cache) >= 24:
+                wave_cache.pop(next(iter(wave_cache)))
+            wave_cache[key] = v
+        return v
+
+    @app.get("/api/audio/{item_id}/wave")
+    def audio_wave(item_id: int, bins: int = 1600):
+        from . import audio_analysis
+        row = _sound(item_id)
+        bins = max(100, min(int(bins), 8000))
+        try:
+            data = _cached(("w", row[0], row[3], bins), lambda: audio_analysis.wave_data(row[0], bins))
+        except Exception as e:
+            raise HTTPException(422, f"can't read this sound: {e}") from None
+        return _json(data)
+
+    @app.get("/api/audio/{item_id}/spectrogram")
+    def audio_spectrogram(item_id: int, w: int = 1600, h: int = 256):
+        from . import audio_analysis
+        row = _sound(item_id)
+        w, h = max(200, min(int(w), 4000)), max(64, min(int(h), 1024))
+        try:
+            png = _cached(("s", row[0], row[3], w, h), lambda: audio_analysis.spectrogram_png(row[0], w, h))
+        except Exception as e:
+            raise HTTPException(422, f"can't read this sound: {e}") from None
+        return Response(png, media_type="image/png", headers={"Cache-Control": "private, no-cache"})
+
     # -- version stacks --------------------------------------------------------------------
     @app.post("/api/stacks")
     def stack_make(body: dict):
@@ -710,6 +809,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     # -- similar images ------------------------------------------------------------------
     phash_fill = similar_mod.Backfill(db)
+    app.state.backfill = phash_fill   # started by __main__ a little after start-up
 
     @app.get("/api/similar/status")
     def similar_status():
@@ -719,6 +819,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     # -- saved views ("smart folders"): a name for the grid's current filters -----------------
     VIEW_KEYS = {"folder", "recursive", "q", "ext", "sort", "order", "guessed", "tag", "exclude", "missing",
+                 "hues", "shape", "alpha", "minside", "bpm_min", "bpm_max", "key", "len_min", "len_max",
                  "untagged", "project", "dupes", "similar", "suggested"}
 
     @app.get("/api/views")

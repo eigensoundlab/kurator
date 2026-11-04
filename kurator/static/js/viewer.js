@@ -2,7 +2,8 @@
 
 import { originalUrl, thumbUrl } from './api.js';
 import { MeshView } from './meshview.js';
-import { el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
+import { WaveView } from './waveview.js';
+import { AUDIO, el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
 
 const BGS = ['dark', 'gray', 'light', 'checker'];
 
@@ -61,7 +62,9 @@ export class Viewer {
     this.setLoading(null);
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); }
     this.isVideo = false;
-    this.root.classList.remove('mode3d', 'mesh-ready', 'mode-video');
+    this.isSound = false;
+    if (this.wave?.root.isConnected) this.wave.root.remove();
+    this.root.classList.remove('mode3d', 'mesh-ready', 'mode-video', 'mode-sound');
     this.app.onViewerClosed(this.i);
   }
 
@@ -83,15 +86,28 @@ export class Viewer {
     this.img.src = src;
     this.show3d(MESHES.has(ext) && it.v[i] !== 'e' ? it.ids[i] : null);
     this.showVideo(isVideo && this.viewable ? it.ids[i] : null);
+    this.showSound(AUDIO.has(ext) ? it.ids[i] : null);
     if (this.w && this.h) this.fitView();
     this.title.textContent = it.n[i];
     this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
       + (this.is3d ? ' · drag: turn · right-drag: move · wheel: zoom · 0: reset' : '')
-      + (this.isVideo ? ' · Space: play/pause · Shift+← →: 5 s' : isVideo ? ' · this format plays in your video app (O)' : '');
+      + (this.isVideo ? ' · Space: play/pause · Shift+← →: 5 s' : isVideo ? ' · this format plays in your video app (O)' : '')
+      + (this.isSound ? ' · click: play from there · wheel: zoom · double-click: whole sound · Space: play/pause' : '');
     this.paintSel();
     this.paintTags();
     this.root.classList.toggle('alpha', !!it.a[i]);
     this.preload(i + 1); this.preload(i - 1);
+  }
+
+  /** Sounds: a big waveform with time ruler, playhead and the display modes. */
+  showSound(id) {
+    this.isSound = id != null;
+    this.root.classList.toggle('mode-sound', this.isSound);
+    if (!this.isSound) { if (this.wave?.root.isConnected) this.wave.root.remove(); return; }
+    if (!this.wave) this.wave = new WaveView(this.app, { ruler: true, zoom: true, bins: 4000 });
+    if (!this.wave.root.isConnected) this.stage.append(this.wave.root);
+    if (this.wave.id !== id) this.wave.load(id, 0);
+    else this.wave.draw();
   }
 
   /** Videos the browser can play (MP4/H.264, WebM, Ogg; most MOV) play right here. */
@@ -278,6 +294,14 @@ export class Viewer {
     const k = e.key;
     if (k === 'Escape' || k === 'Enter') { this.close(); return true; }
     if (this.isVideo && k === ' ' && !this.quick) { if (this.video.paused) this.video.play(); else this.video.pause(); return true; }
+    if (this.isSound && k === ' ' && !this.quick) {
+      const a = this.app.audio, id = this.items.ids[this.i];
+      if (this.app.playingId === id && !a.paused) a.pause();
+      else if (this.app.playingId === id) a.play().catch(() => {});
+      else this.app.playAt(id, 0);
+      this.wave?.loop();
+      return true;
+    }
     if (this.isVideo && e.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) { this.video.currentTime += k === 'ArrowLeft' ? -5 : 5; return true; }
     if (k === ' ' && !e.ctrlKey) { if (!e.repeat) this.close(); return true; }
     if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown') { this.step(1); return true; }
