@@ -4,7 +4,7 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.12 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.13 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
 > **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
@@ -32,6 +32,7 @@ packages are never touched.
 | Start with a folder | `kurator.bat --library "D:\Art"` | `./kurator.sh --library ~/Art` |
 | Update | `update.bat` | `./update.sh` |
 | Add the optional AI features | `install.bat ai` | `./install.sh ai` |
+| Add the optional 3D add-on | `install.bat 3d` | `./install.sh 3d` |
 
 - **Install** creates `.venv`, installs the **newest compatible versions** of all dependencies, then
   runs [`pip-audit`](https://pypi.org/project/pip-audit/) to check them for known vulnerabilities
@@ -41,6 +42,9 @@ packages are never touched.
 - **`ai`** adds PyTorch and open_clip (2–3 GB). On Windows with an NVIDIA card, the script installs
   the CUDA build of PyTorch (the default one from PyPI is CPU-only there) and checks that the GPU
   works. On Linux the default PyTorch already includes CUDA; on Apple Silicon it uses Metal.
+- **`3d`** adds DracoPy and Pixar's usd-core (about 60 MB) to read **Draco-compressed glTF** and
+  **binary USD** (`.usd`, `.usdc`, USDZ with binary content). Both run in a separate process (see
+  Security). Meshopt-compressed glTF needs nothing extra.
 - Get the code with `git clone https://github.com/eigensoundlab/kurator` or download a release ZIP.
 
 The browser opens at `http://127.0.0.1:8765/`. Library folders are remembered, and you can add more
@@ -124,7 +128,7 @@ Nothing ticked means all types. The choice is remembered.
 | Documents | **pdf** (first page, pdfium), **indd** (XMP thumbnail), afpub, sla | first page / embedded |
 | Game textures | tga, dds, blp | full |
 | Video | **mp4 m4v mov webm ogv** (play in Kurator), mkv avi wmv flv mpg mpeg m2ts mts ts 3gp mxf vob | a frame + hover scrubbing (needs ffmpeg) |
-| 3D models | **glb gltf obj fbx stl ply dae 3mf 3ds off usda usdz vox**, **blend** (also .blend1), usd usdc ma mb max c4d ztl zpr abc 3dm skp lwo hip spp sbs sbsar | rendered by Kurator / Blender's saved thumbnail / embedded (3MF, SketchUp) / Windows |
+| 3D models | **glb gltf obj fbx stl ply dae 3mf 3ds off usda usdz vox**, **usd usdc** (3D add-on), **blend** (also .blend1), ma mb max c4d ztl zpr abc 3dm skp lwo hip spp sbs sbsar | rendered by Kurator / Blender's saved thumbnail / embedded (3MF, SketchUp) / Windows |
 | Audio | wav, mp3, ogg, oga, opus, flac, m4a, aac, aif/aiff/aifc, caf, w64, rf64, wma | waveform |
 
 - **Licences:** everything is permissively licensed (pdfium BSD/Apache, resvg MIT, libheif via
@@ -177,6 +181,12 @@ EBU R128)** and its loudest moment. Sounds of 8 seconds and longer also get an e
 (BPM)** and **key**, shown as *estimated* in the side panel (they are guesses from the audio, like in
 DJ software). Sort by *Length*, *Tempo* or *Loudness*, and filter by tempo, key and length in
 **Look ▾**.
+
+**Cut a region out:** in the full-size view, **drag** across the waveform to select a region
+(Shift+click moves its nearer edge). The bar under it plays the selection (**Space**), loops it,
+zooms to it, and **Save as new file…** (**E**) writes it as a new sound next to the original or into
+any folder: WAV 16/24/32-bit float, FLAC, Ogg Vorbis, MP3 or the original's format, with short
+equal-power fades against clicks and optional peak normalising. The original is never changed.
 
 **Long sounds are orange:** anything from 30 seconds up (music, ambiences, dialogue) gets a warm
 orange waveform, short effects stay blue, so the two are easy to tell apart at a glance.
@@ -282,8 +292,12 @@ group of the type filter.
 - **Side panel:** triangles, vertices, dimensions and units, meshes, materials, animations, the
   application that wrote the file, and the **texture files** the model uses. FBX, COLLADA and 3MF
   creation dates count as the file's date.
-- Draco- or meshopt-compressed glTF files and binary USD (`.usdc`) can't be read yet; they are
-  listed with a card or the Windows thumbnail.
+- **Compressed glTF:** meshopt (`EXT_meshopt_compression`, e.g. from gltfpack) is decoded by Kurator
+  itself; **Draco** (`KHR_draco_mesh_compression`) and **binary USD** need the optional 3D add-on
+  (`install.bat 3d`). Without it they're listed with a card and a note saying so.
+- **Turntable on hover:** move the mouse across a 3D thumbnail and the model turns (12 views, made
+  while indexing; uses the *▶ Hover* switch like videos). `KURATOR_TURNTABLE=0` skips them.
+- Very dense models are simplified for previews (vertex clustering: the surface stays closed).
 - `.obj` files that are compiled program code (Visual Studio and other compilers use the same
   extension) are recognised and shown as *program code, not 3D*; inside code projects their
   `obj/` folders aren't indexed at all.
@@ -438,6 +452,10 @@ swipe view: one over the other, the divider follows the mouse. **0** fits, **1**
   - Saves a **PNG and a JSON** file in the TexturePacker *JSON Hash* layout (frame rectangles, trim
     offsets, source sizes, and `animations` for frame groups), which Phaser, PixiJS, Godot and Unity
     importers read.
+  - **Godot 4 resources (.tres):** a *SpriteFrames* resource with the animations (for
+    AnimatedSprite2D, at the frame rate you set), and for atlases one *AtlasTexture* per sprite (trim
+    margins included). Saved inside a Godot project, the paths are `res://` paths; elsewhere they
+    are relative, so the files can be copied into a project together.
 - A live preview shows the result before saving. New files never overwrite existing ones; save into
   a library folder and they appear in the grid.
 
@@ -717,6 +735,8 @@ kurator/
     formats.py     readers: glTF/GLB, OBJ, FBX, STL, PLY, DAE, 3MF, 3DS, OFF, USDA, VOX
     render.py      numpy z-buffer rasteriser for thumbnails (textures sampled per pixel)
     pack.py        geometry, materials and maps for the 3D viewer
+    meshopt.py     EXT_meshopt_compression decoder (pure Python/numpy)
+    native.py      Draco and binary USD decoders, run in a separate process (optional add-on)
   ai/              optional (install.bat ai)
     embed.py       SigLIP 2 / open_clip image+text embeddings, lazy load, GPU fp16, idle unload
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
@@ -748,6 +768,9 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
   newest versions as of November 2026; `pip-audit` reports no known vulnerabilities.
 - Blender (optional) converts .blend files with `--factory-startup --disable-autoexec`: no add-ons,
   scripts or drivers from the file run.
+- The optional Draco (DracoPy) and USD (usd-core) decoders are native code, so they run in a
+  short-lived separate process (`python -I`, time limit). A malformed file can only end that process,
+  never Kurator; the file is then listed with a note.
 - 3D files are parsed by Kurator's own readers with size limits; XML-based formats with a DTD are
   refused, and a model may only pull extra files (glTF buffers, OBJ materials) from its own folder.
 - PDFs are rendered by pdfium without JavaScript; SVGs by resvg (no scripts, no external
@@ -806,11 +829,12 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
     timeline, sprite sheets and texture atlases~~ ✅
 15. ~~Textured 3D viewer with lights and map views, texture detection, 2D lit preview with companion
     maps, SVG sizes, engine projects left untouched~~ ✅
-    Next in 3D: Draco/meshopt glTF, binary USD, turntable on hover, KTX2/Basis textures.
-    Next: more waveform styles (in development), region export from the waveform view, CLAP
-    text-to-sound search, Godot/Unity-native atlas resources. (PureRef's board format isn't open, so
-    boards are best made by dragging images into PureRef.)
-16. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+16. ~~Meshopt and Draco glTF, binary USD, turntables on hover, cutting regions out of sounds,
+    Godot SpriteFrames/AtlasTexture export~~ ✅
+    Next: more waveform styles (in development), KTX2/Basis textures, CLAP text-to-sound search,
+    Unity sprite import settings. (PureRef's board format isn't open, so boards are best made by
+    dragging images into PureRef.)
+17. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License
 

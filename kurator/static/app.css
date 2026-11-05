@@ -520,3 +520,8 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .lit-tab.on { background: var(--accent2); border-color: var(--accent2); color: #fff; }
 .lit-slider { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 6px; margin: 4px 0; color: var(--muted); }
 .lit-slider input { width: 100%; }
+/* waveform selection */
+.wave-selbar { display: none; position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); gap: 8px; align-items: center;
+  background: #10131ae6; border: 1px solid #ffffff22; border-radius: 8px; padding: 5px 8px; font-size: 12px; z-index: 3; white-space: nowrap; }
+.waveview.big.has-sel .wave-selbar { display: flex; }
+.wave-selbar .sel-time { font-variant-numeric: tabular-nums; color: #fff; }

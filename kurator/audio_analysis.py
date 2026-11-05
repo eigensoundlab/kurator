@@ -304,3 +304,86 @@ def spectrogram_png(path: str, width: int = 1600, height: int = 256) -> bytes:
     buf = io.BytesIO()
     Image.fromarray(np.ascontiguousarray(img), "RGB").save(buf, "PNG", optimize=False)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------- cutting a region out
+EXPORT_FORMATS = {   # key: (extension, soundfile format, subtype)
+    "wav16": (".wav", "WAV", "PCM_16"), "wav24": (".wav", "WAV", "PCM_24"), "wav32f": (".wav", "WAV", "FLOAT"),
+    "flac": (".flac", "FLAC", "PCM_24"), "ogg": (".ogg", "OGG", "VORBIS"), "mp3": (".mp3", "MP3", "MPEG_LAYER_III"),
+}
+
+
+def read_region(path: str, start: float, end: float) -> tuple[np.ndarray, int, dict]:
+    """(frames x channels float32, samplerate, source info) of start..end seconds."""
+    import soundfile as sf
+    try:
+        info = sf.info(path)
+    except Exception:
+        info = None
+    if info is not None:
+        sr = info.samplerate
+        a, b = max(0, int(round(start * sr))), min(info.frames, int(round(end * sr)))
+        if b <= a:
+            raise ValueError("the region is empty")
+        data, _ = sf.read(path, start=a, stop=b, dtype="float32", always_2d=True)
+        return data, sr, {"format": info.format, "subtype": info.subtype}
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        raise ValueError("can't decode this sound (install ffmpeg for M4A/AAC/WMA)")
+    sr = 48000
+    p = subprocess.run([ff, "-v", "error", "-ss", f"{start:.6f}", "-t", f"{max(end - start, 0.001):.6f}", "-i", path,
+                        "-ac", "2", "-ar", str(sr), "-f", "f32le", "pipe:1"], capture_output=True, timeout=300, stdin=subprocess.DEVNULL)
+    data = np.frombuffer(p.stdout[: len(p.stdout) // 8 * 8], "<f4").reshape(-1, 2)
+    if not len(data):
+        raise ValueError("the region is empty")
+    return data.copy(), sr, {"format": None, "subtype": None}
+
+
+def shape_region(data: np.ndarray, sr: int, fade_in: float = 0, fade_out: float = 0, normalize: float | None = None) -> np.ndarray:
+    """Fades (seconds, equal-power curves) and peak normalisation (dBFS) of a region."""
+    data = data.copy()
+    n = len(data)
+    for secs, rising in ((fade_in, True), (fade_out, False)):
+        k = min(n, int(round(max(0.0, secs) * sr)))
+        if k > 1:
+            ramp = np.sin(np.linspace(0, np.pi / 2, k, dtype=np.float32)) ** 2
+            if rising:
+                data[:k] *= ramp[:, None]
+            else:
+                data[n - k:] *= ramp[::-1, None]
+    if normalize is not None:
+        peak = float(np.abs(data).max()) if n else 0.0
+        if peak > 0:
+            data *= (10 ** (normalize / 20)) / peak
+    return np.clip(data, -1.0, 1.0) if normalize is not None else data
+
+
+def export_region(path: str, start: float, end: float, dest_dir: str, name: str, fmt: str = "same",
+                  fade_in: float = 0, fade_out: float = 0, normalize: float | None = None) -> str:
+    import os
+
+    import soundfile as sf
+    data, sr, src = read_region(path, start, end)
+    data = shape_region(data, sr, fade_in, fade_out, normalize)
+    if fmt == "same":
+        ext = os.path.splitext(path)[1].lower()
+        same = {".wav": "wav24" if src["subtype"] in ("PCM_24", "PCM_32", "FLOAT", "DOUBLE") else "wav16",
+                ".flac": "flac", ".ogg": "ogg", ".oga": "ogg", ".mp3": "mp3"}
+        fmt = same.get(ext, "wav24")
+        if fmt == "wav24" and src["subtype"] in ("FLOAT", "DOUBLE"):
+            fmt = "wav32f"
+    if fmt not in EXPORT_FORMATS:
+        raise ValueError("unknown format")
+    ext, container, subtype = EXPORT_FORMATS[fmt]
+    if container not in sf.available_formats():
+        raise ValueError(f"{container} can't be written here")
+    if container == "OGG" and sr > 192000:
+        raise ValueError("Ogg Vorbis can't take this sample rate")
+    stem = "".join(c if c not in '<>:"/\\|?*' and ord(c) >= 32 else "_" for c in name).strip(" .") or "region"
+    out = os.path.join(dest_dir, stem + ext)
+    k = 2
+    while os.path.exists(out):
+        out = os.path.join(dest_dir, f"{stem}_{k}{ext}")
+        k += 1
+    sf.write(out, data, sr, format=container, subtype=subtype)
+    return out

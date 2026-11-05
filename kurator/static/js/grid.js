@@ -3,7 +3,7 @@
 // so 100k items cost the same as 100. Layout is pure arithmetic - no image has to load first.
 
 import { originalUrl, thumbUrl } from './api.js';
-import { AUDIO, el, extOf, fmtMonth, VIDEO, VIEWABLE } from './util.js';
+import { AUDIO, el, extOf, fmtMonth, MESHES, VIDEO, VIEWABLE } from './util.js';
 
 const PAD = 12;
 const GAP = 8;
@@ -42,7 +42,8 @@ export class Grid {
       this.hovered = cell;
       if (!cell || !this.app.animateOnHover) return;
       const i = +cell.dataset.i;
-      if (VIDEO.has(extOf(this.items.n[i])) && this.items.v[i] !== 'e') { this.startScrub(cell, i); return; }
+      const ext = extOf(this.items.n[i]);
+      if ((VIDEO.has(ext) || MESHES.has(ext)) && this.items.v[i] !== 'e') { this.startScrub(cell, i); return; }
       if (!this.items.f?.[i] || !VIEWABLE.has(extOf(this.items.n[i])) || this.items.v[i] === 'e') return;
       this.hoverTimer = setTimeout(() => {
         if (this.hovered !== cell || +cell.dataset.i !== i) return;
@@ -55,14 +56,16 @@ export class Grid {
     new ResizeObserver(() => this.relayout()).observe(this.el);
   }
 
-  /** Videos: moving the mouse across the thumbnail runs through a strip of frames. */
+  /** Videos: moving the mouse across the thumbnail runs through a strip of frames.
+   *  3D models: the same with a turntable - the mouse turns the model. */
   startScrub(cell, i) {
     const items = this.items;
     const url = `/t/${items.ids[i]}?s=1` + (items.v[i] ? `&v=${items.v[i]}` : '');
     const im = new Image();
     im.onload = () => {
       if (this.hovered !== cell || +cell.dataset.i !== i) return;
-      const w = items.w[i] || 16, h = items.h[i] || 9;
+      const model = MESHES.has(extOf(items.n[i]));
+      const w = model ? 1 : items.w[i] || 16, h = model ? 1 : items.h[i] || 9;
       const n = Math.max(1, Math.round(im.naturalWidth / (im.naturalHeight * (w / h))));
       if (!cell._strip) { cell._strip = el('div', { class: 'strip' }); cell._th.append(cell._strip); }
       cell._strip.style.backgroundImage = `url("${url}")`;

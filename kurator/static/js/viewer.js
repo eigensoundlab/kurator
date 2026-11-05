@@ -3,6 +3,7 @@
 import { originalUrl, thumbUrl } from './api.js';
 import { Lit2D } from './lit2d.js';
 import { MeshView } from './meshview.js';
+import { openRegionDialog } from './regiondlg.js';
 import { WaveView } from './waveview.js';
 import { AUDIO, el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
 
@@ -96,7 +97,7 @@ export class Viewer {
     this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
       + (this.is3d ? ' · drag: turn · right-drag: move · wheel: zoom · 0: reset' : '')
       + (this.isVideo ? ' · Space: play/pause · Shift+← →: 5 s' : isVideo ? ' · this format plays in your video app (O)' : '')
-      + (this.isSound ? ' · click: play from there · wheel: zoom · double-click: whole sound · Space: play/pause' : '');
+      + (this.isSound ? ' · click: play from there · drag: select · wheel: zoom · double-click: whole sound · Space: play/pause' : '');
     this.paintSel();
     this.paintTags();
     this.root.classList.toggle('alpha', !!it.a[i]);
@@ -153,7 +154,10 @@ export class Viewer {
     this.isSound = id != null;
     this.root.classList.toggle('mode-sound', this.isSound);
     if (!this.isSound) { if (this.wave?.root.isConnected) this.wave.root.remove(); return; }
-    if (!this.wave) this.wave = new WaveView(this.app, { ruler: true, zoom: true, bins: 4000 });
+    if (!this.wave) {
+      this.wave = new WaveView(this.app, { ruler: true, zoom: true, bins: 4000 });
+      this.wave.onExport = (w) => openRegionDialog(this.app, w.id, w.sel);
+    }
     if (!this.wave.root.isConnected) this.stage.append(this.wave.root);
     if (this.wave.id !== id) this.wave.load(id, 0);
     else this.wave.draw();
@@ -352,6 +356,11 @@ export class Viewer {
     const k = e.key;
     if (k === 'Escape' || k === 'Enter') { this.close(); return true; }
     if (this.isVideo && k === ' ' && !this.quick) { if (this.video.paused) this.video.play(); else this.video.pause(); return true; }
+    if (this.isSound && (k === 'e' || k === 'E') && this.wave?.sel) { openRegionDialog(this.app, this.wave.id, this.wave.sel); return true; }
+    if (this.isSound && k === ' ' && !this.quick && this.wave?.sel && (this.wave.freshSel || !(this.app.playingId === this.items.ids[this.i] && !this.app.audio.paused))) {
+      this.wave.playSelection();
+      return true;
+    }
     if (this.isSound && k === ' ' && !this.quick) {
       const a = this.app.audio, id = this.items.ids[this.i];
       if (this.app.playingId === id && !a.paused) a.pause();

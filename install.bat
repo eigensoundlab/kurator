@@ -5,12 +5,16 @@ rem installs the newest compatible versions of all dependencies and checks them 
 rem known vulnerabilities. Safe to run again at any time.
 rem   install.bat        core app
 rem   install.bat ai     + optional AI features (PyTorch with NVIDIA GPU support if a GPU is found)
+rem   install.bat 3d     + optional 3D add-on: Draco-compressed glTF, binary USD (DracoPy, usd-core)
+rem   install.bat ai 3d  both
 setlocal EnableExtensions
 cd /d "%~dp0"
 set "WANT_AI="
+set "WANT_3D="
 set "DO_PAUSE=1"
 for %%A in (%*) do (
     if /i "%%~A"=="ai" set "WANT_AI=1"
+    if /i "%%~A"=="3d" set "WANT_3D=1"
     if /i "%%~A"=="nopause" set "DO_PAUSE="
 )
 
@@ -49,12 +53,15 @@ if errorlevel 1 goto :fail
 
 echo [Kurator] Installing Kurator and the newest compatible dependencies ...
 set "EXTRAS=audit"
-if defined WANT_AI set "EXTRAS=audit,ai"
-if exist ".venv\Lib\site-packages\open_clip" set "EXTRAS=audit,ai"
+if exist ".venv\Lib\site-packages\open_clip" set "WANT_AI=1"
+if exist ".venv\Lib\site-packages\pxr" set "WANT_3D=1"
+if defined WANT_AI set "EXTRAS=%EXTRAS%,ai"
+if defined WANT_3D set "EXTRAS=%EXTRAS%,3d"
 "%VPY%" -m pip install --upgrade --upgrade-strategy eager --quiet ".[%EXTRAS%]"
 if errorlevel 1 goto :fail
+if defined WANT_3D echo [Kurator] 3D add-on installed: Draco glTF and binary USD can be read.
 
-if not "%EXTRAS%"=="audit,ai" goto :audit
+if not defined WANT_AI goto :audit
 where nvidia-smi >nul 2>nul
 if errorlevel 1 (
     echo [Kurator] No NVIDIA GPU found - AI runs on the CPU ^(slower, but works^).

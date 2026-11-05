@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kurator"
-version = "0.12.0"
+version = "0.13.0"
 description = "Fast local asset manager for artists and game developers: browse, tag, sort, move and back up images, keeping original dates and metadata."
 readme = "README.md"
 license = "Apache-2.0"
@@ -40,6 +40,7 @@ dependencies = [
 [project.optional-dependencies]
 audit = ["pip-audit>=2.10"]
 ai = ["torch>=2.6", "torchvision>=0.21", "open-clip-torch>=3.3"]   # optional AI features (install.bat ai)
+3d = ["DracoPy>=2.2", "usd-core>=26.11"]   # optional: Draco-compressed glTF, binary USD (install.bat 3d)
 dev = ["pytest>=8", "httpx2>=2.16", "pip-audit>=2.10"]
 ui-tests = ["playwright>=1.50"]
 

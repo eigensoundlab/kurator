@@ -5,6 +5,8 @@
 # known vulnerabilities. Safe to run again at any time.
 #   ./install.sh        core app
 #   ./install.sh ai     + optional AI features (PyTorch; CUDA on Linux with an NVIDIA GPU, Metal on Apple)
+#   ./install.sh 3d     + optional 3D add-on: Draco-compressed glTF, binary USD (DracoPy, usd-core)
+#   ./install.sh ai 3d  both
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -35,9 +37,18 @@ echo "[Kurator] Updating pip ..."
 
 echo "[Kurator] Installing Kurator and the newest compatible dependencies ..."
 EXTRAS="audit"
-if [ "${1:-}" = "ai" ] || "$VPY" -c "import open_clip" 2>/dev/null; then EXTRAS="audit,ai"; fi
+WANT_AI=""; WANT_3D=""
+for a in "$@"; do
+    if [ "$a" = "ai" ]; then WANT_AI=1; fi
+    if [ "$a" = "3d" ]; then WANT_3D=1; fi
+done
+if "$VPY" -c "import open_clip" 2>/dev/null; then WANT_AI=1; fi
+if "$VPY" -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pxr') else 1)" 2>/dev/null; then WANT_3D=1; fi
+if [ -n "$WANT_AI" ]; then EXTRAS="$EXTRAS,ai"; fi
+if [ -n "$WANT_3D" ]; then EXTRAS="$EXTRAS,3d"; fi
 "$VPY" -m pip install --upgrade --upgrade-strategy eager --quiet ".[$EXTRAS]"
-if [ "$EXTRAS" = "audit,ai" ]; then
+if [ -n "$WANT_3D" ]; then echo "[Kurator] 3D add-on installed: Draco glTF and binary USD can be read."; fi
+if [ -n "$WANT_AI" ]; then
     "$VPY" -c "import torch; print('[Kurator] AI device:', 'CUDA GPU' if torch.cuda.is_available() else ('Apple GPU' if torch.backends.mps.is_available() else 'CPU'))" || true
 fi
 

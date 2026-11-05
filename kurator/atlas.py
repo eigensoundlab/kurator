@@ -270,7 +270,82 @@ def describe(sprites: list[Sprite], image_name: str, size: tuple[int, int], mode
     return data
 
 
-def save(img: Image.Image, sprites: list[Sprite], mode: str, dest: str, name: str) -> list[str]:
+def _godot_path(png: str) -> str:
+    """res:// path inside a Godot project, else the plain file name (Godot resolves it next to the .tres)."""
+    from .projectdirs import engine_root
+    root = engine_root(png)
+    if root and root[0] == "Godot":
+        return "res://" + os.path.relpath(png, root[1]).replace(os.sep, "/")
+    return os.path.basename(png)
+
+
+def _tres_str(s: str) -> str:
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _region(s: Sprite) -> str:
+    return f"Rect2({s.x}, {s.y}, {s.img.width}, {s.img.height})"
+
+
+def _margin(s: Sprite, mode: str) -> str | None:
+    if mode != "atlas" or (s.img.size == (s.src_w, s.src_h) and not (s.off_x or s.off_y)):
+        return None
+    return f"Rect2({s.off_x}, {s.off_y}, {s.src_w - s.img.width}, {s.src_h - s.img.height})"
+
+
+def godot_resources(sprites: list[Sprite], png: str, mode: str, fps: float = 12.0) -> list[str]:
+    """Godot 4 resources: a SpriteFrames .tres with the animations (sprite sheets, split GIFs), and
+    for atlases one AtlasTexture .tres per sprite in a folder next to the PNG."""
+    out = []
+    folder, stem = os.path.dirname(png), os.path.splitext(os.path.basename(png))[0]
+    path = _godot_path(png)
+    groups: dict[str, list[Sprite]] = {}
+    for s in sprites:
+        groups.setdefault(s.group or "default", []).append(s)
+    anims = {k: v for k, v in groups.items() if mode == "frames" or (k != "default" and len(v) > 1)}
+    if anims:
+        subs, lines, n = [], [], 0
+        ids: dict[int, str] = {}
+        for frames in anims.values():
+            for s in frames:
+                if id(s) in ids:
+                    continue
+                ids[id(s)] = f"AtlasTexture_{n}"
+                n += 1
+                sub = [f'[sub_resource type="AtlasTexture" id="{ids[id(s)]}"]', 'atlas = ExtResource("1_sheet")', f"region = {_region(s)}"]
+                m = _margin(s, mode)
+                if m:
+                    sub.append(f"margin = {m}")
+                subs.append("\n".join(sub))
+        for name, frames in anims.items():
+            fr = ",\n".join('{\n"duration": 1.0,\n"texture": SubResource("' + ids[id(s)] + '")\n}' for s in frames)
+            lines.append('{\n"frames": [' + fr + '],\n"loop": true,\n"name": &' + _tres_str(name) + f',\n"speed": {float(fps):g}\n}}')
+        text = (f'[gd_resource type="SpriteFrames" load_steps={2 + len(subs)} format=3]\n\n'
+                f'[ext_resource type="Texture2D" path={_tres_str(path)} id="1_sheet"]\n\n' + "\n\n".join(subs)
+                + "\n\n[resource]\nanimations = [" + ", ".join(lines) + "]\n")
+        f = _unique(os.path.join(folder, stem + "_frames.tres"))
+        with open(f, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        out.append(f)
+    if mode == "atlas":
+        sub = os.path.join(folder, stem + "_sprites")
+        os.makedirs(sub, exist_ok=True)
+        rel = path if path.startswith("res://") else "../" + path
+        for s in sprites:
+            body = [f'[gd_resource type="AtlasTexture" load_steps=2 format=3]', "",
+                    f'[ext_resource type="Texture2D" path={_tres_str(rel)} id="1_atlas"]', "", "[resource]",
+                    'atlas = ExtResource("1_atlas")', f"region = {_region(s)}"]
+            m = _margin(s, mode)
+            if m:
+                body.append(f"margin = {m}")
+            f = _unique(os.path.join(sub, _safe_name(os.path.splitext(s.name)[0]) + ".tres"))
+            with open(f, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("\n".join(body) + "\n")
+            out.append(f)
+    return out
+
+
+def save(img: Image.Image, sprites: list[Sprite], mode: str, dest: str, name: str, godot: bool = False, fps: float = 12.0) -> list[str]:
     folder = _out_dir(dest)
     stem = _safe_name(name) or f"{'spritesheet' if mode == 'frames' else 'atlas'}_{time.strftime('%Y-%m-%d')}"
     png = _unique(os.path.join(folder, stem + ".png"))
@@ -279,4 +354,7 @@ def save(img: Image.Image, sprites: list[Sprite], mode: str, dest: str, name: st
     img.save(png, optimize=True)
     with open(js, "w", encoding="utf-8") as f:
         json.dump(describe(sprites, os.path.basename(png), img.size, mode), f, indent=1)
-    return [png, js]
+    out = [png, js]
+    if godot:
+        out += godot_resources(sprites, png, mode, fps)
+    return out

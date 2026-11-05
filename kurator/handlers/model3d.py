@@ -81,7 +81,33 @@ def load_mesh_file(data: bytes, path: str, target: int | None) -> Loaded:
     if img is None:
         img = render(mesh, 512)
         meta["preview"] = "rendered"
-    return Loaded(img, meta, dict(mesh.dates), None)
+    extra = {}
+    strip = turntable(mesh)
+    if strip is not None:
+        extra[TURNTABLE] = strip
+        meta["turntable"] = TURN_FRAMES
+    return Loaded(img, meta, dict(mesh.dates), None, extra or None)
+
+
+TURNTABLE = 1          # thumbs.db key of the hover strip (the same key videos use)
+TURN_FRAMES = 12
+TURN_SIZE = 160
+
+
+def turntable(mesh) -> Image.Image | None:
+    """12 views around the model in one strip: moving the mouse across the thumbnail turns it."""
+    if os.environ.get("KURATOR_TURNTABLE", "1") == "0":
+        return None
+    from ..mesh3d import render, thin
+    small = thin(mesh, 40_000)
+    try:
+        frames = [render(small, TURN_SIZE, supersample=1, yaw=-35.0 + k * 360 / TURN_FRAMES) for k in range(TURN_FRAMES)]
+    except MemoryError:
+        return None
+    strip = Image.new("RGB", (TURN_SIZE * len(frames), TURN_SIZE))
+    for k, f in enumerate(frames):
+        strip.paste(f, (k * TURN_SIZE, 0))
+    return strip
 
 
 # ---------------------------------------------------------------- Blender
@@ -250,8 +276,8 @@ def load_other(data: bytes, path: str, target: int | None) -> Loaded:
 
 
 MESH_FORMATS = (".glb", ".gltf", ".obj", ".fbx", ".stl", ".ply", ".dae", ".3mf", ".3ds", ".off",
-                ".usda", ".usdz", ".vox")
-OTHER_FORMATS = (".usd", ".usdc", ".ma", ".mb", ".max", ".c4d", ".ztl", ".zpr", ".abc", ".3dm", ".skp",
+                ".usda", ".usdz", ".usd", ".usdc", ".vox")
+OTHER_FORMATS = (".ma", ".mb", ".max", ".c4d", ".ztl", ".zpr", ".abc", ".3dm", ".skp",
                  ".lwo", ".hip", ".spp", ".sbs", ".sbsar")
 
 register(Handler("model", MESH_FORMATS, load_mesh_file, group="3d"))

@@ -35,7 +35,10 @@ export class WaveView {
     this.modeSel.value = this.mode;
     this.modeSel.onchange = () => this.setMode(this.modeSel.value);
     this.modeSel.addEventListener('pointerdown', (e) => e.stopPropagation());
-    this.root = el('div', { class: 'waveview' + (ruler ? ' big' : '') }, this.canvas, this.modeSel);
+    this.selBar = el('div', { class: 'wave-selbar' });
+    this.root = el('div', { class: 'waveview' + (ruler ? ' big' : '') }, this.canvas, this.modeSel, this.selBar);
+    this.sel = null;          // selected region {a, b} in seconds (big view: drag to select)
+    this.loopSel = prefs.get('wave.loop', false);
     this.id = null; this.data = null; this.spec = null; this.t0 = 0; this.t1 = 1; this.hoverX = null;
     this.bind();
     new ResizeObserver(() => this.draw()).observe(this.canvas);
@@ -45,6 +48,7 @@ export class WaveView {
     this.id = id;
     this.duration = duration || 0;
     this.data = null; this.spec = null; this.t0 = 0; this.t1 = 1;
+    this.setSel(null);
     this.draw();
     try {
       const d = await api.audioWave(id, this.bins);
@@ -74,12 +78,16 @@ export class WaveView {
 
   get playing() { return this.app.playingId === this.id && this.app.audio && !this.app.audio.paused; }
 
-  /** Keep the playhead moving while this sound plays. */
+  /** Keep the playhead moving while this sound plays (and keep it inside a playing selection). */
   loop() {
     if (this._raf) return;
     const tick = () => {
       this._raf = 0;
       if (!this.root.isConnected) return;
+      if (this.playSel && this.sel && this.playing && this.app.audio.currentTime >= this.sel.b) {
+        if (this.loopSel) this.app.audio.currentTime = this.sel.a;
+        else { this.app.audio.pause(); this.playSel = false; }
+      }
       this.draw();
       if (this.playing) this._raf = requestAnimationFrame(tick);
     };
@@ -92,24 +100,94 @@ export class WaveView {
     return (this.t0 + f * (this.t1 - this.t0)) * this.duration;
   }
 
+  /** Play the selection from its start (or the sound from `t`). */
+  playSelection() {
+    if (!this.sel) return;
+    this.freshSel = false;
+    this.playSel = true;
+    this.app.playAt(this.id, this.sel.a);
+    this.loop();
+  }
+
+  setSel(sel) {
+    this.sel = sel && sel.b - sel.a > 0.005 ? sel : null;
+    if (!this.sel) this.playSel = false;
+    this.paintSelBar();
+    this.draw();
+  }
+
+  paintSelBar() {
+    const s = this.sel;
+    this.root.classList.toggle('has-sel', !!s);
+    if (!s || !this.ruler) { this.selBar.replaceChildren(); return; }
+    const fine = (s.b - s.a) < 60;
+    const loop = el('button', { class: 'btn small' + (this.loopSel ? ' on' : ''), type: 'button', text: '⟳ Loop', title: 'Repeat the selection while playing',
+      onclick: () => { this.loopSel = !this.loopSel; prefs.set('wave.loop', this.loopSel); this.paintSelBar(); } });
+    this.selBar.replaceChildren(
+      el('span', { class: 'sel-time', text: `${fmtTime(s.a, true)} – ${fmtTime(s.b, true)}` }),
+      el('span', { class: 'muted', text: fine ? `${(s.b - s.a).toFixed(2)} s` : fmtDuration(s.b - s.a) }),
+      el('button', { class: 'btn small', type: 'button', text: '▶ Play', title: 'Play the selection (Space)', onclick: () => this.playSelection() }),
+      loop,
+      el('button', { class: 'btn small', type: 'button', text: '⤢ Zoom to it', onclick: () => this.zoomTo(s.a, s.b) }),
+      el('button', { class: 'btn small primary', type: 'button', text: 'Save as new file…', title: 'Cut this region out as a new sound file (E)', onclick: () => this.onExport?.(this) }),
+      el('button', { class: 'btn small', type: 'button', text: '✕', title: 'Clear the selection', onclick: () => this.setSel(null) }));
+    for (const b of this.selBar.querySelectorAll('button')) b.addEventListener('pointerdown', (e) => e.stopPropagation());
+  }
+
+  zoomTo(a, b) {
+    const pad = (b - a) * 0.05;
+    this.t0 = Math.max(0, (a - pad) / this.duration);
+    this.t1 = Math.min(1, (b + pad) / this.duration);
+    this.draw();
+  }
+
   bind() {
     const c = this.canvas;
-    let drag = false;
+    let drag = null;
     c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || !this.duration) return;
       e.stopPropagation();
-      drag = true;
       c.setPointerCapture(e.pointerId);
-      this.app.playAt(this.id, this.timeAt(e.clientX));
-      this.loop();
+      const t = this.timeAt(e.clientX);
+      if (!this.ruler) {   // small view: click and drag move the playhead
+        drag = { scrub: true };
+        this.app.playAt(this.id, t);
+        this.loop();
+        return;
+      }
+      // big view: click plays from there, drag selects a region, Shift+click extends the selection
+      if (e.shiftKey && this.sel) {
+        const anchor = Math.abs(t - this.sel.a) < Math.abs(t - this.sel.b) ? this.sel.b : this.sel.a;
+        drag = { x: e.clientX, anchor, moved: true };
+        this.setSel({ a: Math.min(anchor, t), b: Math.max(anchor, t) });
+        return;
+      }
+      drag = { x: e.clientX, anchor: t, moved: false };
     });
     c.addEventListener('pointermove', (e) => {
       const r = c.getBoundingClientRect();
       this.hoverX = e.clientX - r.left;
-      if (drag && this.app.playingId === this.id) this.app.audio.currentTime = this.timeAt(e.clientX);
+      if (drag?.scrub && this.app.playingId === this.id) this.app.audio.currentTime = this.timeAt(e.clientX);
+      else if (drag && (drag.moved || Math.abs(e.clientX - drag.x) > 4)) {
+        drag.moved = true;
+        const t = this.timeAt(e.clientX);
+        this.sel = { a: Math.min(drag.anchor, t), b: Math.max(drag.anchor, t) };
+        this.playSel = false;
+      }
       this.draw();
     });
-    c.addEventListener('pointerup', () => { drag = false; });
+    c.addEventListener('pointerup', (e) => {
+      if (drag && !drag.scrub) {
+        if (drag.moved) { this.setSel(this.sel); this.freshSel = !!this.sel; }   // Space now plays the new selection
+        else {
+          const t = this.timeAt(e.clientX);
+          this.playSel = !!(this.sel && t >= this.sel.a && t < this.sel.b);   // inside the selection: play just that
+          this.app.playAt(this.id, t);
+          this.loop();
+        }
+      }
+      drag = null;
+    });
     c.addEventListener('pointerleave', () => { this.hoverX = null; this.draw(); });
     c.addEventListener('click', (e) => e.stopPropagation());
     if (this.zoomable) {
@@ -258,6 +336,15 @@ export class WaveView {
   }
 
   heads(g, W, H, top, dpr, pal) {
+    if (this.sel && this.duration) {   // the selected region
+      const xa = ((this.sel.a / this.duration - this.t0) / (this.t1 - this.t0)) * W;
+      const xb = ((this.sel.b / this.duration - this.t0) / (this.t1 - this.t0)) * W;
+      g.fillStyle = '#7aa2ff2e';
+      g.fillRect(xa, top, xb - xa, H - top);
+      g.fillStyle = '#7aa2ff';
+      g.fillRect(Math.round(xa), top, dpr, H - top);
+      g.fillRect(Math.round(xb), top, dpr, H - top);
+    }
     const mine = this.app.playingId === this.id;
     const t = mine ? this.app.audio.currentTime : null;
     if (t != null && this.duration) {

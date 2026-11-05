@@ -771,8 +771,48 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             return Response(sheets.preview_png(img), media_type="image/png",
                             headers={"X-Size": f"{img.width}x{img.height}", "X-Sprites": str(stats["sprites"]),
                                      "X-Fill": str(stats.get("fill", "")), "Cache-Control": "no-store"})
-        files = atlas.save(img, sprites, mode, str(body.get("dest") or ""), str(body.get("name") or ""))
+        try:
+            fps = max(1.0, min(float(body.get("fps") or 12), 120.0))
+        except (TypeError, ValueError):
+            fps = 12.0
+        files = atlas.save(img, sprites, mode, str(body.get("dest") or ""), str(body.get("name") or ""),
+                           godot=bool(body.get("godot")), fps=fps)
         return _json({"files": files, **stats})
+
+    @app.post("/api/audio/{item_id}/export")
+    def audio_export(item_id: int, body: dict):
+        """Save a region of a sound as a new file (fades, normalising, format)."""
+        from . import audio_analysis
+        row = db.cat.execute("SELECT path, kind, dir, name FROM files WHERE id = ?", (item_id,)).fetchone()
+        if not row or row[1] != "audio":
+            raise HTTPException(404)
+        if not os.path.isfile(row[0]):
+            raise HTTPException(404, "file is missing on disk")
+        try:
+            start, end = float(body.get("start", 0)), float(body.get("end", 0))
+            fade_in, fade_out = float(body.get("fade_in") or 0), float(body.get("fade_out") or 0)
+            norm = body.get("normalize")
+            norm = None if norm in (None, "", False) else float(norm)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "bad numbers") from None
+        if not 0 <= start < end or end - start > 4 * 3600:
+            raise HTTPException(400, "Select a region first")
+        dest = str(body.get("dest") or row[2]).strip()
+        if not os.path.isdir(dest):
+            raise HTTPException(400, "Choose an existing folder to save into")
+        stem = os.path.splitext(row[3])[0]
+        name = str(body.get("name") or f"{stem}_{int(start // 60)}m{start % 60:05.2f}s".replace(".", "_"))
+        try:
+            out = audio_analysis.export_region(row[0], start, end, dest, name, str(body.get("format") or "same"),
+                                               fade_in, fade_out, norm)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(400, str(e)) from None
+        root = db.root_for(out, None)
+        if root is not None:
+            scanner.walk_folder(root["id"], os.path.dirname(out), False)
+            scanner.request_process()
+        fid = db.cat.execute("SELECT id FROM files WHERE path = ?", (os.path.normpath(os.path.abspath(out)),)).fetchone()
+        return _json({"file": out, "id": fid[0] if fid else None})
 
     # -- sound: detailed waveform and spectrogram for the waveform view ------------------------
     wave_cache: dict = {}

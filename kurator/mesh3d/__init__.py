@@ -183,16 +183,41 @@ def z_up_to_y_up(v: np.ndarray) -> np.ndarray:
 
 
 def thin(mesh: Mesh, limit: int) -> Mesh:
-    """Keep every k-th triangle so that at most `limit` remain (previews / the 3D viewer)."""
+    """At most `limit` triangles, by vertex clustering: vertices in the same cell of a grid merge
+    and triangles that collapse disappear. The surface stays closed (dropping every k-th triangle
+    left holes), materials and texture coordinates stay with their triangles."""
     m = len(mesh.faces)
     if m <= limit:
         return mesh
-    step = int(np.ceil(m / limit))
-    sl = slice(None, None, step)
-    return Mesh(mesh.vertices, mesh.faces[sl], mesh.colors[sl] if mesh.colors is not None else None,
-                mesh.info, mesh.dates, mesh.uv, mesh.corner_uv[sl] if mesh.corner_uv is not None else None,
-                mesh.face_mat[sl] if mesh.face_mat is not None else None, mesh.materials, mesh.normals,
-                mesh.corner_normals[sl] if mesh.corner_normals is not None else None)
+    v = mesh.vertices
+    used = np.unique(mesh.faces)
+    lo, hi = v[used].min(axis=0), v[used].max(axis=0)
+    ext = float(max((hi - lo).max(), 1e-12))
+    corner_uv = mesh.corner_uv if mesh.corner_uv is not None else (mesh.uv[mesh.faces] if mesh.uv is not None else None)
+    corner_n = mesh.corner_normals if mesh.corner_normals is not None else (mesh.normals[mesh.faces] if mesh.normals is not None else None)
+    r = int(min(2 ** 20, max(8, np.sqrt(limit / 2.2))))   # a surface fills roughly r^2 cells
+    best = None
+    for _ in range(6):
+        q = np.floor((v - lo) * ((r - 1) / ext)).astype(np.int64)
+        key = (q[:, 0] * r + q[:, 1]) * r + q[:, 2]
+        uniq, inv = np.unique(key, return_inverse=True)
+        f = inv[mesh.faces]
+        keep = (f[:, 0] != f[:, 1]) & (f[:, 1] != f[:, 2]) & (f[:, 0] != f[:, 2])
+        n = int(keep.sum())
+        best = (uniq, inv, f, keep)
+        if n <= limit:
+            break
+        r = max(8, int(r * np.sqrt(limit / n) * 0.97))
+    uniq, inv, f, keep = best
+    cnt = np.bincount(inv, minlength=len(uniq)).astype(np.float64)
+    nv = np.stack([np.bincount(inv, weights=v[:, k], minlength=len(uniq)) for k in range(3)], 1) / np.maximum(cnt, 1)[:, None]
+    out = Mesh(nv.astype(np.float32), f[keep].astype(np.int32), mesh.colors[keep] if mesh.colors is not None else None,
+               mesh.info, mesh.dates, None, corner_uv[keep] if corner_uv is not None else None,
+               mesh.face_mat[keep] if mesh.face_mat is not None else None, mesh.materials, None,
+               corner_n[keep] if corner_n is not None else None)
+    if hasattr(mesh, "_tex_cache"):
+        out._tex_cache = mesh._tex_cache
+    return out
 
 
 def material_colors(mesh: Mesh) -> None:

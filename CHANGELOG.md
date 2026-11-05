@@ -2,6 +2,18 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.13.0 – compressed glTF, binary USD, turntables, sound regions, Godot resources
+- **Meshopt-compressed glTF** read by Kurator itself; **Draco glTF** and **binary USD**
+  (`.usd`/`.usdc`, USDZ) with the optional 3D add-on (`install.bat 3d`), decoded in a separate
+  process. USD materials (UsdPreviewSurface) bring their textures, also from inside USDZ.
+- **Turntable on hover:** move the mouse across a 3D thumbnail to turn the model.
+- **Hole-free simplification** of very dense models for previews (vertex clustering).
+- **Waveform selection:** drag to select, Space plays it, loop, zoom to it, **save as a new file**
+  (WAV/FLAC/Ogg/MP3, fades, normalising).
+- **Godot 4 resources** from the sprites dialog: SpriteFrames with the animations, AtlasTexture per
+  sprite.
+- CI installs the 3D add-on, so Draco and USD are tested on Windows, macOS and Linux.
+
 ## 0.12.0 – textured 3D, lights, 2D lit preview, SVG sizes, engine projects
 - **3D viewer with textures:** base colour, normal, emissive, occlusion and metal/roughness maps
   from glTF/GLB, OBJ and FBX (also embedded); views *Lit*, *Base colour*, *Clay*, *Normals*,

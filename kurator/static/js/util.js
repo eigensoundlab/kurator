@@ -52,7 +52,7 @@ export const prefs = {
 
 // Filled from the server's type registry at start-up.
 export const VIEWABLE = new Set(['jpg', 'jpeg', 'jfif', 'jpe', 'png', 'webp', 'gif', 'bmp', 'avif', 'svg']);
-export const MESHES = new Set(['glb', 'gltf', 'obj', 'fbx', 'stl', 'ply', 'dae', '3mf', '3ds', 'off', 'usda', 'usdz', 'vox']);
+export const MESHES = new Set(['glb', 'gltf', 'obj', 'fbx', 'stl', 'ply', 'dae', '3mf', '3ds', 'off', 'usda', 'usdz', 'usd', 'usdc', 'vox']);
 export const VIDEO = new Set(['mp4', 'm4v', 'mov', 'webm', 'ogv', 'mkv', 'avi', 'wmv', 'flv', 'mpg', 'mpeg', 'm2ts', 'mts', 'ts', '3gp', '3g2', 'mxf', 'vob']);
 export const AUDIO = new Set(['wav', 'mp3', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'aif', 'aiff', 'aifc', 'caf', 'w64', 'rf64', 'wma']);
 export const fmtDuration = (s) => { if (s == null) return '—'; if (s < 1) return `${s.toFixed(2)} s`; const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`; };

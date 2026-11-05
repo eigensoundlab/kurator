@@ -443,18 +443,46 @@ def read_gltf(data: bytes, path: str, full: bool = False) -> Mesh:
     views = doc.get("bufferViews", [])
     accs = doc.get("accessors", [])
 
+    decoded: dict[int, bytes] = {}
+
+    def view_bytes(vi: int) -> tuple[bytes, int]:
+        """(buffer, offset) of a bufferView, decompressing meshopt views on first use."""
+        bv = views[vi]
+        mo = (bv.get("extensions") or {})
+        mo = mo.get("EXT_meshopt_compression") or mo.get("KHR_meshopt_compression")
+        if mo is None:
+            buf = buffers[bv["buffer"]]
+            if buf is None:
+                raise MeshError("external .bin file is missing")
+            return buf, bv.get("byteOffset", 0)
+        if vi not in decoded:
+            from .meshopt import MeshoptError, decode
+            src = buffers[mo["buffer"]]
+            if src is None:
+                raise MeshError("external .bin file is missing")
+            o = mo.get("byteOffset", 0)
+            try:
+                decoded[vi] = decode(bytes(src[o: o + mo["byteLength"]]), mo["count"], mo["byteStride"],
+                                     mo.get("mode", "ATTRIBUTES"), mo.get("filter", "NONE"))
+            except MeshoptError as e:
+                raise MeshError(str(e)) from None
+        return decoded[vi], 0
+
+    def view_data(vi: int) -> bytes:
+        buf, o = view_bytes(vi)
+        n = views[vi].get("byteLength", 0) if vi not in decoded else len(decoded[vi])
+        return bytes(buf[o: o + n])
+
     def accessor(i: int) -> np.ndarray:
         a = accs[i]
         if "bufferView" not in a:
             raise MeshError("sparse/empty accessor")
         bv = views[a["bufferView"]]
-        buf = buffers[bv["buffer"]]
-        if buf is None:
-            raise MeshError("external .bin file is missing")
+        buf, voff = view_bytes(a["bufferView"])
         dt = np.dtype(_GL_DTYPE[a["componentType"]])
         n = _GL_N[a["type"]]
         count = a["count"]
-        start = bv.get("byteOffset", 0) + a.get("byteOffset", 0)
+        start = voff + a.get("byteOffset", 0)
         stride = bv.get("byteStride") or dt.itemsize * n
         if stride == dt.itemsize * n:
             arr = np.frombuffer(buf, dt, count * n, start).reshape(count, n)
@@ -466,11 +494,13 @@ def read_gltf(data: bytes, path: str, full: bool = False) -> Mesh:
         return arr
 
     used_ext = doc.get("extensionsUsed", [])
-    compressed = [e for e in used_ext if e in ("KHR_draco_mesh_compression", "EXT_meshopt_compression")]
+    from . import native
+    compressed = [e for e in used_ext if e == "KHR_draco_mesh_compression" and not native.available("draco")]
     mats = doc.get("materials", [])
     materials = _gltf_materials(doc, buffers, views, mats, base)
 
     parts = []
+    errors: list[str] = []
     meshes = doc.get("meshes", [])
 
     def add_mesh(mi: int, M: np.ndarray) -> None:
@@ -479,23 +509,33 @@ def read_gltf(data: bytes, path: str, full: bool = False) -> Mesh:
                 continue
             if "extensions" in prim and set(prim["extensions"]) & set(compressed):
                 continue
+            draco = (prim.get("extensions") or {}).get("KHR_draco_mesh_compression")
             try:
-                v = accessor(prim["attributes"]["POSITION"]).astype(np.float32)[:, :3]
-                f = accessor(prim["indices"]).reshape(-1) if "indices" in prim else np.arange(len(v))
-            except (MeshError, KeyError, ValueError, IndexError):
+                if draco is not None:
+                    v, f, uv_d, n_d = _draco_prim(draco, view_data)
+                else:
+                    v = accessor(prim["attributes"]["POSITION"]).astype(np.float32)[:, :3]
+                    f = accessor(prim["indices"]).reshape(-1) if "indices" in prim else np.arange(len(v))
+            except MeshError as e:
+                if draco is not None:
+                    errors.append(str(e))
+                continue
+            except (KeyError, ValueError, IndexError):
                 continue
             f = f[: len(f) // 3 * 3].reshape(-1, 3).astype(np.int32)
             v = v @ M[:3, :3].T.astype(np.float32) + M[:3, 3].astype(np.float32)
             uv = None
-            if "TEXCOORD_0" in prim["attributes"]:
+            if draco is not None:
+                uv = uv_d
+            elif "TEXCOORD_0" in prim["attributes"]:
                 try:
                     uv = accessor(prim["attributes"]["TEXCOORD_0"]).astype(np.float32)[:, :2]
                     if len(uv) != len(v):
                         uv = None
                 except (MeshError, KeyError, ValueError, IndexError):
                     uv = None
-            nrm = None
-            if full and "NORMAL" in prim["attributes"]:
+            nrm = n_d @ M[:3, :3].T.astype(np.float32) if draco is not None and full and n_d is not None else None
+            if nrm is None and draco is None and full and "NORMAL" in prim["attributes"]:
                 try:
                     nrm = accessor(prim["attributes"]["NORMAL"]).astype(np.float32)[:, :3] @ M[:3, :3].T.astype(np.float32)
                     if len(nrm) != len(v):
@@ -551,7 +591,9 @@ def read_gltf(data: bytes, path: str, full: bool = False) -> Mesh:
     }.items() if v not in (None, 0, "")}
     if not parts:
         if compressed:
-            raise MeshError(f"geometry is compressed ({', '.join(compressed)})")
+            raise MeshError("Draco-compressed geometry: install the optional 3D add-on (install.bat 3d / ./install.sh 3d)")
+        if errors:
+            raise MeshError(errors[0])
         raise MeshError("no triangle geometry")
     vs, fs, uvs, fms, ns, off = [], [], [], [], [], 0
     any_uv = any(p[2] is not None for p in parts)
@@ -576,6 +618,14 @@ def read_gltf(data: bytes, path: str, full: bool = False) -> Mesh:
                 normals=np.concatenate(ns) if all_n and ns else None)
     material_colors(mesh)
     return mesh
+
+
+def _draco_prim(ext: dict, view_data):
+    """Positions, triangles, UVs and normals of a Draco-compressed primitive, decoded in a separate
+    process (DracoPy is native code)."""
+    from . import native
+    r = native.run("draco", payload=view_data(ext["bufferView"]))
+    return (r["points"].astype(np.float32), r["faces"].astype(np.int64).reshape(-1), r.get("uv"), r.get("normals"))
 
 
 def _gltf_materials(doc, buffers, views, mats, base: str) -> list:
@@ -1280,6 +1330,56 @@ def read_3ds(data: bytes, path: str) -> Mesh:
 
 
 # ---------------------------------------------------------------- USD (ASCII)
+def read_usd(data: bytes, path: str) -> Mesh:
+    """Any USD (text, binary crate, USDZ): through Pixar's library when the 3D add-on is installed,
+    else the built-in reader for text USD."""
+    from . import native
+    if native.available("usd") and os.path.isfile(path):
+        return _usd_native(path)
+    return read_usda(data, path)
+
+
+def _usdz_member(package: str, inner: str) -> bytes | None:
+    try:
+        with zipfile.ZipFile(package) as z:
+            info = z.getinfo(inner)
+            if info.file_size > 256 * 1024 * 1024:
+                return None
+            return z.read(inner)
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return None
+
+
+def _usd_native(path: str) -> Mesh:
+    from . import native
+    r = native.run("usd", path=path)
+    info = r.get("info", {})
+    base = os.path.dirname(path)
+    materials = []
+    for m in info.pop("materials_list", []):
+        mat = Material(name=m.get("name", ""), color=tuple(m.get("color", (0.72, 0.74, 0.78, 1.0))))
+        for role, t in (m.get("maps") or {}).items():
+            resolved, name = t.get("resolved") or "", t.get("name") or ""
+            ref = TexRef(name)
+            if "[" in resolved and resolved.endswith("]"):   # inside a .usdz package
+                pkg, inner = resolved[:-1].split("[", 1)
+                ref.data = _usdz_member(pkg, inner)
+            elif resolved and os.path.isfile(resolved):
+                ref.path = resolved
+            else:
+                ref.path = resolve_texture(base, name)
+            mat.maps[role] = ref
+        if "base" in mat.maps and mat.maps["base"].found:
+            mat.color = (1.0, 1.0, 1.0, 1.0)
+        materials.append(mat)
+    fm = r.get("face_mat")
+    mesh = Mesh(r["points"].astype(np.float32), r["faces"].astype(np.int32), None,
+                {k: v for k, v in info.items() if v not in (None, 0, "")}, corner_uv=r.get("corner_uv"),
+                face_mat=fm.astype(np.int32) if fm is not None and materials else None, materials=materials)
+    material_colors(mesh)
+    return mesh
+
+
 def read_usda(data: bytes, path: str) -> Mesh:
     if data[:2] == b"PK":
         try:
@@ -1289,10 +1389,10 @@ def read_usda(data: bytes, path: str) -> Mesh:
         with z:
             name = next((n for n in z.namelist() if n.lower().endswith(".usda")), None)
             if not name:
-                raise MeshError("USDZ with binary USD (.usdc) - no preview")
+                raise MeshError("USDZ with binary USD (.usdc): install the optional 3D add-on (install.bat 3d)")
             data = z.read(name)
     if data[:8] == b"PXR-USDC":
-        raise MeshError("binary USD (.usdc) - no preview")
+        raise MeshError("binary USD (.usdc): install the optional 3D add-on (install.bat 3d)")
     text = data.decode("utf-8", "replace")
     up = re.search(r'upAxis\s*=\s*"(\w)"', text)
     parts = []
@@ -1447,7 +1547,7 @@ def _voxel_faces(xyzi: np.ndarray, size, pal) -> tuple[np.ndarray, np.ndarray, n
 READERS = {
     ".stl": read_stl, ".obj": read_obj, ".ply": read_ply, ".off": read_off,
     ".glb": read_gltf, ".gltf": read_gltf, ".fbx": read_fbx, ".dae": read_dae,
-    ".3mf": read_3mf, ".3ds": read_3ds, ".usda": read_usda, ".usdz": read_usda, ".vox": read_vox,
+    ".3mf": read_3mf, ".3ds": read_3ds, ".usda": read_usd, ".usdz": read_usd, ".usd": read_usd, ".usdc": read_usd, ".vox": read_vox,
 }
 
 

@@ -43,6 +43,9 @@ def render(mesh: Mesh, size: int = 512, supersample: int = 2, yaw: float = -35.0
 
 
 def _textures(mesh: Mesh) -> dict:
+    cached = getattr(mesh, "_tex_cache", None)
+    if cached is not None:   # several views of one model (turntable): decode the textures once
+        return cached
     out = {}
     for k, m in enumerate(mesh.materials[:64]):
         ref = m.maps.get("base")
@@ -54,6 +57,10 @@ def _textures(mesh: Mesh) -> dict:
         except Exception:
             continue
         out[k] = a * np.array(m.color[:3], np.float32)
+    try:
+        mesh._tex_cache = out
+    except AttributeError:
+        pass
     return out
 
 

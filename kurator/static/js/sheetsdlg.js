@@ -48,6 +48,9 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
   const aMax = sel([['1024', '1024'], ['2048', '2048'], ['4096', '4096'], ['8192', '8192'], ['16384', '16384']], String(P.max_side || 4096));
   const aScale = sel([['1', '100 %'], ['0.5', '50 %'], ['0.25', '25 %'], ['2', '200 %']], String(P.scale || 1));
   const aExp = chk(P.expand !== false);
+  const aGodot = chk(P.godot);
+  const aFps = num(P.fps ?? 12, 1, 120);
+  aFps.style.width = '60px';
   // shared
   const dest = el('input', { type: 'text', value: P.dest || firstDir, spellcheck: 'false', placeholder: 'Folder to save into' });
   const name = el('input', { type: 'text', value: '', spellcheck: 'false', placeholder: 'file name (optional)' });
@@ -73,11 +76,14 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
     el('div', { class: 'row' }, field('Max size', aMax), field('Scale', aScale)),
     el('label', { class: 'chk' }, aPot, 'Power-of-two size (older engines, mipmaps)'),
     el('label', { class: 'chk' }, aExp, 'Split animated GIF / WebP / APNG into frames'),
+    el('div', { class: 'row' }, el('label', { class: 'chk', title: 'SpriteFrames .tres with the animations (AnimatedSprite2D); for atlases also one AtlasTexture .tres per sprite. Inside a Godot project the paths are res:// paths.' }, aGodot, 'Godot 4 resources (.tres)'),
+      field('Frames per second', aFps)),
     el('div', { class: 'p-hint small', text: 'Saves a PNG and a JSON file (TexturePacker JSON Hash) next to each other - Phaser, PixiJS, Godot and Unity importers read it. Frames of one animation are listed under "animations".' }));
   const kind = () => tab;
   const opts = () => (tab === 'atlas'
     ? { mode: aMode.value, columns: +aCols.value || 0, cell_w: +aCW.value || null, cell_h: +aCH.value || null, padding: +aPad.value || 0,
-      extrude: +aExt.value || 0, trim: aTrim.checked, pot: aPot.checked, max_side: +aMax.value, scale: +aScale.value, expand: aExp.checked }
+      extrude: +aExt.value || 0, trim: aTrim.checked, pot: aPot.checked, max_side: +aMax.value, scale: +aScale.value, expand: aExp.checked,
+      godot: aGodot.checked, fps: +aFps.value || 12 }
     : tab === 'join'
     ? { layout: jLayout.value, columns: +jCols.value, size: jSize.value, gap: +jGap.value || 0, target_width: +jTW.value || null,
       target_height: +jTH.value || null, background: jBg.value, transparent: jTr.checked, format: jFmt.value }
@@ -86,7 +92,7 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
   const remember = () => {
     const o = opts();
     const keep = tab === 'atlas'
-      ? { amode: o.mode, acolumns: o.columns || '', cell_w: o.cell_w, cell_h: o.cell_h, padding: o.padding, extrude: o.extrude, trim: o.trim, pot: o.pot, max_side: o.max_side, scale: o.scale, expand: o.expand }
+      ? { amode: o.mode, acolumns: o.columns || '', cell_w: o.cell_w, cell_h: o.cell_h, padding: o.padding, extrude: o.extrude, trim: o.trim, pot: o.pot, max_side: o.max_side, scale: o.scale, expand: o.expand, godot: o.godot, fps: o.fps }
       : tab === 'join'
       ? { layout: o.layout, columns: o.columns, size: o.size, gap: o.gap, target_width: o.target_width, target_height: o.target_height, background: o.background, transparent: o.transparent, jformat: o.format }
       : { page: o.page, landscape: o.landscape, dpi: o.dpi, width: o.width, height: o.height, ccolumns: o.columns, caption: o.caption, title: o.title, cbackground: o.background, page_numbers: o.page_numbers, cformat: o.format };
@@ -125,7 +131,7 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
     cDpi.parentElement.style.display = custom ? 'none' : '';
   };
   for (const x of [jLayout, jCols, jSize, jGap, jTW, jTH, jBg, jTr, cPage, cLand, cDpi, cW, cH, cCols, cCap, cTitle, cBg, cNum,
-    aMode, aCols, aCW, aCH, aPad, aExt, aTrim, aPot, aMax, aScale, aExp]) {
+    aMode, aCols, aCW, aCH, aPad, aExt, aTrim, aPot, aMax, aScale, aExp, aGodot]) {
     x.addEventListener(x.tagName === 'INPUT' && x.type !== 'checkbox' ? 'input' : 'change', () => { render(); preview(); });
   }
 

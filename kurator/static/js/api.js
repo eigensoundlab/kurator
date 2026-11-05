@@ -51,6 +51,7 @@ export const api = {
   views: () => req('GET', '/api/views'),
   similarStatus: () => req('GET', '/api/similar/status'),
   audioWave: (id, bins = 1600) => req('GET', `/api/audio/${id}/wave?bins=${bins}`),
+  exportRegion: (id, body) => req('POST', `/api/audio/${id}/export`, body),
   stack: (ids, byName = false) => req('POST', '/api/stacks', { ids, by_name: byName }),
   unstack: (ids) => req('POST', '/api/stacks/unstack', { ids }),
   stackCover: (id) => req('POST', '/api/stacks/cover', { id }),
