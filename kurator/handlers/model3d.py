@@ -36,7 +36,7 @@ def _fmt_size(v: np.ndarray, unit: str | None) -> list:
 
 
 def load_mesh_file(data: bytes, path: str, target: int | None) -> Loaded:
-    from ..mesh3d import MeshError, read_mesh, render
+    from ..mesh3d import MeshError, read_mesh, render, texture_summary
     from ..mesh3d.formats import threemf_thumbnail
     ext = os.path.splitext(path)[1].lower()
     meta: dict = {"format": _fmt(ext), "model": {}}
@@ -49,6 +49,10 @@ def load_mesh_file(data: bytes, path: str, target: int | None) -> Loaded:
         mesh = read_mesh(data, path)
     except MeshError as e:
         meta["model"]["note"] = str(e)
+        if str(e).startswith("not a 3D model"):
+            meta["placeholder"] = True
+            meta["not_model"] = True
+            return Loaded(placeholder(ext, "program code, not 3D"), meta, {}, None)
         if img is None:
             img = shell_thumbnail(path)
             if img is not None:
@@ -61,6 +65,17 @@ def load_mesh_file(data: bytes, path: str, target: int | None) -> Loaded:
     model = {"vertices": int(len(used)), "triangles": mesh.triangles,
              "dimensions": _fmt_size(mesh.vertices[used] if len(used) else mesh.vertices, mesh.info.get("unit"))}
     model.update(mesh.info)
+    model.update(texture_summary(mesh))
+    names = mesh.info.get("textures") if isinstance(mesh.info.get("textures"), list) else mesh.info.get("images")
+    if not model.get("textured") and names:   # formats without material wiring here (3DS...): the names they list
+        from ..mesh3d import resolve_texture
+        maps = [{"role": "texture", "name": n.replace("\\", "/").rsplit("/", 1)[-1],
+                 "found": resolve_texture(os.path.dirname(path), n) is not None, "embedded": False} for n in names[:64]]
+        model.update({"textured": True, "maps": maps})
+        missing = [m["name"] for m in maps if not m["found"]]
+        if missing:
+            model["missing_textures"] = missing
+    model["uv"] = mesh.has_uv
     meta["model"] = model
     meta["mesh"] = True   # the 3D viewer can show it
     if img is None:

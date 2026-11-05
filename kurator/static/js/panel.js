@@ -1,7 +1,7 @@
 // Right-hand panel: preview + metadata of the focused item, and a summary of the selection.
 
 import { api, originalUrl, thumbUrl } from './api.js';
-import { AUDIO, el, extOf, setKids, fmtBytes, fmtDate, fmtDuration, fmtNum, SOURCE_LABEL, VIEWABLE } from './util.js';
+import { AUDIO, el, extOf, setKids, fmtBytes, fmtDate, fmtDuration, fmtNum, prefs, SOURCE_LABEL, VIEWABLE } from './util.js';
 import { WaveView } from './waveview.js';
 
 const MAX_PRE = 20000;
@@ -113,6 +113,10 @@ export class Panel {
           m.video_info.fps ? `${m.video_info.fps} fps` : null, m.video_info.video_codec?.toUpperCase(),
           m.video_info.audio_codec ? `${m.video_info.audio_codec.toUpperCase()} audio` : 'no audio'].filter(Boolean).join(' · ') })) : null,
         m.preview_note ? el('tr', {}, el('th', { text: 'Preview' }), el('td', { class: 'muted', text: m.preview_note })) : null,
+        m.model?.maps?.length ? el('tr', {}, el('th', { text: 'Textures', title: 'Maps the materials use. Red: not found next to the model.' }),
+          el('td', { class: 'maps' }, el('div', { class: 'muted small', text: `${m.model.maps.length} map${m.model.maps.length === 1 ? '' : 's'}${m.model.missing_textures?.length ? ` · ${m.model.missing_textures.length} missing` : ''}${m.model.uv === false ? ' · no UVs' : ''}` }),
+            m.model.maps.slice(0, 12).map((x) => el('div', { class: x.found ? '' : 'err', title: x.found ? (x.embedded ? 'inside the model file' : 'found') : 'not found next to the model' },
+              el('span', { class: 'muted', text: `${x.role.replace('_', '/')}: ` }), x.name)))) : (m.mesh && m.model && m.model.textured === false ? el('tr', {}, el('th', { text: 'Textures' }), el('td', { class: 'muted', text: 'none assigned' })) : null),
         m.model?.dimensions?.length === 3 ? el('tr', {}, el('th', { text: 'Dimensions' }), el('td', { text: `${m.model.dimensions.join(' × ')}${m.model.unit ? ' ' + ({ millimeter: 'mm', centimeter: 'cm', meter: 'm', inch: 'in' }[m.model.unit] || m.model.unit) : ''}` })) : null,
         m.pages ? el('tr', {}, el('th', { text: 'Pages' }), el('td', { text: String(m.pages) })) : null,
         m.peak_dbfs != null ? el('tr', {}, el('th', { text: 'Level' }), el('td', { text: `peak ${m.peak_dbfs} dBFS · RMS ${m.rms_dbfs ?? '—'} dBFS` })) : null,
@@ -155,6 +159,7 @@ export class Panel {
     if (m.model) {
       const mm = { ...m.model };
       delete mm.triangles; delete mm.vertices; delete mm.dimensions; delete mm.unit;
+      delete mm.maps; delete mm.textured; delete mm.missing_textures; delete mm.uv;   // shown in Textures above
       if (mm.compression) mm.compression = `${mm.compression} (compressed .blend)`;
       if (mm.backup) mm.backup = 'Blender backup file (.blend1)';
       if (Object.keys(mm).length) parts.push(section('3D model', kvTable(mm), true));
@@ -191,8 +196,10 @@ export class Panel {
 
   /** Texture maps of the same set, the files a model uses, models using a texture. */
   async loadRelated(d) {
-    let r;
-    try { r = await api.related(d.id); } catch { return; }
+    let r, g = { maps: [] };
+    try {
+      [r, g] = await Promise.all([api.related(d.id), d.kind === 'image' ? fetch(`/api/items/${d.id}/maps2d`).then((x) => x.json()).catch(() => ({ maps: [] })) : g]);
+    } catch { return; }
     if (this.detail !== d || !this.relInner) return;
     const app = this.app;
     const go = (id, name) => {
@@ -209,6 +216,15 @@ export class Panel {
       r.uses.map((u) => chip(u, u.role ? `${u.role}: ${u.name}` : u.name))));
     if (r.models?.length) rows.push(el('div', { class: 'rel' }, el('span', { class: 'tb-group', text: 'Used by' }),
       r.models.map((m) => chip(m, m.name))));
+    if (g.maps?.length) {   // 2D companion maps: hero_normal, hero_glow, hero_depth...
+      const all = [{ id: g.main.id, name: g.main.name, label: 'Base' }, ...g.maps];
+      rows.push(el('div', { class: 'rel' }, el('span', { class: 'tb-group', text: '2D maps' }),
+        all.map((m) => chip(m, m.label)),
+        el('button', { class: 'chip small add', text: '☀ lit preview', title: 'Open the viewer with the light following the mouse (L)', onclick: () => {
+          prefs.set('viewer.lit', true); const i = app.indexOf(d.id); if (i >= 0) app.openViewer(i); } }),
+        el('button', { class: 'chip small add', text: '▤ stack maps', title: `Show only ${g.main.name} in the grid, with its maps stacked under it`, onclick: async () => {
+          try { await api.stack(all.map((m) => m.id)); await api.stackCover(g.main.id); app.toast(`Maps stacked under ${g.main.name}`); app.reload(); } catch (e) { app.toast(e.message); } } })));
+    }
     setKids(this.relInner, rows);
   }
 

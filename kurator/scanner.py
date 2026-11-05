@@ -9,15 +9,16 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 
-from . import dates
+from . import dates, projectdirs
 from .db import Database
 from .handlers import handler_for
-from .processing import GRID_SIZE, process_file
+from .processing import GRID_SIZE, heavy_jobs, process_file, set_heavy_limit
 
 
-def _ignore_sigint() -> None:
+def _init_worker(sem=None) -> None:
     import signal
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    set_heavy_limit(sem)
 
 SKIP_DIRS = {"$recycle.bin", "system volume information", "__pycache__", "node_modules", ".git", ".svn"}
 BATCH = 500
@@ -25,6 +26,31 @@ BATCH = 500
 
 def _norm(p: str) -> str:
     return os.path.normpath(os.path.abspath(p))
+
+
+def _excluded(root: str, folder: str) -> bool:
+    """Is `folder` inside a folder the full scan skips (hidden, generated, a virtual environment)?"""
+    if folder == root or not folder.startswith(root.rstrip(os.sep) + os.sep):
+        return False
+    parts = folder[len(root.rstrip(os.sep)) + 1:].split(os.sep)
+    cur = root
+    for name in parts:
+        low = name.lower()
+        if low.startswith(".") or low in SKIP_DIRS:
+            return True
+        try:
+            names = os.listdir(cur)
+        except OSError:
+            return False
+        if low in projectdirs.skip_children(names):
+            return True
+        cur = os.path.join(cur, name)
+        try:
+            if projectdirs.skip_folder(os.listdir(cur)):
+                return True
+        except OSError:
+            return False
+    return False
 
 
 class Scanner:
@@ -111,6 +137,9 @@ class Scanner:
 
     def walk_folder(self, root_id: int, folder: str, recursive: bool) -> None:
         """Sync just one folder (or one subtree) of a root - used for live updates."""
+        row = self.db.cat.execute("SELECT path FROM roots WHERE id = ?", (root_id,)).fetchone()
+        if row and _excluded(_norm(row[0]), _norm(folder)):
+            return   # e.g. Unity rewriting its Library/ folder: never indexed, so nothing to sync
         with self.fs_lock:
             self._walk_scope(root_id, _norm(folder), recursive)
         self._bump()
@@ -157,42 +186,46 @@ class Scanner:
                 return
             d = stack.pop()
             try:
-                it = os.scandir(d)
+                with os.scandir(d) as it:
+                    entries = list(it)
             except OSError:
                 continue
-            with it:
-                for e in it:
-                    try:
-                        if e.is_dir(follow_symlinks=False):
-                            if not recursive:
-                                continue
-                            low = e.name.lower()
-                            if low.startswith(".") or low in SKIP_DIRS or _norm(e.path) == data_dir:
-                                continue
-                            stack.append(e.path)
+            names = [e.name for e in entries]
+            if projectdirs.skip_folder(names):
+                continue
+            generated = projectdirs.skip_children(names)   # Unity Library/, build output next to a .sln...
+            for e in entries:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if not recursive:
                             continue
-                        if not e.is_file(follow_symlinks=False):
+                        low = e.name.lower()
+                        if low.startswith(".") or low in SKIP_DIRS or low in generated or _norm(e.path) == data_dir:
                             continue
-                        ext = os.path.splitext(e.name)[1].lower()
-                        h = handler_for(ext)
-                        if h is None:
-                            continue
-                        st = e.stat(follow_symlinks=False)
-                    except OSError:
+                        stack.append(e.path)
                         continue
-                    path = _norm(e.path)
-                    self.state["found"] += 1
-                    prev = existing.get(path)
-                    if prev is None:
-                        ts, src = dates.resolve_date({}, e.name, st)
-                        new_rows.append((root_id, path, os.path.dirname(path), e.name, ext, h.kind,
-                                         st.st_size, st.st_mtime_ns, ts, src, scan_id))
-                    elif prev != (st.st_size, st.st_mtime_ns):
-                        changed_rows.append((st.st_size, st.st_mtime_ns, scan_id, path))
-                    else:
-                        seen.append(path)
-                    if len(new_rows) + len(changed_rows) + len(seen) >= BATCH * 4:
-                        flush()
+                    if not e.is_file(follow_symlinks=False):
+                        continue
+                    ext = os.path.splitext(e.name)[1].lower()
+                    h = handler_for(ext)
+                    if h is None:
+                        continue
+                    st = e.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                path = _norm(e.path)
+                self.state["found"] += 1
+                prev = existing.get(path)
+                if prev is None:
+                    ts, src = dates.resolve_date({}, e.name, st)
+                    new_rows.append((root_id, path, os.path.dirname(path), e.name, ext, h.kind,
+                                     st.st_size, st.st_mtime_ns, ts, src, scan_id))
+                elif prev != (st.st_size, st.st_mtime_ns):
+                    changed_rows.append((st.st_size, st.st_mtime_ns, scan_id, path))
+                else:
+                    seen.append(path)
+                if len(new_rows) + len(changed_rows) + len(seen) >= BATCH * 4:
+                    flush()
         flush()
         if self._stop.is_set():
             return
@@ -207,6 +240,9 @@ class Scanner:
 
     def _process_pending(self) -> None:
         cat = self.db.cat
+        with self.db.write_lock:   # out of memory or a crashed worker: worth another try
+            cat.execute("UPDATE files SET status = 0 WHERE status = 2 AND (error LIKE 'MemoryError%' OR error LIKE 'worker:%')")
+            cat.commit()
         todo = [r[0] for r in cat.execute("SELECT path FROM files WHERE status = 0 ORDER BY dir, name")]
         self._set(phase="processing", pending=len(todo), processed=0)
         if not todo:
@@ -217,8 +253,9 @@ class Scanner:
             # Processes: true parallelism for decoding/encoding. "spawn" behaves the same on every OS.
             # Workers ignore Ctrl+C: the console sends it to every process, and quitting is the
             # parent's job (it cancels the queue instead of letting the pool break mid-file).
-            pool = ProcessPoolExecutor(max_workers=self.workers, mp_context=mp.get_context("spawn"),
-                                       initializer=_ignore_sigint)
+            ctx = mp.get_context("spawn")
+            pool = ProcessPoolExecutor(max_workers=self.workers, mp_context=ctx,
+                                       initializer=_init_worker, initargs=(ctx.Semaphore(heavy_jobs(self.workers)),))
             try:
                 remaining = self._run_pool(pool, remaining)
             finally:
@@ -230,6 +267,7 @@ class Scanner:
             self._set(warning=f"process pool failed ({type(e).__name__}); continuing in threads")
             remaining = getattr(self, "_leftover", remaining)
             pool = ThreadPoolExecutor(max_workers=self.workers)
+            set_heavy_limit(threading.Semaphore(heavy_jobs(self.workers)))
             try:
                 self._run_pool(pool, remaining)
             finally:

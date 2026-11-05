@@ -8,7 +8,7 @@ const HUES = [['red', '#e5484d'], ['orange', '#f76b15'], ['yellow', '#ffd60a'], 
 const SHAPES = [['', 'any shape'], ['landscape', 'landscape'], ['portrait', 'portrait'], ['square', 'square'], ['panorama', 'panorama (2:1+)'], ['tall', 'tall (1:2+)']];
 const SIDES = [['0', 'any size'], ['512', '512 px +'], ['1024', '1024 px +'], ['2048', '2048 px +'], ['4096', '4096 px +']];
 const KEYS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'].flatMap((n) => [`${n} major`, `${n} minor`]);
-const KEYS_LIST = ['hues', 'shape', 'alpha', 'minside', 'bpm_min', 'bpm_max', 'key', 'len_min', 'len_max'];
+const KEYS_LIST = ['hues', 'shape', 'alpha', 'minside', 'bpm_min', 'bpm_max', 'key', 'len_min', 'len_max', 'tex'];
 
 export class LookFilter {
   constructor(app) {
@@ -60,6 +60,7 @@ export class LookFilter {
     if (q.bpm_min !== '' || q.bpm_max !== '') out.push(`${q.bpm_min || 0}–${q.bpm_max || '∞'} BPM`);
     if (q.key) out.push(q.key);
     if (q.len_min !== '' || q.len_max !== '') out.push(`${q.len_min || 0}–${q.len_max || '∞'} s`);
+    if (q.tex) out.push({ yes: 'textured 3D', no: 'untextured 3D', missing: 'missing textures' }[q.tex]);
     return out.join(', ');
   }
 
@@ -88,6 +89,8 @@ export class LookFilter {
       el('div', { class: 'swatches' }, swatches),
       el('div', { class: 'row' }, sel(SHAPES, q.shape, (v) => this.set('shape', v)), sel(SIDES, q.minside, (v) => this.set('minside', +v)),
         el('label', { class: 'chk' }, alpha, 'has transparency')),
+      el('div', { class: 'tp-head' }, '3D models'),
+      el('div', { class: 'row' }, sel([['', 'any'], ['yes', 'with textures'], ['no', 'without textures'], ['missing', 'textures missing on disk']], q.tex, (v) => this.set('tex', v))),
       el('div', { class: 'tp-head' }, 'Sounds'),
       el('div', { class: 'row' }, el('span', { class: 'small muted', text: 'BPM' }), num('bpm_min', 'from'), num('bpm_max', 'to'),
         sel([['', 'any key'], ...KEYS.map((k) => [k, k])], q.key, (v) => this.set('key', v))),

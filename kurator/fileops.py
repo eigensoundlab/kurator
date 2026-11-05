@@ -5,7 +5,7 @@ Moving rules
   * same disk  -> rename (instant; every timestamp, incl. Windows creation time, is kept)
   * other disk -> copy, restore modified + creation time, verify the copy byte-for-byte (hash),
                   only then delete the source
-  * sidecars travel along: photo.jpg.xmp / photo.xmp
+  * sidecars travel along: photo.jpg.xmp / photo.xmp, and engine files: Unity .meta, Godot .import
   * catalog rows are updated in place, so tags and dates stay attached
   * every move is logged and can be undone
 """
@@ -108,9 +108,11 @@ def move_file(src: str, dst: str) -> str:
 
 
 def _sidecars(path: str) -> list[str]:
+    """Files that travel with `path`: XMP sidecars, Unity .meta (keeps references to the asset
+    working), Godot .import/.uid."""
     stem = os.path.splitext(path)[0]
     out = []
-    for cand in (path + ".xmp", stem + ".xmp", path + ".XMP", stem + ".XMP"):
+    for cand in (path + ".xmp", stem + ".xmp", path + ".XMP", stem + ".XMP", path + ".meta", path + ".import", path + ".uid"):
         if os.path.isfile(cand) and cand not in out:
             out.append(cand)
     return out

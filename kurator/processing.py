@@ -6,6 +6,8 @@ thumbnails for what is on screen right now). Must stay free of DB access.
 
 from __future__ import annotations
 
+import contextlib
+import gc
 import hashlib
 import io
 import os
@@ -20,6 +22,37 @@ GRID_SIZE = 256
 THUMB_SIZES = (256, 512, 1600)
 WEBP_QUALITY = {256: 78, 512: 80, 1600: 84}
 _PLACEHOLDER_BG = (128, 128, 128)
+
+
+HEAVY_BYTES = 96 * 1024 * 1024
+_heavy = None   # a semaphore shared by the worker processes: how many big jobs may run at once
+
+
+def set_heavy_limit(sem) -> None:
+    """Worker initialiser: big files (3D models, huge images) take turns instead of all decoding at
+    once, which ran out of memory on machines with many cores."""
+    global _heavy
+    _heavy = sem
+
+
+def heavy_jobs(workers: int) -> int:
+    env = os.environ.get("KURATOR_HEAVY_JOBS", "")
+    if env.isdigit() and int(env) > 0:
+        return int(env)
+    return max(1, min(3, workers // 4))
+
+
+@contextlib.contextmanager
+def _maybe_heavy(on: bool):
+    if not on or _heavy is None:
+        yield
+        return
+    _heavy.acquire()
+    try:
+        yield
+    finally:
+        _heavy.release()
+        gc.collect()
 
 
 def file_hash(data: bytes) -> str:
@@ -137,19 +170,20 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
         handler = handler_for(ext)
         if handler is None:
             raise ValueError(f"unsupported type {ext}")
-        if handler.streams:   # videos: hash in chunks, never hold the whole file in memory
-            h = hashlib.blake2b(digest_size=16)
-            with open(path, "rb") as f:
-                for chunk in iter(lambda: f.read(8 << 20), b""):
-                    h.update(chunk)
-            out["hash"] = h.hexdigest()
-            data = None
-        else:
-            with open(path, "rb") as f:
-                data = f.read()
-            out["hash"] = file_hash(data)
-        loaded = handler.load(data, path, max(sizes) if sizes else None)
-        del data
+        with _maybe_heavy(handler.kind == "model" or st.st_size > HEAVY_BYTES):
+            if handler.streams:   # videos: hash in chunks, never hold the whole file in memory
+                h = hashlib.blake2b(digest_size=16)
+                with open(path, "rb") as f:
+                    for chunk in iter(lambda: f.read(8 << 20), b""):
+                        h.update(chunk)
+                out["hash"] = h.hexdigest()
+                data = None
+            else:
+                with open(path, "rb") as f:
+                    data = f.read()
+                out["hash"] = file_hash(data)
+            loaded = handler.load(data, path, max(sizes) if sizes else None)
+            del data
         out["kind"] = handler.kind
         out["meta"] = loaded.meta
         if not loaded.dates.get("exif-original"):
@@ -188,6 +222,10 @@ def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
             if handler.kind in ("image", "video") and not loaded.meta.get("placeholder"):
                 out["phash"] = dhash(img)
                 out["hues"], loaded.meta["palette"] = colour_info(img)
+    except MemoryError as e:
+        out.pop("thumbs", None)
+        gc.collect()
+        out["error"] = f"MemoryError: not enough free memory for this file right now ({e}). It is tried again on the next scan."
     except Exception as e:  # report, don't crash the pool
         out["error"] = f"{type(e).__name__}: {e}"
         out["trace"] = traceback.format_exc(limit=3)

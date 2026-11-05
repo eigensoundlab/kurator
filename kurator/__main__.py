@@ -48,6 +48,16 @@ def main(argv: list[str] | None = None) -> None:
     if ver < 3:   # once: orange waveforms for long sounds (0.9); loudness, tempo and key (0.11)
         db.remake_previews("kind = 'audio'")
         db.set_setting("previews.audio", 3)
+    if db.get_setting("previews.models", 0) < 2:   # once (0.12): textured previews, texture lists for the filter
+        db.remake_previews("kind = 'model' AND json_extract(meta, '$.mesh') = 1")
+        db.set_setting("previews.models", 2)
+    os.environ["KURATOR_SVG_ALL"] = "1" if db.get_setting("svg_all", False) else "0"
+    from . import __version__
+    if db.get_setting("errors.retried", "") != __version__:   # a new version may read files the old one couldn't
+        with db.write_lock:
+            db.cat.execute("UPDATE files SET status = 0 WHERE status = 2")
+            db.cat.commit()
+        db.set_setting("errors.retried", __version__)
     from .handlers.video import tool
     if tool("ffmpeg") and tool("ffprobe"):   # ffmpeg installed since videos were indexed: real previews now
         n = db.remake_previews("kind = 'video' AND (json_extract(meta, '$.placeholder') IS NOT NULL "

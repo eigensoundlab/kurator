@@ -1,6 +1,7 @@
 // Full-screen viewer / quick look. Browsing here never changes a multi-selection.
 
 import { originalUrl, thumbUrl } from './api.js';
+import { Lit2D } from './lit2d.js';
 import { MeshView } from './meshview.js';
 import { WaveView } from './waveview.js';
 import { AUDIO, el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
@@ -18,6 +19,7 @@ export class Viewer {
     this.selBadge = el('button', { class: 'v-sel', title: 'Toggle selection (X)', onclick: () => this.toggleSel() });
     this.zoomLbl = el('div', { class: 'v-zoom' });
     this.bar = el('div', { class: 'v-bar' }, this.selBadge, this.title, this.tagsEl, this.info, this.zoomLbl,
+      this.litBtn = el('button', { class: 'v-btn v-litbtn', title: 'Lit preview with the companion maps (L)', text: '☀ Lit', onclick: () => this.toggleLit() }),
       el('button', { class: 'v-btn', title: 'Background (B)', text: 'BG', onclick: () => this.cycleBg() }),
       el('button', { class: 'v-btn v-2d', title: 'Pixel-art zoom (N)', text: 'PX', onclick: () => this.togglePixel() }),
       el('button', { class: 'v-btn v-fit', title: 'Fit / reset view (0)', text: 'Fit', onclick: () => (this.is3d ? this.mv?.reset() : this.fitView()) }),
@@ -59,6 +61,7 @@ export class Viewer {
     this.root.classList.remove('open');
     this.img.removeAttribute('src');
     this.mv?.clear();
+    this.setLit(false, true);
     this.setLoading(null);
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); }
     this.isVideo = false;
@@ -87,6 +90,7 @@ export class Viewer {
     this.show3d(MESHES.has(ext) && it.v[i] !== 'e' ? it.ids[i] : null);
     this.showVideo(isVideo && this.viewable ? it.ids[i] : null);
     this.showSound(AUDIO.has(ext) ? it.ids[i] : null);
+    this.findMaps(!this.is3d && !isVideo && !AUDIO.has(ext) ? it.ids[i] : null);
     if (this.w && this.h) this.fitView();
     this.title.textContent = it.n[i];
     this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
@@ -97,6 +101,51 @@ export class Viewer {
     this.paintTags();
     this.root.classList.toggle('alpha', !!it.a[i]);
     this.preload(i + 1); this.preload(i - 1);
+  }
+
+  /** 2D art with companion maps (normal, glow, AO, depth...): the ☀ Lit button and the lit preview. */
+  async findMaps(id) {
+    this.maps2d = null;
+    this.root.classList.remove('has-maps');
+    if (id == null) { this.setLit(false, true); return; }
+    this.mapsCache ||= new Map();
+    let g = this.mapsCache.get(id);
+    if (!g) {
+      try { g = await (await fetch(`/api/items/${id}/maps2d`)).json(); } catch { g = { maps: [] }; }
+      this.mapsCache.set(id, g);
+      if (this.mapsCache.size > 200) this.mapsCache.delete(this.mapsCache.keys().next().value);
+    }
+    if (!this.isOpen || this.items.ids[this.i] !== id) return;
+    if (!g.maps?.length) { this.setLit(false, true); return; }
+    this.maps2d = g;
+    this.root.classList.add('has-maps');
+    this.litBtn.title = `Lit preview with ${g.maps.map((m) => m.label.toLowerCase()).join(', ')} (L)`;
+    if (prefs.get('viewer.lit', false)) this.setLit(true, true);
+  }
+
+  toggleLit() {
+    if (!this.maps2d) { this.app.toast('No companion maps (like name_normal.png, name_glow.png) next to this picture'); return; }
+    this.setLit(!this.litOn);
+    prefs.set('viewer.lit', this.litOn);
+  }
+
+  setLit(on, quiet = false) {
+    if (on && !this.maps2d) on = false;
+    if (on && !this.lit) {
+      this.lit = new Lit2D(this.stage, this);
+      this.litBox = this.lit.controls();
+      this.root.append(this.litBox);
+    }
+    this.litOn = !!on;
+    this.root.classList.toggle('lit-on', this.litOn);
+    this.litBtn.classList.toggle('on', this.litOn);
+    if (!this.lit) return;
+    this.lit.on = this.litOn;
+    if (!this.litOn) { if (quiet) this.lit.clear(); this.lit.onChange(); return; }
+    if (this.lit.group?.main.id !== this.maps2d.main.id) {
+      this.lit.load(this.maps2d).then(() => this.apply()).catch((e) => { this.app.toast(`Lit preview: ${e.message}`); this.setLit(false); });
+    }
+    this.apply();
   }
 
   /** Sounds: a big waveform with time ruler, playhead and the display modes. */
@@ -143,7 +192,11 @@ export class Viewer {
     this.root.classList.toggle('mode3d', this.is3d);
     this.root.classList.remove('mesh-ready');
     if (!this.is3d) { this.mv?.clear(); this.setLoading(null); return; }
-    if (!this.mv) this.mv = new MeshView(this.stage);
+    if (!this.mv) {
+      this.mv = new MeshView(this.stage);
+      this.mvBox = this.mv.controls();
+      this.root.append(this.mvBox);
+    }
     const blend = /^blend\d?$/.test(extOf(this.items.n[this.i]));
     const mine = () => this.isOpen && this.items.ids[this.i] === id;
     this.setLoading(blend ? 'Converting with Blender…' : 'Reading the 3D model…', null);
@@ -155,7 +208,8 @@ export class Viewer {
       if (head && mine()) {
         this.setLoading(null);
         this.root.classList.add('mesh-ready');
-        this.zoomLbl.textContent = `${fmtNum(head.triangles)} triangles`;
+        this.zoomLbl.textContent = `${fmtNum(head.triangles)} triangles${head.thinned ? ' (thinned for the view)' : ''}`;
+        this.mv.onChange();
       }
     }).catch((e) => {
       if (mine()) { this.setLoading(null); this.root.classList.remove('mode3d'); this.app.toast(`3D view: ${e.message}`, 5000); }
@@ -231,6 +285,10 @@ export class Viewer {
     im.style.width = `${this.w}px`;
     im.style.height = `${this.h}px`;
     im.style.transform = `translate(${this.tx}px,${this.ty}px) scale(${this.s})`;
+    if (this.lit && this.litOn) {
+      const c = this.lit.canvas.style;
+      c.width = im.style.width; c.height = im.style.height; c.transform = im.style.transform;
+    }
     if (!this.root.classList.contains('mesh-ready')) this.zoomLbl.textContent = `${Math.round(this.s * 100)}%`;
     // Need more pixels than the 1600 preview has? Switch to the original file.
     if (!this.full && this.viewable && Math.max(this.w, this.h) * this.s > 1700 && Math.max(this.w, this.h) > 1600) {
@@ -310,6 +368,8 @@ export class Viewer {
     if (k === 'End') { this.show(this.items.ids.length - 1); return true; }
     if (k === 'x' || k === 'X' || (k === ' ' && e.ctrlKey)) { this.toggleSel(); return true; }
     if (k === 'b' || k === 'B') { this.cycleBg(); return true; }
+    if ((k === 'l' || k === 'L') && this.is3d && this.mv?.n) { this.app.toast(`Light: ${this.mv.cycleLights()}`); return true; }
+    if ((k === 'l' || k === 'L') && !this.is3d && !this.isVideo && !this.isSound) { this.toggleLit(); return true; }
     if (k === 'n' || k === 'N') { this.togglePixel(); return true; }
     if (k === '0') { if (this.is3d) this.mv?.reset(); else this.fitView(); return true; }
     if (k === 'z' || k === 'Z') { if (this.fitted) this.zoomTo(1); else this.fitView(); return true; }

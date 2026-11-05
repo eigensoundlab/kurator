@@ -13,6 +13,12 @@ export async function openSettingsDialog(app) {
     try { await api.saveSettings({ xmp_auto: auto.checked }); app.toast(auto.checked ? 'Sidecars are now written automatically' : 'Automatic sidecars off'); }
     catch (e) { app.toast(e.message); auto.checked = !auto.checked; }
   };
+  const svgAll = el('input', { type: 'checkbox' });
+  svgAll.checked = !!st.svg_all;
+  svgAll.onchange = async () => {
+    try { await api.saveSettings({ svg_all: svgAll.checked }); app.toast('SVG previews are being made again'); }
+    catch (e) { app.toast(e.message); svgAll.checked = !svgAll.checked; }
+  };
   const untagged = el('input', { type: 'checkbox' });
   const out = el('div', { class: 'move-preview' });
 
@@ -40,6 +46,7 @@ export async function openSettingsDialog(app) {
         el('b', { text: `${fmtNum(r.written)} sidecar${r.written === 1 ? '' : 's'} written` }),
         `, ${fmtNum(r.unchanged)} already up to date`,
         r.skipped_untagged ? el('div', { class: 'muted', text: `${fmtNum(r.skipped_untagged)} untagged files skipped (tick "also untagged" to store their dates)` }) : null,
+        r.skipped_project ? el('div', { class: 'muted', text: `${fmtNum(r.skipped_project)} files are inside a Unity/Godot/Unreal project or a git repository - no sidecars added there` }) : null,
         r.skipped_foreign.length ? el('div', { class: 'warn', text: `${fmtNum(r.skipped_foreign.length)} files already have a sidecar from another program - left untouched (e.g. ${r.skipped_foreign[0]})` }) : null,
         r.errors.length ? el('div', { class: 'err', text: `${r.errors.length} errors, e.g. ${r.errors[0]}` }) : null));
     } catch (e) { setKids(out, el('div', { class: 'err', text: e.message })); }
@@ -72,6 +79,9 @@ export async function openSettingsDialog(app) {
       el('div', { class: 'p-hint small', text: 'Turns keywords already stored with your files into tags: embedded XMP (Photoshop, Lightroom…), Windows Explorer tags, and .xmp sidecars. "Creatures|Dragons" becomes Creatures/Dragons.' }),
       el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Import keywords', onclick: doImport }), importScope),
       out,
+      el('h3', { text: 'Previews' }),
+      el('label', { class: 'chk' }, svgAll, 'SVG: show all objects, also those outside the page'),
+      el('div', { class: 'p-hint small', text: 'Inkscape and Illustrator drawings often keep parts beside the page. With this on, previews and the viewer grow the page to take them in. Drawings whose page has no size always show everything.' }),
       el('h3', { text: 'About this installation' }),
       el('table', { class: 'kv' },
         el('tr', {}, el('th', { text: 'Version' }), el('td', { text: app.state?.version || '' })),

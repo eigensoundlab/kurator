@@ -124,6 +124,7 @@ class RestoreIn(BaseModel):
 
 class SettingsIn(BaseModel):
     xmp_auto: bool | None = None
+    svg_all: bool | None = None
     rclone_path: str | None = None
 
 
@@ -337,6 +338,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         key: str = "",
         len_min: float | None = None,
         len_max: float | None = None,
+        tex: str = "",
     ):
         where, args = [], []
         # the look of a picture / the character of a sound
@@ -350,6 +352,12 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             where.append(f"width > 0 AND height > 0 AND {shapes[shape]}")
         if alpha:
             where.append("alpha = 1")
+        if tex == "yes":
+            where.append("kind = 'model' AND json_extract(meta, '$.model.textured') = 1")
+        elif tex == "no":
+            where.append("kind = 'model' AND json_extract(meta, '$.mesh') = 1 AND COALESCE(json_extract(meta, '$.model.textured'), 0) = 0")
+        elif tex == "missing":
+            where.append("kind = 'model' AND json_extract(meta, '$.model.missing_textures') IS NOT NULL")
         if minside:
             where.append("MAX(width, height) >= ?")
             args.append(int(minside))
@@ -635,13 +643,18 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     # -- settings, sidecars, rules -----------------------------------------
     @app.get("/api/settings")
     def get_settings():
-        return _json({"xmp_auto": db.get_setting("xmp_auto", False), "data_dir": db.data_dir,
+        return _json({"xmp_auto": db.get_setting("xmp_auto", False), "svg_all": db.get_setting("svg_all", False), "data_dir": db.data_dir,
                       "rclone_path": db.get_setting("rclone_path", None)})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
         if body.xmp_auto is not None:
             db.set_setting("xmp_auto", body.xmp_auto)
+        if body.svg_all is not None and body.svg_all != db.get_setting("svg_all", False):
+            db.set_setting("svg_all", body.svg_all)
+            os.environ["KURATOR_SVG_ALL"] = "1" if body.svg_all else "0"   # read by the SVG renderer (also in workers)
+            if db.remake_previews("ext IN ('.svg', '.svgz')"):
+                scanner.request_scan()
         if body.rclone_path is not None:
             p = body.rclone_path.strip().strip('"')
             if p and not os.path.isfile(p):
@@ -663,6 +676,22 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.get("/api/items/{item_id}/related")
     def item_related(item_id: int):
         return _json(assets.related(db, item_id))
+
+    @app.get("/api/items/{item_id}/maps2d")
+    def item_maps2d(item_id: int):
+        """Companion maps of a 2D picture (normal, glow, AO, depth, layers) for the lit preview."""
+        from . import maps2d
+        g = maps2d.group(db, item_id)
+        if g is None:
+            return _json({"maps": []})
+
+        def url(fid: int, ext: str) -> str:
+            h = handler_for(ext)
+            return f"/f/{fid}" if h and h.browser_viewable and ext != ".gif" else f"/t/{fid}?s=1600"
+        g["main"]["url"] = url(g["main"]["id"], g["main"]["ext"])
+        for m in g["maps"]:
+            m["url"] = url(m["id"], m["ext"])
+        return _json(g)
 
     @app.get("/api/export/presets")
     def export_presets():
@@ -819,7 +848,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     # -- saved views ("smart folders"): a name for the grid's current filters -----------------
     VIEW_KEYS = {"folder", "recursive", "q", "ext", "sort", "order", "guessed", "tag", "exclude", "missing",
-                 "hues", "shape", "alpha", "minside", "bpm_min", "bpm_max", "key", "len_min", "len_max",
+                 "hues", "shape", "alpha", "minside", "bpm_min", "bpm_max", "key", "len_min", "len_max", "tex",
                  "untagged", "project", "dupes", "similar", "suggested"}
 
     @app.get("/api/views")
@@ -1114,9 +1143,26 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.get("/api/mesh/{item_id}")
     def mesh(item_id: int):
-        """Geometry for the 3D viewer: 'KMSH', u32 JSON length, JSON, then float32 positions,
-        uint32 indices and uint8 RGB per vertex (each part padded to 4 bytes)."""
-        from .mesh3d import MeshError, read_mesh, thin
+        """Geometry for the 3D viewer (see kurator/mesh3d/pack.py for the layout)."""
+        body, _ = _mesh_entry(item_id)
+        return Response(body, media_type="application/octet-stream",
+                        headers={"Cache-Control": "private, no-cache", "X-Mesh-Bytes": str(len(body))})   # for progress (gzip changes the length)
+
+    @app.get("/api/mesh/{item_id}/tex/{k}")
+    def mesh_texture(item_id: int, k: int, s: int = 2048):
+        from .mesh3d.pack import texture_bytes
+        _, textures = _mesh_entry(item_id)
+        if not 0 <= k < len(textures):
+            raise HTTPException(404)
+        ref, role = textures[k]
+        out = texture_bytes(ref, role, max(64, min(int(s), 4096)))
+        if out is None:
+            raise HTTPException(415, "this texture can't be read (format not supported)")
+        return Response(out[0], media_type=out[1], headers={"Cache-Control": "private, max-age=600"})
+
+    def _mesh_entry(item_id: int):
+        from .mesh3d import MeshError, read_mesh
+        from .mesh3d.pack import pack
         row = db.cat.execute("SELECT path, ext, size, mtime_ns, hash FROM files WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(404)
@@ -1131,8 +1177,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         if not os.path.isfile(row[0]):
             raise HTTPException(404, "file is missing on disk")
         key = (row[0], row[2], row[3])
-        body = mesh_cache.get(key)
-        if body is None:
+        entry = mesh_cache.get(key)
+        if entry is None:
             src = row[0]
             if is_blend:   # Blender (if installed) converts it once; the glTF is cached by content hash
                 from . import blender
@@ -1143,29 +1189,16 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             with open(src, "rb") as f:
                 data = f.read()
             try:
-                m = thin(read_mesh(data, src), 2_000_000)
+                entry = pack(read_mesh(data, src, full=True))
             except MeshError as e:
                 raise HTTPException(422, str(e)) from None
-            import numpy as np
-            v = np.ascontiguousarray(m.vertices, np.float32)
-            fidx = np.ascontiguousarray(m.faces, np.uint32)
-            col = np.full((len(v), 3), 190, np.uint8)
-            if m.colors is not None:
-                col[fidx.reshape(-1)] = np.repeat(m.colors, 3, axis=0)
-            used = np.unique(fidx) if len(fidx) else np.zeros(0, np.int64)
-            lo = v[used].min(axis=0) if len(used) else np.zeros(3)
-            hi = v[used].max(axis=0) if len(used) else np.zeros(3)
-            head = json.dumps({"vertices": len(v), "triangles": len(fidx), "colors": m.colors is not None,
-                               "min": lo.tolist(), "max": hi.tolist()}).encode()
-            head += b" " * (-len(head) % 4)
-            cb = col.tobytes()
-            body = (b"KMSH" + len(head).to_bytes(4, "little") + head + v.tobytes() + fidx.tobytes()
-                    + cb + b"\0" * (-len(cb) % 4))
+            except MemoryError:
+                raise HTTPException(507, "not enough free memory to open this model") from None
+            del data
             if len(mesh_cache) >= 2:
                 mesh_cache.pop(next(iter(mesh_cache)))
-            mesh_cache[key] = body
-        return Response(body, media_type="application/octet-stream",
-                        headers={"Cache-Control": "private, no-cache", "X-Mesh-Bytes": str(len(body))})   # for progress (gzip changes the length)
+            mesh_cache[key] = entry
+        return entry
 
     @app.get("/f/{item_id}")
     def original(item_id: int):
@@ -1178,6 +1211,16 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         if not os.path.isfile(row[0]):
             raise HTTPException(404, "file is missing on disk")
         headers = {"Cache-Control": "private, no-cache"}
+        if row[1] in (".svg", ".svgz"):
+            from .handlers.vector import svg_for_view
+            try:
+                with open(row[0], "rb") as f:
+                    fixed = svg_for_view(f.read(60 * 1024 * 1024))
+            except (OSError, ValueError):
+                fixed = None
+            if fixed is not None:   # a page without size, or "show all objects": the page made to fit everything
+                headers["Content-Security-Policy"] = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+                return Response(fixed, media_type="image/svg+xml", headers=headers)
         if row[1] == ".svg":
             # An SVG can contain scripts. Shown as <img> they never run; opened directly in a tab, this
             # policy keeps them from running in Kurator's origin.

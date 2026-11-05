@@ -1,4 +1,5 @@
-"""Software renderer for thumbnails: orthographic 3/4 view, flat shading, outlines.
+"""Software renderer for thumbnails: orthographic 3/4 view, flat shading, outlines, base-colour
+textures sampled per pixel.
 
 Vectorised z-buffer rasteriser in numpy: triangles are grouped by the size of their screen bounding
 box and every pixel of the box is tested at once. A million triangles take about a second.
@@ -15,7 +16,7 @@ from . import MAX_TRIANGLES, Mesh, MeshError, thin
 
 BASE = np.array([182, 188, 200], np.float32)
 BG_TOP, BG_BOTTOM = (40, 44, 54), (24, 27, 33)
-SAMPLES_PER_CHUNK = 2_000_000
+SAMPLES_PER_CHUNK = 600_000   # pixel tests per numpy step (memory: ~40 bytes each)
 
 
 def _rotation(yaw_deg: float, pitch_deg: float) -> np.ndarray:
@@ -32,15 +33,39 @@ def _background(w: int, h: int) -> np.ndarray:
 
 
 def render(mesh: Mesh, size: int = 512, supersample: int = 2, yaw: float = -35.0, pitch: float = 24.0) -> Image.Image:
-    mesh = thin(mesh, MAX_TRIANGLES)
+    """Thumbnail of a mesh. If memory runs short, tries again with fewer triangles and pixels."""
+    import gc
+    try:
+        return _render(thin(mesh, MAX_TRIANGLES), size, supersample, yaw, pitch)
+    except MemoryError:
+        gc.collect()
+        return _render(thin(mesh, 150_000), size, 1, yaw, pitch, textures=False)
+
+
+def _textures(mesh: Mesh) -> dict:
+    out = {}
+    for k, m in enumerate(mesh.materials[:64]):
+        ref = m.maps.get("base")
+        img = ref.open(512) if ref is not None else None
+        if img is None:
+            continue
+        try:
+            a = np.asarray(img.convert("RGB"), np.float32) / 255
+        except Exception:
+            continue
+        out[k] = a * np.array(m.color[:3], np.float32)
+    return out
+
+
+def _render(mesh: Mesh, size: int, supersample: int, yaw: float, pitch: float, textures: bool = True) -> Image.Image:
     W = H = size * supersample
-    V = mesh.vertices.astype(np.float64)
+    V = mesh.vertices.astype(np.float32)
     F = mesh.faces
     if len(F) == 0:
         raise MeshError("no triangles")
     used = np.unique(F)
     lo, hi = V[used].min(axis=0), V[used].max(axis=0)
-    P = (V - (lo + hi) / 2) @ _rotation(yaw, pitch).T
+    P = (V - (lo + hi) / 2) @ _rotation(yaw, pitch).T.astype(np.float32)
     pu = P[used]
     ext = max(float((pu[:, 0].max() - pu[:, 0].min())), float((pu[:, 1].max() - pu[:, 1].min())), 1e-12)
     s = W * 0.84 / ext
@@ -57,8 +82,8 @@ def render(mesh: Mesh, size: int = 512, supersample: int = 2, yaw: float = -35.0
     keep = ln > 0
     n = n[keep] / ln[keep, None]
     n[n[:, 2] < 0] *= -1
-    key = np.array([-0.45, 0.75, 0.5]); key /= np.linalg.norm(key)
-    rim = np.array([0.7, 0.2, -0.3]); rim /= np.linalg.norm(rim)
+    key = np.array([-0.45, 0.75, 0.5], np.float32); key /= np.linalg.norm(key)
+    rim = np.array([0.7, 0.2, -0.3], np.float32); rim /= np.linalg.norm(rim)
     light = 0.30 + 0.62 * np.clip(n @ key, 0, 1) + 0.16 * np.clip(n @ rim, 0, 1) + 0.10 * n[:, 2]
     base = mesh.colors[keep].astype(np.float32) if mesh.colors is not None else np.broadcast_to(BASE, (int(keep.sum()), 3))
     shade = np.clip(base * light[:, None], 0, 255).astype(np.uint8)
@@ -68,13 +93,16 @@ def render(mesh: Mesh, size: int = 512, supersample: int = 2, yaw: float = -35.0
     y = np.stack([sy[i0[tri]], sy[i1[tri]], sy[i2[tri]]], 1)
     z = np.stack([depth[i0[tri]], depth[i1[tri]], depth[i2[tri]]], 1)
     zbuf = np.full(W * H, np.inf, np.float32)
-    ibuf = np.full(W * H, -1, np.int64)
+    ibuf = np.full(W * H, -1, np.int32)
     _rasterise(x, y, z, W, H, zbuf, ibuf)
 
     img = _background(W, H)
     hit = ibuf >= 0
     flat = img.reshape(-1, 3)
     flat[hit] = shade[ibuf[hit]]
+    texs = _textures(mesh) if textures and mesh.has_uv and mesh.face_mat is not None and mesh.materials else {}
+    if texs:
+        _sample(mesh, texs, flat, hit, ibuf, tri, x, y, light[:, None] if light.ndim == 1 else light, W)
     # outlines where the depth jumps (silhouettes, overlapping parts) make shapes readable when small
     zb = np.where(hit, zbuf, np.nan).reshape(H, W)
     edge = np.zeros((H, W), bool)
@@ -97,11 +125,39 @@ def render(mesh: Mesh, size: int = 512, supersample: int = 2, yaw: float = -35.0
     return out.filter(ImageFilter.UnsharpMask(radius=1, percent=40, threshold=2))
 
 
+def _sample(mesh, texs, flat, hit, ibuf, tri, x, y, light, W) -> None:
+    """Replace the flat colour of pixels on textured materials by the texture at that point."""
+    pix = np.nonzero(hit)[0]
+    k = ibuf[pix]
+    fid = tri[k]
+    fm = mesh.face_mat[fid]
+    for mi, tex in texs.items():
+        sel = np.nonzero(fm == mi)[0]
+        if not len(sel):
+            continue
+        kk, pp = k[sel], pix[sel]
+        px = (pp % W).astype(np.float32) + 0.5
+        py = (pp // W).astype(np.float32) + 0.5
+        X, Y = x[kk], y[kk]
+        area = (X[:, 1] - X[:, 0]) * (Y[:, 2] - Y[:, 0]) - (X[:, 2] - X[:, 0]) * (Y[:, 1] - Y[:, 0])
+        area = np.where(np.abs(area) < 1e-12, 1e-12, area)
+        w0 = ((X[:, 1] - px) * (Y[:, 2] - py) - (X[:, 2] - px) * (Y[:, 1] - py)) / area
+        w1 = ((X[:, 2] - px) * (Y[:, 0] - py) - (X[:, 0] - px) * (Y[:, 2] - py)) / area
+        w2 = 1 - w0 - w1
+        uvs = mesh.tri_uv(fid[sel]).astype(np.float32)
+        u = w0 * uvs[:, 0, 0] + w1 * uvs[:, 1, 0] + w2 * uvs[:, 2, 0]
+        v = w0 * uvs[:, 0, 1] + w1 * uvs[:, 1, 1] + w2 * uvs[:, 2, 1]
+        th, tw = tex.shape[:2]
+        col = np.floor(np.mod(u, 1.0) * tw).astype(np.int64).clip(0, tw - 1)
+        row = np.floor(np.mod(v, 1.0) * th).astype(np.int64).clip(0, th - 1)   # glTF convention: v down
+        flat[pp] = np.clip(tex[row, col] * 255 * light[kk], 0, 255)
+
+
 def _rasterise(x, y, z, W, H, zbuf, ibuf) -> None:
-    minx = np.clip(np.floor(x.min(1)), 0, W - 1).astype(np.int64)
-    maxx = np.clip(np.ceil(x.max(1)), 0, W - 1).astype(np.int64)
-    miny = np.clip(np.floor(y.min(1)), 0, H - 1).astype(np.int64)
-    maxy = np.clip(np.ceil(y.max(1)), 0, H - 1).astype(np.int64)
+    minx = np.clip(np.floor(x.min(1)), 0, W - 1).astype(np.int32)
+    maxx = np.clip(np.ceil(x.max(1)), 0, W - 1).astype(np.int32)
+    miny = np.clip(np.floor(y.min(1)), 0, H - 1).astype(np.int32)
+    maxy = np.clip(np.ceil(y.max(1)), 0, H - 1).astype(np.int32)
     area = (x[:, 1] - x[:, 0]) * (y[:, 2] - y[:, 0]) - (x[:, 2] - x[:, 0]) * (y[:, 1] - y[:, 0])
     ok = (np.abs(area) > 1e-9) & (x.max(1) >= 0) & (x.min(1) < W) & (y.max(1) >= 0) & (y.min(1) < H)
     bw = maxx - minx + 1
@@ -124,10 +180,10 @@ def _rasterise(x, y, z, W, H, zbuf, ibuf) -> None:
 
 
 def _chunk(t, gw, gh, x, y, z, area, minx, maxx, miny, maxy, W, zbuf, ibuf) -> None:
-    gx = minx[t][:, None, None] + np.arange(gw)[None, None, :]
-    gy = miny[t][:, None, None] + np.arange(gh)[None, :, None]
-    px = gx + 0.5
-    py = gy + 0.5
+    gx = minx[t][:, None, None] + np.arange(gw, dtype=np.int32)[None, None, :]
+    gy = miny[t][:, None, None] + np.arange(gh, dtype=np.int32)[None, :, None]
+    px = gx.astype(np.float32) + 0.5
+    py = gy.astype(np.float32) + 0.5
     x0, x1, x2 = (x[t, k][:, None, None] for k in range(3))
     y0, y1, y2 = (y[t, k][:, None, None] for k in range(3))
     inv = (1.0 / area[t])[:, None, None]

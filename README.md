@@ -4,12 +4,13 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.11 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.12 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
 > **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
-> you work inside, similar images, version stacks, **colour and shape filters, a timeline**,
-> **sprite sheets and texture atlases**, and optional local AI (search by description, find similar,
+> you work inside, similar images, version stacks, colour and shape filters, a timeline,
+> sprite sheets and texture atlases, **textured 3D models with lights**, a **lit preview for 2D art
+> with normal/glow/depth maps**, and optional local AI (search by description, find similar,
 > tag suggestions from a pool you choose) work.
 > See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
 
@@ -132,6 +133,9 @@ Nothing ticked means all types. The choice is remembered.
 - **Windows thumbnails:** for formats Kurator cannot read itself, it asks Windows for the thumbnail
   that the installed application provides (e.g. Affinity, CorelDRAW), if any.
 - SVG files are shown sandboxed (no scripts), even in the viewer.
+- SVG sizes in mm, cm, in or pt (Inkscape's default) render correctly. A drawing whose page has no
+  size (width 0) shows everything it contains. **⚙ Settings → SVG: show all objects** grows the
+  page of every drawing to take in objects lying outside it, in previews and in the viewer.
 
 ### Sound files
 
@@ -239,9 +243,12 @@ it in the file), length, resolution, frame rate and codecs.
 group of the type filter.
 
 - **Previews** are rendered by Kurator itself (no Blender or other 3D software needed): a 3/4 view with
-  flat shading and outlines, using the materials' colours (glTF base colour and embedded textures,
-  OBJ `.mtl` colours, vertex colours, MagicaVoxel palettes). A million triangles take a few seconds,
-  once.
+  flat shading and outlines, **with the base-colour textures** of glTF/GLB, OBJ and FBX models
+  (embedded or next to the model), material colours, vertex colours and MagicaVoxel palettes. A
+  million triangles take a few seconds, once. Big models take turns while indexing (two or three
+  at a time; `KURATOR_HEAVY_JOBS` changes that), so many processor cores no longer run out of
+  memory; if memory still runs short, the preview is made with fewer triangles and the file is
+  tried again on the next scan.
 - **Blender** files show the thumbnail Blender saved with the file (Blender 2.5 to 5.x, also
   compressed files and `.blend1` backups), plus the number of objects, meshes and materials.
 - **3MF** files from slicers and CAD keep their own thumbnail; **SketchUp** files their embedded
@@ -250,6 +257,20 @@ group of the type filter.
 - **3D viewer:** Enter or double-click opens a live view: drag to turn, right-drag (or Shift+drag) to
   move, wheel to zoom, 0 or double-click to reset. ← → go to the next file as usual. A progress
   bar shows while a big model loads; **← Back** (top left) or Esc returns to the grid.
+  - **Textures:** base colour, normal, emissive, occlusion and metal/roughness maps (glTF; OBJ
+    `map_Kd`, `map_Bump`/`norm`, `map_Ke`…; FBX diffuse, normal and emissive textures, also
+    embedded ones). PNG, JPEG, WebP, TGA, DDS, TIFF, BMP and PSD textures work (KTX2 not yet). The
+    geometry shows first, the textures follow.
+  - **View:** *Lit*, *Base colour*, *Clay* (no textures), *Normals*, *UV checker*. Click a map in
+    the list to see only that map on the model.
+  - **Lights:** Studio, Sun and sky, Rim light, Headlight, Soft. **Alt+drag** turns the lights,
+    **L** switches to the next preset. *Smooth* uses the file's normals; *DirectX normals* flips
+    the green channel of normal maps made for DirectX/Unreal.
+- **Textures assigned or not:** the side panel lists the maps a model uses, in red the ones that
+  aren't found. Textures referenced with a path from another computer (`C:\Users\artist\...`) or
+  another extension are looked up by name next to the model and in `textures/`, `Textures/`,
+  `maps/`, `materials/`. **Look ▾ → 3D models** filters *with textures*, *without textures* and
+  *textures missing on disk*.
 - **Blender files in 3D:** when Blender is installed (found on the PATH, in the usual install
   folders, or via `KURATOR_BLENDER`), Enter on a `.blend` file converts it once in the background
   to glTF and shows it in the 3D viewer; later views are instant. Blender runs with
@@ -263,6 +284,37 @@ group of the type filter.
   creation dates count as the file's date.
 - Draco- or meshopt-compressed glTF files and binary USD (`.usdc`) can't be read yet; they are
   listed with a card or the Windows thumbnail.
+- `.obj` files that are compiled program code (Visual Studio and other compilers use the same
+  extension) are recognised and shown as *program code, not 3D*; inside code projects their
+  `obj/` folders aren't indexed at all.
+
+### 2D art with normal, glow and depth maps
+
+Sprites and illustrations for 2D lighting (Godot, Unity 2D lights, Sprite DLight, Laigter) come with
+companion maps: `hero.png` + `hero_normal.png`, `hero_glow.png`, `hero_ao.png`, `hero_depth.png`,
+`hero_sky.png`… Kurator recognises them when they sit in the same folder and have the picture's
+proportions:
+
+| Suffix | Used as |
+|---|---|
+| `_normal` `_nrm` `_n` | normal map (lighting) |
+| `_glow` `_emission` `_emissive` `_e` | glow: shines with a soft halo |
+| `_ao` `_occlusion` | ambient occlusion |
+| `_depth` `_height` `_parallax` `_p` | depth: parallax, and lighting when there's no normal map |
+| `_specular` `_spec` `_s` | shine |
+| `_sky` `_bg` `_background` | a layer behind the picture |
+| `_diffuse` `_albedo` `_color` | the picture itself (when there's no plain `hero.png`) |
+
+Other suffixes count as extra layers when they match the picture's size exactly, but never version
+names like `_v2`, `_final` or `_old`.
+
+- The side panel shows **2D maps** (click one to jump to it), **☀ lit preview**, and **▤ stack
+  maps** (the grid then shows only the picture, with its maps stacked under it).
+- In the viewer, **☀ Lit** (or **L**) turns on the lit preview: a point light follows the mouse,
+  the normal map shapes the light, glow shines, AO darkens the ambient light, the depth map shifts
+  the picture as the mouse moves, a sky/background layer sits behind it. Sliders for light height,
+  reach, ambient, glow and parallax; warm, white, cool or torch light; *Flip green* for DirectX
+  normal maps. The tabs show each map on its own.
 
 ### Projects: work inside one
 
@@ -435,6 +487,22 @@ chip per filter (× removes it, *Clear filters* removes all but the project).
   place and the same content appears elsewhere, its tags are re-attached by content hash. Removing a
   library folder keeps its tags for when it comes back.
 
+### Game projects and code repositories
+
+Kurator keeps its catalog and all previews in its own data folder (see ⚙ Settings → *About*). It
+never puts thumbnails, caches or database files into your library folders, so adding a Unity,
+Godot or Unreal project or a git repository to the library leaves it exactly as it was. (Only things
+you do yourself write there: moves, and XMP sidecars if you turn them on.)
+
+- **Generated folders aren't indexed:** Unity's `Library/`, `Temp/`, `Logs/`, `obj/`, `Build/`;
+  Unreal's `Intermediate/`, `Saved/`, `DerivedDataCache/`, `Binaries/`; build output (`obj/`,
+  `bin/`, `Debug/`, `Release/`, `target/`, `out/`) next to Visual Studio, CMake, Cargo, Gradle or
+  Maven projects; Python virtual environments; hidden folders (`.git`, `.godot`, `.import`, `.vs`…).
+  Live updates ignore them too, so an engine rewriting its cache costs nothing.
+- **Moves keep engine references working:** a file's Unity `.meta` (its GUID, which scenes and
+  prefabs refer to) and Godot `.import`/`.uid` files move with it, like XMP sidecars, and undo
+  brings them back.
+
 ### Moving files (M or "Move to…")
 
 1. Choose a destination inside the library; missing folders are created. Optional:
@@ -474,6 +542,9 @@ Sort by tag in one step. For example:
   Bridge, darktable and digiKam can read them, so your tagging work is never locked into Kurator.
   You can write them on demand, or automatically whenever tags change.
 - **Images are never modified**, and sidecars created by other programs are never overwritten.
+- No sidecars are written inside **Unity, Godot or Unreal projects or git repositories**: Unity would
+  make `.meta` files for them and git would list them as new files. The dialog says how many were
+  left out.
 - **Dates survive copies:** when re-indexing a file whose own timestamps were lost (copy, cloud
   sync), its sidecar's date is used (badge: `IN FILE`, source "sidecar").
 - **Import keywords:** keywords already stored with your files become tags. This covers embedded XMP
@@ -622,6 +693,8 @@ kurator/
   similar.py       picture fingerprints (dHash) and grouping of similar images
   stacks.py        version stacks
   sheets.py        contact sheets and joined images
+  maps2d.py        companion maps of 2D art (normal, glow, AO, depth, layers)
+  projectdirs.py   engine projects and repositories: generated folders, sidecar rules
   atlas.py         sprite sheets and packed texture atlases (+ TexturePacker JSON)
   audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms
   blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
@@ -642,7 +715,8 @@ kurator/
     common.py      embedded XMP/zip previews, Windows shell thumbnails, cards
   mesh3d/          3D geometry without a 3D library
     formats.py     readers: glTF/GLB, OBJ, FBX, STL, PLY, DAE, 3MF, 3DS, OFF, USDA, VOX
-    render.py      numpy z-buffer rasteriser for thumbnails
+    render.py      numpy z-buffer rasteriser for thumbnails (textures sampled per pixel)
+    pack.py        geometry, materials and maps for the 3D viewer
   ai/              optional (install.bat ai)
     embed.py       SigLIP 2 / open_clip image+text embeddings, lazy load, GPU fp16, idle unload
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
@@ -730,10 +804,13 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
 13. ~~Similar images, version stacks, compare mode, join images and contact sheets~~ ✅
 14. ~~Waveform view with playhead and styles, LUFS/BPM/key, colour / shape / transparency filters,
     timeline, sprite sheets and texture atlases~~ ✅
+15. ~~Textured 3D viewer with lights and map views, texture detection, 2D lit preview with companion
+    maps, SVG sizes, engine projects left untouched~~ ✅
+    Next in 3D: Draco/meshopt glTF, binary USD, turntable on hover, KTX2/Basis textures.
     Next: more waveform styles (in development), region export from the waveform view, CLAP
     text-to-sound search, Godot/Unity-native atlas resources. (PureRef's board format isn't open, so
     boards are best made by dragging images into PureRef.)
-15. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+16. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License
 

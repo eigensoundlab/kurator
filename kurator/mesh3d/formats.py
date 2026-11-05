@@ -19,7 +19,7 @@ from datetime import datetime
 
 import numpy as np
 
-from . import Mesh, MeshError, merge, z_up_to_y_up
+from . import Material, Mesh, MeshError, TexRef, material_colors, merge, resolve_texture, z_up_to_y_up
 
 MAX_EXTERNAL = 512 * 1024 * 1024
 
@@ -74,31 +74,68 @@ def read_stl(data: bytes, path: str) -> Mesh:
 
 
 # ---------------------------------------------------------------- OBJ
-def read_obj(data: bytes, path: str) -> Mesh:
+def _floats(lines: list[bytes], n: int) -> np.ndarray:
+    try:
+        return np.array([ln.split()[1:n + 1] for ln in lines], dtype=np.float32)
+    except ValueError:   # a damaged line somewhere: keep what can be read
+        out = []
+        for ln in lines:
+            try:
+                vals = [float(t) for t in ln.split()[1:n + 1]]
+            except ValueError:
+                vals = []
+            out.append((vals + [0.0] * n)[:n])
+        return np.array(out, dtype=np.float32).reshape(-1, n)
+
+
+def read_obj(data: bytes, path: str, full: bool = False) -> Mesh:
+    head = data[:8192]
+    if b"\0" in head or head[:2] in (b"\x64\x86", b"\x4c\x01", b"\x64\xaa") or head[:4] == b"\x00\x00\xff\xff":
+        raise MeshError("not a 3D model: this .obj is compiled program code (a build file), not a Wavefront OBJ")
     verts: list[bytes] = []
+    tverts: list[bytes] = []
+    nverts: list[bytes] = []
     counts: list[int] = []
     idx: list[int] = []
+    tidx: list[int] = []
+    nidx: list[int] = []
     face_mat: list[int] = []
     mats: dict[str, int] = {}
     cur = -1
     objects = 0
     mtllibs = []
+    bad = 0
     for line in data.split(b"\n"):
         if line[:2] == b"v ":
             verts.append(line)
+        elif line[:3] == b"vt ":
+            tverts.append(line)
+        elif line[:3] == b"vn ":
+            if full:
+                nverts.append(line)
         elif line[:2] == b"f ":
-            nv = len(verts)
-            parts = line.split()[1:]
-            fi = []
-            for p in parts:
-                s = p.split(b"/", 1)[0]
-                if not s:
-                    continue
-                k = int(s)
-                fi.append(k - 1 if k > 0 else nv + k)
+            nv, nt, nn = len(verts), len(tverts), len(nverts)
+            fi, ti, ni = [], [], []
+            try:
+                for p in line.split()[1:]:
+                    a = p.split(b"/")
+                    if not a[0]:
+                        continue
+                    k = int(a[0])
+                    fi.append(k - 1 if k > 0 else nv + k)
+                    t = int(a[1]) if len(a) > 1 and a[1] else 0
+                    ti.append(t - 1 if t > 0 else (nt + t if t < 0 else -1))
+                    if full:
+                        q = int(a[2]) if len(a) > 2 and a[2] else 0
+                        ni.append(q - 1 if q > 0 else (nn + q if q < 0 else -1))
+            except ValueError:
+                bad += 1
+                continue
             if len(fi) >= 3:
                 counts.append(len(fi))
                 idx.extend(fi)
+                tidx.extend(ti)
+                nidx.extend(ni)
                 face_mat.append(cur)
         elif line[:7] == b"usemtl ":
             cur = mats.setdefault(line[7:].strip().decode("utf-8", "replace"), len(mats))
@@ -108,46 +145,112 @@ def read_obj(data: bytes, path: str) -> Mesh:
             mtllibs.append(line[7:].strip().decode("utf-8", "replace"))
     if not verts or not counts:
         raise MeshError("no OBJ faces")
-    v = np.array([ln.split()[1:4] for ln in verts], dtype=np.float32)
+    v = _floats(verts, 3)
     counts_a = np.array(counts)
-    f = _fan(counts_a, np.array(idx))
+    corners = _fan(counts_a, np.arange(len(idx)))          # positions in the flat corner lists
+    f = np.array(idx, np.int64)[corners]
     fm = np.repeat(np.array(face_mat), counts_a - 2)
     info = {"objects": max(objects, 1), "materials": len(mats)}
-    colors = None
-    textures: list[str] = []
+    if bad:
+        info["note"] = f"{bad} damaged face lines skipped"
+    corner_uv = None
+    if tverts:
+        vt = _floats(tverts, 2)
+        vt[:, 1] = 1 - vt[:, 1]                              # to the glTF convention (v down)
+        ti = np.array(tidx, np.int64)[corners]
+        ok = (ti >= 0) & (ti < len(vt))
+        if ok.any():
+            corner_uv = np.where(ok[..., None], vt[np.clip(ti, 0, len(vt) - 1)], 0).astype(np.float32)
+    corner_n = None
+    if nverts and len(nidx) == len(idx):
+        vn = _floats(nverts, 3)
+        ni_ = np.array(nidx, np.int64)[corners]
+        okn = (ni_ >= 0) & (ni_ < len(vn))
+        if okn.all():
+            corner_n = vn[ni_].astype(np.float32)
+    names = sorted(mats, key=mats.get)
+    materials = [Material(name=n) for n in names]
+    base = os.path.dirname(path)
     for lib in mtllibs:
-        base = os.path.abspath(os.path.dirname(path))
-        mp = os.path.abspath(os.path.join(base, lib))
-        if os.path.commonpath([mp, base]) == base and os.path.isfile(mp) and os.path.getsize(mp) < 8 * 1024 * 1024:
-            kd, tex = _read_mtl(open(mp, "rb").read())
-            textures += tex
-            if kd and mats:
-                pal = np.array([kd.get(name, (180, 186, 198)) for name in sorted(mats, key=mats.get)] + [(180, 186, 198)], np.uint8)
-                colors = pal[fm]
-    if textures:
-        info["textures"] = sorted(set(textures))
+        mp = resolve_texture(base, lib)   # .mtl files are found the same way as textures
+        if mp and os.path.getsize(mp) < 8 * 1024 * 1024:
+            with open(mp, "rb") as fh:
+                defs = _read_mtl(fh.read(), os.path.dirname(mp))
+            for m in materials:
+                if m.name in defs:
+                    d = defs[m.name]
+                    m.color, m.maps, m.emissive = d.color, d.maps, d.emissive
     if mtllibs:
         info["material_files"] = mtllibs
-    return Mesh(v, f.astype(np.int32), colors, info)
+    tex = sorted({r.name for m in materials for r in m.maps.values()})
+    if tex:
+        info["textures"] = tex
+    ok = (f >= 0).all(axis=1) & (f < len(v)).all(axis=1)
+    if not ok.all():
+        f, fm = f[ok], fm[ok]
+        corner_uv = corner_uv[ok] if corner_uv is not None else None
+        corner_n = corner_n[ok] if corner_n is not None else None
+    mesh = Mesh(v, f.astype(np.int32), None, info, corner_uv=corner_uv,
+                face_mat=fm.astype(np.int32) if mats else None, materials=materials, corner_normals=corner_n)
+    material_colors(mesh)
+    return mesh
 
 
-def _read_mtl(data: bytes) -> tuple[dict, list[str]]:
-    kd, tex, cur = {}, [], None
+_MTL_ROLES = {"map_kd": "base", "map_ke": "emissive", "map_d": "opacity", "map_ks": "specular", "map_pr": "roughness",
+              "map_pm": "metallic", "map_ka": "occlusion", "norm": "normal", "map_bump": "normal", "bump": "normal",
+              "disp": "height", "map_disp": "height"}
+
+
+def _mtl_file(rest: str) -> str:
+    """The file name of a map line, without options like -bm 1.0 or -s 1 1 1."""
+    toks = rest.split()
+    out, i = [], 0
+    while i < len(toks):
+        t = toks[i]
+        if t.startswith("-") and not out:
+            i += 1
+            while i < len(toks) and re.fullmatch(r"[-+0-9.eE]+|on|off", toks[i]) and i < len(toks) - 1:
+                i += 1
+            continue
+        out.append(t)
+        i += 1
+    return " ".join(out)
+
+
+def _read_mtl(data: bytes, base: str) -> dict:
+    out: dict[str, Material] = {}
+    cur = None
     for line in data.decode("utf-8", "replace").splitlines():
         p = line.strip().split(None, 1)
         if not p:
             continue
-        if p[0] == "newmtl" and len(p) > 1:
-            cur = p[1].strip()
-        elif p[0] == "Kd" and cur and len(p) > 1:
+        key = p[0].lower()
+        if key == "newmtl" and len(p) > 1:
+            cur = out.setdefault(p[1].strip(), Material(name=p[1].strip()))
+        elif cur is None or len(p) < 2:
+            continue
+        elif key in ("kd", "ke"):
             try:
-                r, g, b = (float(t) for t in p[1].split()[:3])
-                kd[cur] = tuple(int(max(0, min(1, c)) ** (1 / 2.2) * 255) for c in (r, g, b))
+                c = tuple(max(0.0, min(1.0, float(t))) for t in p[1].split()[:3])
+            except ValueError:
+                continue
+            if key == "kd":
+                cur.color = tuple(x ** (1 / 2.2) for x in c) + (cur.color[3],)
+            else:
+                cur.emissive = c
+        elif key == "d":
+            try:
+                cur.color = cur.color[:3] + (float(p[1].split()[0]),)
             except ValueError:
                 pass
-        elif p[0].startswith("map_") and len(p) > 1:
-            tex.append(p[1].split()[-1])
-    return kd, tex
+        elif key in _MTL_ROLES:
+            name = _mtl_file(p[1])
+            role = _MTL_ROLES[key]
+            if role == "normal" and key in ("bump", "map_bump") and not re.search(r"norm|nrm|nml", name, re.I):
+                role = "height"
+            if name and role not in cur.maps:
+                cur.maps[role] = TexRef(name, resolve_texture(base, name))
+    return out
 
 
 # ---------------------------------------------------------------- PLY
@@ -302,7 +405,7 @@ def _quat_mat(q) -> np.ndarray:
                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
 
 
-def read_gltf(data: bytes, path: str) -> Mesh:
+def read_gltf(data: bytes, path: str, full: bool = False) -> Mesh:
     bin_chunk = None
     if data[:4] == b"glTF":
         length = struct.unpack_from("<I", data, 8)[0]
@@ -365,14 +468,7 @@ def read_gltf(data: bytes, path: str) -> Mesh:
     used_ext = doc.get("extensionsUsed", [])
     compressed = [e for e in used_ext if e in ("KHR_draco_mesh_compression", "EXT_meshopt_compression")]
     mats = doc.get("materials", [])
-    mat_color = []
-    for m in mats:
-        f = (m.get("pbrMetallicRoughness") or {}).get("baseColorFactor", [0.72, 0.74, 0.78, 1])
-        mat_color.append(tuple(int(max(0, min(1, c)) ** (1 / 2.2) * 255) for c in f[:3]))
-    tex_avg = _gltf_texture_colors(doc, buffers, views, mats)
-    for k, c in tex_avg.items():
-        base_c = np.array(mat_color[k], np.float32) / 255
-        mat_color[k] = tuple((np.array(c, np.float32) * base_c).astype(int))
+    materials = _gltf_materials(doc, buffers, views, mats, base)
 
     parts = []
     meshes = doc.get("meshes", [])
@@ -384,17 +480,30 @@ def read_gltf(data: bytes, path: str) -> Mesh:
             if "extensions" in prim and set(prim["extensions"]) & set(compressed):
                 continue
             try:
-                v = accessor(prim["attributes"]["POSITION"]).astype(np.float64)[:, :3]
+                v = accessor(prim["attributes"]["POSITION"]).astype(np.float32)[:, :3]
                 f = accessor(prim["indices"]).reshape(-1) if "indices" in prim else np.arange(len(v))
             except (MeshError, KeyError, ValueError, IndexError):
                 continue
-            f = f[: len(f) // 3 * 3].reshape(-1, 3).astype(np.int64)
-            v = v @ M[:3, :3].T + M[:3, 3]
-            c = None
+            f = f[: len(f) // 3 * 3].reshape(-1, 3).astype(np.int32)
+            v = v @ M[:3, :3].T.astype(np.float32) + M[:3, 3].astype(np.float32)
+            uv = None
+            if "TEXCOORD_0" in prim["attributes"]:
+                try:
+                    uv = accessor(prim["attributes"]["TEXCOORD_0"]).astype(np.float32)[:, :2]
+                    if len(uv) != len(v):
+                        uv = None
+                except (MeshError, KeyError, ValueError, IndexError):
+                    uv = None
+            nrm = None
+            if full and "NORMAL" in prim["attributes"]:
+                try:
+                    nrm = accessor(prim["attributes"]["NORMAL"]).astype(np.float32)[:, :3] @ M[:3, :3].T.astype(np.float32)
+                    if len(nrm) != len(v):
+                        nrm = None
+                except (MeshError, KeyError, ValueError, IndexError):
+                    nrm = None
             mi_ = prim.get("material")
-            if mi_ is not None and mi_ < len(mat_color):
-                c = np.tile(np.array(mat_color[mi_], np.uint8), (len(f), 1))
-            parts.append((v.astype(np.float32), f, c))
+            parts.append((v, f, uv, mi_ if mi_ is not None and mi_ < len(materials) else -1, nrm))
 
     nodes = doc.get("nodes", [])
 
@@ -444,44 +553,81 @@ def read_gltf(data: bytes, path: str) -> Mesh:
         if compressed:
             raise MeshError(f"geometry is compressed ({', '.join(compressed)})")
         raise MeshError("no triangle geometry")
-    v, f, c = merge(parts)
-    return Mesh(v, f, c, info)
+    vs, fs, uvs, fms, ns, off = [], [], [], [], [], 0
+    any_uv = any(p[2] is not None for p in parts)
+    all_n = full and all(p[4] is not None for p in parts)
+    for v, f, uv, mi_, nrm in parts:
+        if not len(v) or not len(f):
+            continue
+        ok = (f >= 0).all(axis=1) & (f < len(v)).all(axis=1)
+        f = f[ok]
+        vs.append(v)
+        fs.append(f + off)
+        if any_uv:
+            uvs.append(uv if uv is not None else np.zeros((len(v), 2), np.float32))
+        fms.append(np.full(len(f), mi_, np.int32))
+        if all_n:
+            ns.append(nrm)
+        off += len(v)
+    if not vs:
+        raise MeshError("no triangle geometry")
+    mesh = Mesh(np.concatenate(vs), np.concatenate(fs).astype(np.int32), None, info,
+                uv=np.concatenate(uvs) if any_uv else None, face_mat=np.concatenate(fms), materials=materials,
+                normals=np.concatenate(ns) if all_n and ns else None)
+    material_colors(mesh)
+    return mesh
 
 
-def _gltf_texture_colors(doc, buffers, views, mats) -> dict[int, tuple]:
-    """Average colour of each material's base-colour texture (only embedded ones), so previews
-    of textured assets aren't all grey."""
-    from PIL import Image
-    out = {}
+def _gltf_materials(doc, buffers, views, mats, base: str) -> list:
+    """Materials with their texture maps (embedded images or files next to the model)."""
     textures, images = doc.get("textures", []), doc.get("images", [])
-    cache: dict[int, tuple] = {}
-    for mi, m in enumerate(mats[:64]):
-        t = ((m.get("pbrMetallicRoughness") or {}).get("baseColorTexture") or {}).get("index")
+    refs: dict[int, TexRef] = {}
+
+    def ref(info) -> TexRef | None:
+        t = (info or {}).get("index")
         if t is None or t >= len(textures):
-            continue
-        src = textures[t].get("source")
+            return None
+        tex = textures[t]
+        src = tex.get("source")
+        for ext in ("KHR_texture_basisu", "EXT_texture_webp", "MSFT_texture_dds"):
+            src = (tex.get("extensions") or {}).get(ext, {}).get("source", src) if src is None else src
         if src is None or src >= len(images):
-            continue
-        if src not in cache:
+            return None
+        if src not in refs:
             im = images[src]
-            raw = None
+            r = TexRef(im.get("name") or im.get("uri") or f"image {src}")
             try:
                 if "bufferView" in im:
                     bv = views[im["bufferView"]]
                     buf = buffers[bv["buffer"]]
                     if buf is not None:
-                        raw = buf[bv.get("byteOffset", 0): bv.get("byteOffset", 0) + bv["byteLength"]]
+                        o = bv.get("byteOffset", 0)
+                        r.data = bytes(buf[o: o + bv["byteLength"]])
                 elif im.get("uri", "").startswith("data:"):
-                    raw = base64.b64decode(im["uri"].split(",", 1)[1])
-                if raw:
-                    img = Image.open(io.BytesIO(raw))
-                    img.draft("RGB", (64, 64))
-                    img = img.convert("RGB").resize((1, 1), Image.Resampling.BOX)
-                    cache[src] = img.getpixel((0, 0))
-            except Exception:
+                    r.data = base64.b64decode(im["uri"].split(",", 1)[1])
+                elif im.get("uri"):
+                    r.name = im["uri"]
+                    r.path = resolve_texture(base, im["uri"])
+            except (KeyError, IndexError, ValueError, TypeError):
                 pass
-        if src in cache:
-            out[mi] = cache[src]
+            refs[src] = r
+        return refs[src]
+
+    out = []
+    for m in mats:
+        pbr = m.get("pbrMetallicRoughness") or {}
+        f = pbr.get("baseColorFactor", [1, 1, 1, 1])
+        mat = Material(name=m.get("name", ""), color=tuple(max(0.0, min(1.0, c)) ** (1 / 2.2) for c in f[:3]) + (float(f[3]) if len(f) > 3 else 1.0,),
+                       emissive=tuple(m.get("emissiveFactor", [0, 0, 0])[:3]))
+        for role, info in (("base", pbr.get("baseColorTexture")), ("metal_rough", pbr.get("metallicRoughnessTexture")),
+                           ("normal", m.get("normalTexture")), ("occlusion", m.get("occlusionTexture")),
+                           ("emissive", m.get("emissiveTexture"))):
+            r = ref(info)
+            if r is not None:
+                mat.maps[role] = r
+        if "base" not in mat.maps and pbr.get("baseColorFactor") is None:
+            mat.color = (0.72, 0.74, 0.78, 1.0)   # no colour at all: the neutral grey of untextured previews
+        out.append(mat)
     return out
 
 
@@ -527,8 +673,11 @@ def _fbx_read_props(data: bytes, off: int, n: int) -> tuple[list, int]:
 
 def _fbx_array(p) -> np.ndarray:
     _, dt, length, enc, raw = p
-    if enc == 1:
-        raw = zlib.decompress(raw)
+    if enc == 1:   # never inflate more than the array claims to hold (zip bombs)
+        need = length * np.dtype(dt).itemsize
+        raw = zlib.decompressobj().decompress(raw, need)
+        if len(raw) < need:
+            raise MeshError("damaged FBX array")
     return np.frombuffer(raw, dt, length)
 
 
@@ -584,7 +733,7 @@ def _p70(node: _Node | None) -> dict:
     return out
 
 
-def read_fbx(data: bytes, path: str) -> Mesh:
+def read_fbx(data: bytes, path: str, full: bool = False) -> Mesh:
     if not data.startswith(_FBX_MAGIC):
         return _read_fbx_ascii(data)
     top, version = _fbx_parse(data)
@@ -611,7 +760,7 @@ def read_fbx(data: bytes, path: str) -> Mesh:
     objs = root.get("Objects")
     if objs is None:
         raise MeshError("FBX without objects")
-    geoms, models, mat_count, textures, anims = {}, {}, 0, [], 0
+    geoms, models, mat_nodes, tex_nodes, videos, anims = {}, {}, {}, {}, {}, 0
     for o in objs.children:
         oid = o.props[0] if o.props else None
         if o.name == "Geometry":
@@ -619,23 +768,89 @@ def read_fbx(data: bytes, path: str) -> Mesh:
         elif o.name == "Model":
             models[oid] = o
         elif o.name == "Material":
-            mat_count += 1
+            mat_nodes[oid] = o
         elif o.name == "Texture":
-            fn = o.find("RelativeFilename") or o.find("FileName")
-            if fn and fn.props and fn.props[0]:
-                textures.append(fn.props[0].replace("\\", "/").rsplit("/", 1)[-1])
+            tex_nodes[oid] = o
+        elif o.name == "Video":
+            videos[oid] = o
         elif o.name == "AnimationStack":
             anims += 1
     parent: dict = {}
     geom_model: dict = {}
+    model_mats: dict = {}       # model -> [material ids] in connection order (= the material index)
+    mat_tex: dict = {}          # material -> [(property, texture id)]
+    tex_video: dict = {}
     conns = root.get("Connections")
     for c in (conns.children if conns else []):
-        if len(c.props) >= 3 and c.props[0] == "OO":
-            child, par = c.props[1], c.props[2]
+        if len(c.props) < 3:
+            continue
+        child, par = c.props[1], c.props[2]
+        if c.props[0] == "OO":
             if child in geoms and par in models:
                 geom_model.setdefault(child, par)
             elif child in models:
                 parent[child] = par
+            elif child in mat_nodes and par in models:
+                model_mats.setdefault(par, []).append(child)
+            elif child in videos and par in tex_nodes:
+                tex_video[par] = child
+            elif child in tex_nodes and par in mat_nodes:
+                mat_tex.setdefault(par, []).append(("", child))
+        elif c.props[0] == "OP" and child in tex_nodes and par in mat_nodes:
+            mat_tex.setdefault(par, []).append((str(c.props[3]) if len(c.props) > 3 else "", child))
+
+    base = os.path.dirname(path)
+    textures = []
+    for t in tex_nodes.values():   # every texture the file names (export takes them along), used or not
+        fn = t.find("RelativeFilename") or t.find("FileName")
+        if fn and fn.props and fn.props[0]:
+            textures.append(fn.props[0].replace("\\", "/").rsplit("/", 1)[-1])
+
+    def texref(tid) -> TexRef | None:
+        t = tex_nodes.get(tid)
+        if t is None:
+            return None
+        fn = t.find("RelativeFilename") or t.find("FileName")
+        name = fn.props[0] if fn and fn.props and fn.props[0] else ""
+        vid = videos.get(tex_video.get(tid))
+        data_ = None
+        if vid is not None:
+            content = vid.find("Content")
+            if content and content.props and isinstance(content.props[0], bytes) and len(content.props[0]) > 16:
+                data_ = content.props[0]
+            if not name:
+                fn = vid.find("RelativeFilename") or vid.find("Filename")
+                name = fn.props[0] if fn and fn.props else ""
+        return TexRef(name or "embedded", None if data_ else resolve_texture(base, name), data_)
+
+    mat_index: dict = {}
+    materials: list[Material] = []
+
+    def material(mid) -> int:
+        if mid in mat_index:
+            return mat_index[mid]
+        node = mat_nodes[mid]
+        p = _p70(node)
+        m = Material(name=_fbx_name(node))
+        dc = p.get("DiffuseColor") or p.get("Diffuse")
+        if dc and len(dc) >= 3:
+            try:
+                m.color = tuple(max(0.0, min(1.0, float(x))) ** (1 / 2.2) for x in dc[:3]) + (1.0,)
+            except (TypeError, ValueError):
+                pass
+        for prop, tid in mat_tex.get(mid, []):
+            role = _FBX_ROLES.get(prop.split("|")[-1].lower().replace(" ", ""), "base" if not prop else None)
+            r = texref(tid)
+            if role is None or r is None:
+                continue
+            if role == "normal" and "bump" in prop.lower() and not re.search(r"norm|nrm|nml", r.name, re.I):
+                role = "height"
+            m.maps.setdefault(role, r)
+        if "base" in m.maps and not (dc and len(dc) >= 3):
+            m.color = (1.0, 1.0, 1.0, 1.0)
+        mat_index[mid] = len(materials)
+        materials.append(m)
+        return mat_index[mid]
 
     def local(mid) -> np.ndarray:
         p = _p70(models.get(mid))
@@ -643,8 +858,8 @@ def read_fbx(data: bytes, path: str) -> Mesh:
         t = [float(x) for x in p.get("Lcl Translation", [0, 0, 0])[:3]]
         r = [float(x) for x in p.get("Lcl Rotation", [0, 0, 0])[:3]]
         pre = [float(x) for x in p.get("PreRotation", [0, 0, 0])[:3]]
-        s = [float(x) for x in p.get("Lcl Scaling", [1, 1, 1])[:3]]
-        M[:3, :3] = _euler(pre) @ _euler(r) @ np.diag(s)
+        sc = [float(x) for x in p.get("Lcl Scaling", [1, 1, 1])[:3]]
+        M[:3, :3] = _euler(pre) @ _euler(r) @ np.diag(sc)
         M[:3, 3] = t
         return M
 
@@ -653,7 +868,8 @@ def read_fbx(data: bytes, path: str) -> Mesh:
             return np.eye(4)
         return world(parent.get(mid), depth + 1) @ local(mid)
 
-    parts = []
+    vs, fs, uvs, fms, nrms, off = [], [], [], [], [], 0
+    any_uv = False
     for gid, g in geoms.items():
         vn, pn = g.find("Vertices"), g.find("PolygonVertexIndex")
         if vn is None or pn is None or not vn.props or not pn.props:
@@ -663,20 +879,111 @@ def read_fbx(data: bytes, path: str) -> Mesh:
         ends = pvi < 0
         idx = np.where(ends, ~pvi, pvi)
         end_pos = np.nonzero(ends)[0]
+        if not len(end_pos):
+            continue
         counts = np.diff(np.r_[-1, end_pos])
-        f = _fan(counts, idx[: end_pos[-1] + 1] if len(end_pos) else idx)
-        M = world(geom_model.get(gid))
+        corners = _fan(counts, np.arange(end_pos[-1] + 1))
+        f = idx[corners]
+        ok = (f >= 0).all(axis=1) & (f < len(v)).all(axis=1)
+        mid_model = geom_model.get(gid)
+        M = world(mid_model)
         v = v @ M[:3, :3].T + M[:3, 3]
-        parts.append((v.astype(np.float32), f, None))
-    if not parts:
+        uv = _fbx_uv(g, idx, corners, len(v))
+        nrm = _fbx_layer(g, "LayerElementNormal", "Normals", "NormalsIndex", 3, idx, corners, len(v)) if full else None
+        if nrm is not None:
+            nrm = nrm @ M[:3, :3].T
+        mlist = [material(m) for m in model_mats.get(mid_model, []) if m in mat_nodes]
+        fm = np.full(len(f), mlist[0] if mlist else -1, np.int32)
+        lm = g.find("LayerElementMaterial")
+        if lm is not None and mlist:
+            mn = lm.find("Materials")
+            mapping = (lm.find("MappingInformationType").props[0] if lm.find("MappingInformationType") else "")
+            if mn is not None and mn.props and mapping == "ByPolygon":
+                per_poly = _fbx_array(mn.props[0]).astype(np.int64)
+                if len(per_poly) >= len(counts):
+                    pm = np.repeat(per_poly[:len(counts)], np.maximum(counts - 2, 0))
+                    lut = np.array(mlist + [-1], np.int32)
+                    fm = lut[np.clip(pm, -1, len(mlist) - 1)]
+        vs.append(v.astype(np.float32))
+        fs.append(f[ok] + off)
+        fms.append(fm[ok])
+        uvs.append(uv[ok] if uv is not None else None)
+        nrms.append(nrm[ok].astype(np.float32) if nrm is not None else None)
+        any_uv |= uv is not None
+        off += len(v)
+    if not vs:
         raise MeshError("no mesh geometry in FBX")
-    v, f, c = merge(parts)
+    v = np.concatenate(vs)
+    f = np.concatenate(fs).astype(np.int32)
+    corner_uv = None
+    if any_uv:
+        corner_uv = np.concatenate([u if u is not None else np.zeros((len(ff), 3, 2), np.float32) for u, ff in zip(uvs, fs)])
+    corner_n = np.concatenate(nrms) if nrms and all(n is not None for n in nrms) else None
     if up == 2:
         v = z_up_to_y_up(v)
-    info.update({"meshes": len(parts), "models": len(models), "materials": mat_count, "animations": anims})
+        if corner_n is not None:
+            corner_n = z_up_to_y_up(corner_n.reshape(-1, 3)).reshape(-1, 3, 3)
+    info.update({"meshes": len(vs), "models": len(models), "materials": len(mat_nodes), "animations": anims})
     if textures:
         info["textures"] = sorted(set(textures))
-    return Mesh(v, f, c, {k: x for k, x in info.items() if x not in (0, None, "")}, dates)
+    mesh = Mesh(v, f, None, {k: x for k, x in info.items() if x not in (0, None, "")}, dates,
+                corner_uv=corner_uv, face_mat=np.concatenate(fms) if materials else None, materials=materials,
+                corner_normals=corner_n)
+    material_colors(mesh)
+    return mesh
+
+
+_FBX_ROLES = {"diffusecolor": "base", "diffuse": "base", "basecolor": "base", "color": "base", "maya|basecolor": "base",
+              "normalmap": "normal", "bump": "normal", "normalcamera": "normal", "normal": "normal",
+              "emissivecolor": "emissive", "emissive": "emissive", "emissionColor".lower(): "emissive",
+              "specularcolor": "specular", "specularfactor": "specular", "specular": "specular",
+              "shininessexponent": "roughness", "specularroughness": "roughness", "roughness": "roughness",
+              "reflectionfactor": "metallic", "metalness": "metallic", "metallic": "metallic",
+              "transparentcolor": "opacity", "transparencyfactor": "opacity", "opacity": "opacity",
+              "ambientcolor": "occlusion", "ambientocclusion": "occlusion", "displacementcolor": "height"}
+
+
+def _fbx_name(node) -> str:
+    n = node.props[1] if len(node.props) > 1 and isinstance(node.props[1], str) else ""
+    return n.split("\x00\x01")[0].split("::")[-1]
+
+
+def _fbx_uv(g, idx: np.ndarray, corners: np.ndarray, nverts: int) -> np.ndarray | None:
+    """Texture coordinates of each triangle corner (glTF convention, v down), or None."""
+    uv = _fbx_layer(g, "LayerElementUV", "UV", "UVIndex", 2, idx, corners, nverts)
+    if uv is not None:
+        uv[..., 1] = 1 - uv[..., 1]
+    return uv
+
+
+def _fbx_layer(g, layer: str, values: str, index: str, n: int, idx: np.ndarray, corners: np.ndarray, nverts: int):
+    """Per-corner values of a geometry layer (UVs, normals), shape (triangles, 3, n), or None."""
+    le = g.find(layer)
+    if le is None:
+        return None
+    un, ui = le.find(values), le.find(index)
+    mt = le.find("MappingInformationType")
+    rt = le.find("ReferenceInformationType")
+    if un is None or not un.props:
+        return None
+    mapping = mt.props[0] if mt and mt.props else "ByPolygonVertex"
+    ref = rt.props[0] if rt and rt.props else "Direct"
+    uv = _fbx_array(un.props[0]).astype(np.float32)
+    uv = uv[: len(uv) // n * n].reshape(-1, n).copy()
+    if ref in ("IndexToDirect", "Index") and ui is not None and ui.props:
+        uidx = _fbx_array(ui.props[0]).astype(np.int64)
+    else:
+        uidx = None
+    if mapping == "ByPolygonVertex":
+        k = uidx[corners] if uidx is not None and len(uidx) > corners.max() else corners
+    elif mapping in ("ByVertice", "ByVertex", "ByControlPoint"):
+        k = idx[corners]
+        if uidx is not None and len(uidx) >= nverts:
+            k = uidx[k]
+    else:
+        return None
+    k = np.clip(k, 0, len(uv) - 1) if len(uv) else None
+    return uv[k] if k is not None else None
 
 
 def _read_fbx_ascii(data: bytes) -> Mesh:
@@ -1144,14 +1451,18 @@ READERS = {
 }
 
 
-def read_mesh(data: bytes, path: str) -> Mesh:
+_FULL = (".obj", ".glb", ".gltf", ".fbx")
+
+
+def read_mesh(data: bytes, path: str, full: bool = False) -> Mesh:
+    """full: also read vertex normals (the 3D viewer); thumbnails don't need them."""
     ext = os.path.splitext(path)[1].lower()
     reader = READERS.get(ext)
     if reader is None:
         raise MeshError(f"no mesh reader for {ext}")
     try:
-        return reader(data, path)
+        return reader(data, path, full=True) if full and ext in _FULL else reader(data, path)
     except MeshError:
         raise
-    except (ValueError, IndexError, KeyError, struct.error, zlib.error, TypeError, OverflowError, MemoryError) as e:
+    except (ValueError, IndexError, KeyError, struct.error, zlib.error, TypeError, OverflowError) as e:
         raise MeshError(f"could not read {ext[1:].upper()}: {type(e).__name__}: {e}") from e

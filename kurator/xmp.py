@@ -88,7 +88,8 @@ def build(tag_names: list[str], date_ts: float | None, date_source: str | None) 
 def write_sidecars(db: Database, ids: list[int], include_untagged: bool = False) -> dict:
     # Projects/Status/Source get a root keyword ("Projects|Game A") so other programs keep them apart.
     names = {r[0]: tagmod.display_name(r[1], r[2]) for r in db.cat.execute("SELECT id, name, facet FROM tags")}
-    res = {"written": 0, "unchanged": 0, "skipped_foreign": [], "skipped_untagged": 0, "errors": []}
+    from .projectdirs import engine_root
+    res = {"written": 0, "unchanged": 0, "skipped_foreign": [], "skipped_untagged": 0, "skipped_project": 0, "errors": []}
     ids = list(dict.fromkeys(int(i) for i in ids))
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
@@ -99,6 +100,9 @@ def write_sidecars(db: Database, ids: list[int], include_untagged: bool = False)
         for fid, path, ts, src in db.cat.execute(
                 f"SELECT id, path, date_ts, date_source FROM files WHERE id IN ({q})", chunk):
             target = path + ".xmp"
+            if engine_root(path):   # Unity/Godot/Unreal project or git repository: add no files there
+                res["skipped_project"] += 1
+                continue
             existing = {c: _read_text(c) for c in sidecar_candidates(path) if os.path.isfile(c)}
             foreign = [c for c, t in existing.items() if not is_ours(t)]
             if foreign:

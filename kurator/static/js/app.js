@@ -275,7 +275,7 @@ class App {
     const q = this.query;
     return { folder: q.folder, recursive: q.recursive, q: q.q, ext: q.ext, sort: q.sort, order: q.order, guessed: q.guessed,
       tag: q.tag, exclude: q.exclude, missing: q.missing, project: this.projects.active || '', dupes: q.dupes, similar: q.similar,
-      hues: q.hues, shape: q.shape, alpha: q.alpha, minside: q.minside, bpm_min: q.bpm_min, bpm_max: q.bpm_max, key: q.key, len_min: q.len_min, len_max: q.len_max };
+      hues: q.hues, shape: q.shape, alpha: q.alpha, minside: q.minside, bpm_min: q.bpm_min, bpm_max: q.bpm_max, key: q.key, len_min: q.len_min, len_max: q.len_max, tex: q.tex };
   }
 
   saveView() {
@@ -300,7 +300,7 @@ class App {
       sort: q.sort || this.query.sort, order: q.order || this.query.order, guessed: !!q.guessed, tag: q.tag || '', exclude: q.exclude || '',
       missing: q.missing || '', dupes: !!q.dupes, similar: +q.similar || 0, untagged: false, suggested: false,
       hues: +q.hues || 0, shape: q.shape || '', alpha: !!q.alpha, minside: +q.minside || 0, bpm_min: q.bpm_min ?? '', bpm_max: q.bpm_max ?? '',
-      key: q.key || '', len_min: q.len_min ?? '', len_max: q.len_max ?? '' });
+      key: q.key || '', len_min: q.len_min ?? '', len_max: q.len_max ?? '', tex: q.tex || '' });
     this.lookFilter.paint();
     prefs.set('folder', this.query.folder);
     this.typeFilter.setSelected?.(this.query.ext);
@@ -1243,6 +1243,8 @@ class App {
       ['1 … 9, T', 'Tag the shown image'],
       ['Wheel, drag, double-click', 'Zoom at cursor, pan, toggle fit/100%'],
       ['3D models', 'Drag: turn · right-drag or Shift+drag: move · wheel: zoom · 0 or double-click: reset'],
+      ['3D: L · Alt+drag', 'Next light preset · turn the lights (view modes and maps: panel top right)'],
+      ['L on 2D art', 'Lit preview with its _normal / _glow / _depth maps: the light follows the mouse'],
       ['Videos', 'Space: play / pause · Shift+← →: 5 s back / forward · O: open in your player'],
       ['Sounds', 'Click the waveform to jump · wheel: zoom · Space: play / pause · the menu switches waveform styles'],
       ['0 / Z', 'Fit / toggle 100%'],

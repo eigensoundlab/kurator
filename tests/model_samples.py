@@ -154,6 +154,8 @@ def _fbx_prop(p) -> bytes:
         return b"L" + struct.pack("<q", val)
     if kind == "D":
         return b"D" + struct.pack("<d", val)
+    if kind == "R":
+        return b"R" + struct.pack("<I", len(val)) + val
     if kind == "S":
         b = val.encode() if isinstance(val, str) else val
         return b"S" + struct.pack("<I", len(b)) + b

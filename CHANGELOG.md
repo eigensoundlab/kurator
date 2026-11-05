@@ -2,6 +2,23 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.12.0 – textured 3D, lights, 2D lit preview, SVG sizes, engine projects
+- **3D viewer with textures:** base colour, normal, emissive, occlusion and metal/roughness maps
+  from glTF/GLB, OBJ and FBX (also embedded); views *Lit*, *Base colour*, *Clay*, *Normals*,
+  *UV checker* and single maps; light presets, Alt+drag turns the lights, smooth shading from the
+  file's normals.
+- **Textured thumbnails**, and **texture detection**: the panel lists each model's maps and the
+  missing ones; *Look ▾* filters models with, without or with missing textures.
+- **2D companion maps** (`_normal`, `_glow`, `_ao`, `_depth`, `_sky`…): lit preview with a light
+  that follows the mouse, glow halo, parallax, background layers; stack the maps under the picture.
+- **Fixed:** out-of-memory errors when indexing big GLB files on many-core machines; `.obj` files
+  that are compiled code; Inkscape SVGs ("invalid size": mm units, zero-size pages).
+- **SVG: show all objects** (setting) grows the page to take in objects outside it.
+- **Engine projects and repositories:** generated folders (Unity `Library/`, Unreal
+  `Intermediate/`, build output, virtual environments) aren't indexed; Unity `.meta` and Godot
+  `.import` files move with their assets; no XMP sidecars inside projects.
+- Files that failed to index are tried again once after an update, and after memory errors.
+
 ## 0.11.0 – waveform view, sound analysis, look filters, timeline, sprite sheets and atlases
 - **Waveform view** for sounds: playhead, click to play from there, drag to scrub, zoom, time ruler;
   styles: peak + RMS, min/max with clipping, level in dB, stereo lanes, spectrogram.

@@ -138,7 +138,8 @@ def test_mesh_api_and_index(samples, tmp_path):
     hl = struct.unpack_from("<I", body, 4)[0]
     head = json.loads(body[8:8 + hl])
     assert head["triangles"] == 18 and head["vertices"] == 13 and head["colors"] is True
-    assert len(body) == 8 + hl + 13 * 12 + 18 * 12 + 40   # 13*3 colour bytes padded to 40
+    assert head["version"] == 2 and head["uv"] is False
+    assert len(body) == 8 + hl + 13 * 12 + 13 * 4 + 13 * 4 + 18 * 12   # positions, normals, colours, indices
     assert c.get(f"/api/mesh/{rows['scene.blend']['id']}").status_code == 415
     item = c.get(f"/api/items/{rows['print.3mf']['id']}").json()
     assert item["meta"]["model"]["triangles"] == 18 and item["meta"]["model"]["dimensions"] == [2.0, 3.5, 2.0]
