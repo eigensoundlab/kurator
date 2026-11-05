@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import threading
@@ -125,6 +126,7 @@ class RestoreIn(BaseModel):
 class SettingsIn(BaseModel):
     xmp_auto: bool | None = None
     svg_all: bool | None = None
+    proof_profile: str | None = None
     rclone_path: str | None = None
 
 
@@ -241,6 +243,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             "types": _types(),
             "date_sources": list(dates.SOURCES),
             "sep": os.sep,
+            "proof_profile": bool(db.get_setting("proof_profile", None)),
         })
 
     def _norm_path(p: str) -> str:
@@ -509,6 +512,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         out["viewable"] = bool(h and h.browser_viewable)
         out["tags"] = [r[0] for r in db.cat.execute("SELECT tag_id FROM file_tags WHERE file_id = ?", (item_id,))]
         out["stack"] = stacks_mod.info(db, item_id)
+        from .projectdirs import engine_root
+        er = engine_root(out["path"])
+        out["engine"] = er[0] if er else None
         out["twins"] = [{"id": r[0], "path": r[1]} for r in db.cat.execute(   # the same file elsewhere
             "SELECT id, path FROM files WHERE hash = ? AND id != ? ORDER BY path LIMIT 50", (out["hash"], item_id))] if out["hash"] else []
         out["tag_sources"] = {str(r[0]): [r[1], r[2]] for r in db.cat.execute(
@@ -644,12 +650,20 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.get("/api/settings")
     def get_settings():
         return _json({"xmp_auto": db.get_setting("xmp_auto", False), "svg_all": db.get_setting("svg_all", False), "data_dir": db.data_dir,
+                      "proof_profile": db.get_setting("proof_profile", None),
                       "rclone_path": db.get_setting("rclone_path", None)})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
         if body.xmp_auto is not None:
             db.set_setting("xmp_auto", body.xmp_auto)
+        if body.proof_profile is not None:
+            pp = body.proof_profile.strip().strip('"')
+            if pp:
+                from .printinfo import _open_profile
+                if _open_profile(pp) is None:
+                    raise HTTPException(400, "Not a CMYK ICC profile: " + pp)
+            db.set_setting("proof_profile", pp or None)
         if body.svg_all is not None and body.svg_all != db.get_setting("svg_all", False):
             db.set_setting("svg_all", body.svg_all)
             os.environ["KURATOR_SVG_ALL"] = "1" if body.svg_all else "0"   # read by the SVG renderer (also in workers)
@@ -692,6 +706,94 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         for m in g["maps"]:
             m["url"] = url(m["id"], m["ext"])
         return _json(g)
+
+    @app.post("/api/unity/settings")
+    def unity_settings(body: dict):
+        """Sprite import settings for pictures inside Unity projects (edits / creates their .meta)."""
+        from . import maps2d, unity
+        from .projectdirs import engine_root
+        files, outside = [], 0
+        for fid in list(body.get("ids") or [])[:5000]:
+            row = db.cat.execute("SELECT path, width, height, kind FROM files WHERE id = ?", (int(fid),)).fetchone()
+            if not row or row[3] != "image" or not os.path.isfile(row[0]):
+                continue
+            root = engine_root(row[0])
+            if not root or root[0] != "Unity":
+                outside += 1
+                continue
+            maps = {}
+            g = maps2d.group(db, int(fid))
+            if g and g["role"] == "base":
+                for m in g["maps"]:
+                    if m["role"] in ("normal", "mask") and m["role"] not in maps:
+                        p = db.cat.execute("SELECT path FROM files WHERE id = ?", (m["id"],)).fetchone()
+                        if p:
+                            maps[m["role"]] = p[0]
+            files.append({"path": row[0], "width": row[1], "height": row[2], "maps": maps})
+        if not files:
+            raise HTTPException(400, "None of these pictures is inside a Unity project (a folder with Assets and ProjectSettings)")
+        try:
+            ppu = max(1.0, min(float(body.get("ppu") or 100), 10000.0))
+        except (TypeError, ValueError):
+            ppu = 100.0
+        res = unity.apply_settings(files, db.data_dir, sprite=body.get("sprite", True) is not False, ppu=ppu,
+                                   filter_mode=str(body.get("filter") or "bilinear"), compression=str(body.get("compression") or "normal"),
+                                   mipmaps=bool(body.get("mipmaps")), link_maps=body.get("link_maps", True) is not False)
+        res["outside"] = outside
+        return _json(res)
+
+    @app.post("/api/unity/undo")
+    def unity_undo(body: dict):
+        from . import unity
+        try:
+            return _json({"restored": unity.undo(db.data_dir, str(body.get("id") or ""))})
+        except unity.UnityError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.get("/api/icc/profiles")
+    def icc_profiles():
+        from .printinfo import cmyk_profiles
+        return _json({"profiles": cmyk_profiles(), "current": db.get_setting("proof_profile", None)})
+
+    def _picture_path(item_id: int) -> str:
+        row = db.cat.execute("SELECT path, kind FROM files WHERE id = ?", (item_id,)).fetchone()
+        if not row or row[1] != "image":
+            raise HTTPException(404)
+        if not os.path.isfile(row[0]):
+            raise HTTPException(404, "file is missing on disk")
+        return row[0]
+
+    @app.get("/api/items/{item_id}/inks")
+    def item_inks(item_id: int):
+        """Ink amounts for the separations view: 'KINK', u32 JSON length, JSON, then C,M,Y,K bytes per
+        pixel (and one gamut byte per pixel when proofing an RGB picture)."""
+        from . import printinfo
+        path = _picture_path(item_id)
+        try:
+            r = printinfo.inks(path, db.get_setting("proof_profile", None))
+        except (ValueError, OSError) as e:
+            raise HTTPException(415, str(e)) from None
+        cmyk = r["cmyk"]
+        h, w = cmyk.shape[:2]
+        head = json.dumps({"width": w, "height": h, "inks": ["Cyan", "Magenta", "Yellow", "Black"], "source": r["source"],
+                           "profile": r["profile"], "gamut": r["gamut"] is not None}).encode()
+        head += b" " * (-len(head) % 4)
+        body = b"KINK" + len(head).to_bytes(4, "little") + head + cmyk.tobytes()
+        if r["gamut"] is not None:
+            body += r["gamut"].astype("uint8").tobytes()
+        return Response(body, media_type="application/octet-stream", headers={"Cache-Control": "private, no-cache"})
+
+    @app.get("/api/items/{item_id}/proof")
+    def item_proof(item_id: int):
+        from . import printinfo
+        path = _picture_path(item_id)
+        try:
+            img = printinfo.proof_image(path, db.get_setting("proof_profile", None))
+        except (ValueError, OSError) as e:
+            raise HTTPException(415, str(e)) from None
+        buf = io.BytesIO()
+        img.save(buf, "WEBP", quality=92)
+        return Response(buf.getvalue(), media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
 
     @app.get("/api/export/presets")
     def export_presets():
@@ -775,8 +877,14 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             fps = max(1.0, min(float(body.get("fps") or 12), 120.0))
         except (TypeError, ValueError):
             fps = 12.0
+        unity_opt = body.get("unity", "auto")
+        try:
+            ppu = max(1.0, min(float(body.get("ppu") or 100), 10000.0))
+        except (TypeError, ValueError):
+            ppu = 100.0
         files = atlas.save(img, sprites, mode, str(body.get("dest") or ""), str(body.get("name") or ""),
-                           godot=bool(body.get("godot")), fps=fps)
+                           godot=bool(body.get("godot")), fps=fps, unity=None if unity_opt == "auto" else bool(unity_opt),
+                           ppu=ppu, pixel_art=bool(body.get("pixel_art")))
         return _json({"files": files, **stats})
 
     @app.post("/api/audio/{item_id}/export")

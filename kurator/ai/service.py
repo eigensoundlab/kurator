@@ -17,13 +17,15 @@ from .. import tags as tagmod
 from ..db import Database
 from ..processing import process_file
 from .embed import MODELS, AIUnavailable, Embedder, image_from_bytes, prompts_for, status
+from .sound import SOUND_MODELS, SoundEmbedder, SoundUnavailable
+from .sound import available as sound_available
 from .vlm import NONE, Ollama, VLMError, jpeg_for_vlm
 
 # files that only have a generic 'no preview' card are not worth an embedding
 REAL_PREVIEW = "(meta IS NULL OR json_extract(meta, '$.placeholder') IS NULL)"
 BATCH = 32
 DEFAULTS = {"model": "fast", "custom_model": None, "custom_pretrained": None, "ollama_url": "http://127.0.0.1:11434",
-            "vlm_model": ""}
+            "vlm_model": "", "sound_model": "clap"}
 
 
 class AIError(ValueError):
@@ -50,7 +52,9 @@ class AIService:
             c.execute("CREATE TABLE IF NOT EXISTS emb (hash TEXT NOT NULL, model TEXT NOT NULL, vec BLOB NOT NULL, "
                       "PRIMARY KEY (hash, model)) WITHOUT ROWID")
         self._embedder: Embedder | None = None
+        self._sound: SoundEmbedder | None = None
         self._matrix = None  # (model_key, hashes, np.ndarray)
+        self._matrices: dict = {}
         self._thread: threading.Thread | None = None
         self._cancel = threading.Event()
         self.state: dict = {"running": False}
@@ -66,6 +70,8 @@ class AIService:
                 s[k] = patch[k]
         if s["model"] not in MODELS and s["model"] != "custom":
             raise AIError("Unknown model")
+        if s["sound_model"] not in SOUND_MODELS and s["sound_model"] != "off":
+            raise AIError("Unknown sound model")
         self.db.set_setting("ai", s)
         if self._embedder and self._embedder.key != self._model_key(s):
             self._embedder.unload()
@@ -90,15 +96,46 @@ class AIService:
                 self._embedder = Embedder(m, p)
         return self._embedder
 
+    def sound_key(self, s=None) -> str | None:
+        s = s or self.settings()
+        return None if s["sound_model"] == "off" else f"clap:{SOUND_MODELS[s['sound_model']][0]}"
+
+    def sound_embedder(self) -> SoundEmbedder:
+        key = self.sound_key()
+        if key is None:
+            raise AIError("Text-to-sound search is switched off in the AI settings")
+        if self._sound is None or self._sound.key != key:
+            if self._sound:
+                self._sound.unload()
+            self._sound = SoundEmbedder(SOUND_MODELS[self.settings()["sound_model"]][0])
+        return self._sound
+
+    def _sound_rows(self, ids: list[int] | None) -> list[tuple]:
+        sql = ("SELECT id, hash, path FROM files WHERE status = 1 AND kind = 'audio' AND hash IS NOT NULL "
+               "AND root_id IN (SELECT id FROM roots WHERE kind='library')")
+        if ids is None:
+            return self.db.cat.execute(sql).fetchall()
+        out = []
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            out += self.db.cat.execute(sql + f" AND id IN ({','.join('?' * len(chunk))})", chunk).fetchall()
+        return out
+
     def info(self) -> dict:
         key = self._model_key()
+        skey = self.sound_key()
         with self._con() as c:
             n = c.execute("SELECT COUNT(*) FROM emb WHERE model = ?", (key,)).fetchone()[0]
+            ns = c.execute("SELECT COUNT(*) FROM emb WHERE model = ?", (skey,)).fetchone()[0] if skey else 0
+        nsounds = self.db.cat.execute("SELECT COUNT(DISTINCT hash) FROM files WHERE status = 1 AND kind = 'audio' AND hash IS NOT NULL "
+                                      "AND root_id IN (SELECT id FROM roots WHERE kind='library')").fetchone()[0]
         images = self.db.cat.execute("SELECT COUNT(DISTINCT hash) FROM files WHERE status = 1 AND kind IN ('image', 'model', 'video') AND hash IS NOT NULL "
                                      "AND root_id IN (SELECT id FROM roots WHERE kind='library') AND " + REAL_PREVIEW).fetchone()[0]
         pending = self.db.cat.execute("SELECT COUNT(*) FROM suggestions").fetchone()[0]
         return {"status": status(), "settings": self.settings(), "models": {k: v[2] for k, v in MODELS.items()},
-                "model_key": key, "embedded": n, "images": images, "suggestions": pending, "job": dict(self.state)}
+                "model_key": key, "embedded": n, "images": images, "suggestions": pending, "job": dict(self.state),
+                "sound_models": {k: v[1] for k, v in SOUND_MODELS.items()}, "sound_search": sound_available(),
+                "sounds": nsounds, "sounds_embedded": ns}
 
     def _con(self) -> sqlite3.Connection:
         con = getattr(self._local, "con", None)
@@ -203,7 +240,87 @@ class AIService:
             done += len(batch)
             self.state["done"] = done
         self._matrix = None
-        return {"embedded": done, "skipped_existing": len(have)}
+        self._matrices.clear()
+        res = {"embedded": done, "skipped_existing": len(have)}
+        if ids is None or self._sound_rows(ids):
+            try:
+                res.update(self.embed_sounds(ids))
+            except (SoundUnavailable, AIError) as e:
+                if self._sound_rows(ids):
+                    self.state["errors"].append(str(e))
+        return res
+
+    def embed_sounds(self, ids: list[int] | None = None) -> dict:
+        """CLAP vectors for the sounds (one per content hash)."""
+        import numpy as np
+        key = self.sound_key()
+        if key is None or not sound_available():
+            return {}
+        rows = self._sound_rows(ids)
+        by_hash: dict[str, str] = {}
+        for _fid, h, path in rows:
+            by_hash.setdefault(h, path)
+        con = self._con()
+        have = set()
+        hashes = list(by_hash)
+        for i in range(0, len(hashes), 900):
+            chunk = hashes[i:i + 900]
+            have.update(r[0] for r in con.execute(
+                f"SELECT hash FROM emb WHERE model = ? AND hash IN ({','.join('?' * len(chunk))})", (key, *chunk)))
+        todo = [h for h in hashes if h not in have]
+        if not todo:
+            return {"sounds_embedded": 0}
+        emb = self.sound_embedder()
+        self.state["total"] = self.state.get("total", 0) + len(todo)
+        self.state["sounds"] = True
+        done = 0
+        for h in todo:
+            if self._cancel.is_set():
+                break
+            try:
+                v = emb.embed_file(by_hash[h])
+            except SoundUnavailable:
+                raise
+            except Exception:
+                v = None
+            if v is not None:
+                con.execute("INSERT OR REPLACE INTO emb(hash, model, vec) VALUES (?, ?, ?)", (h, key, v.astype(np.float16).tobytes()))
+                if done % 16 == 0:
+                    con.commit()
+            done += 1
+            self.state["done"] = self.state.get("done", 0) + 1
+        con.commit()
+        self._matrices.pop(key, None)
+        return {"sounds_embedded": done}
+
+    def _load_matrix_for(self, key: str):
+        import numpy as np
+        if key not in self._matrices:
+            rows = self._con().execute("SELECT hash, vec FROM emb WHERE model = ?", (key,)).fetchall()
+            self._matrices[key] = ([r[0] for r in rows], np.stack([np.frombuffer(r[1], np.float16) for r in rows]).astype(np.float32)
+                                   if rows else np.zeros((0, 1), np.float32))
+        return self._matrices[key]
+
+    def _rank_in(self, key: str, query_vec, limit: int) -> list[tuple[int, float, float]]:
+        """(file id, similarity, z-score) by one model's vectors: z makes images and sounds comparable."""
+        import numpy as np
+        hashes, M = self._load_matrix_for(key)
+        if not hashes:
+            return []
+        sims = M @ query_vec
+        mu, sd = float(sims.mean()), float(sims.std()) or 1.0
+        order = np.argsort(-sims)[: limit * 3]
+        top = {hashes[i]: float(sims[i]) for i in order}
+        out = []
+        q = list(top)
+        for i in range(0, len(q), 900):
+            chunk = q[i:i + 900]
+            for fid, h in self.db.cat.execute(
+                    f"SELECT id, hash FROM files WHERE hash IN ({','.join('?' * len(chunk))}) "
+                    "AND root_id IN (SELECT id FROM roots WHERE kind='library')", chunk):
+                out.append((fid, top[h], (top[h] - mu) / sd))
+        out.sort(key=lambda x: -x[1])
+        return out[:limit]
 
     def _load_matrix(self):
         import numpy as np
@@ -249,13 +366,44 @@ class AIService:
         return out[:limit]
 
     def search_text(self, text: str, limit: int = 500) -> list[tuple[int, float]]:
-        v = self.embedder().encode_texts([text])[0]
-        return self._rank(v, limit)
+        """Pictures (SigLIP) and sounds (CLAP) that match the text, in one list ordered by how much
+        each stands out among its own kind."""
+        _, hashes, _ = self._load_matrix()
+        skey = self.sound_key()
+        sound_hashes = self._load_matrix_for(skey)[0] if skey else []
+        if not hashes and not sound_hashes:
+            raise AIError("No embeddings yet - compute them first (AI ▸ Prepare images and sounds)")
+        merged: list[tuple[int, float, float]] = []
+        if hashes:
+            v = self.embedder().encode_texts([text])[0]
+            merged += self._rank_in(self._model_key(), v, limit)
+        if sound_hashes:
+            try:
+                sv = self.sound_embedder().encode_texts([text])[0]
+                merged += self._rank_in(skey, sv, limit)
+            except SoundUnavailable:
+                pass
+        merged.sort(key=lambda x: -x[2])
+        seen, out = set(), []
+        for fid, sim, _z in merged:
+            if fid not in seen:
+                seen.add(fid)
+                out.append((fid, sim))
+        return out[:limit]
 
     def similar(self, file_id: int, limit: int = 500) -> list[tuple[int, float]]:
-        row = self.db.cat.execute(f"SELECT hash, kind IN ('image', 'model', 'video') AND {REAL_PREVIEW} FROM files WHERE id = ?", (file_id,)).fetchone()
+        row = self.db.cat.execute(f"SELECT hash, kind IN ('image', 'model', 'video') AND {REAL_PREVIEW}, kind FROM files WHERE id = ?", (file_id,)).fetchone()
         if not row:
             raise AIError("No such file")
+        if row[2] == "audio":   # sounds that sound alike (CLAP)
+            skey = self.sound_key()
+            hashes, M = self._load_matrix_for(skey) if skey else ([], None)
+            try:
+                v = M[hashes.index(row[0])]
+            except (ValueError, TypeError):
+                raise AIError("This sound has no embedding yet - run AI ▸ Prepare images and sounds") from None
+            ranked = [(f, s) for f, s, _ in self._rank_in(skey, v, limit + 1) if f != file_id]
+            return [(file_id, 1.0)] + ranked[:limit - 1]
         if not row[1]:
             raise AIError("Find similar works on images (this file has no image preview)")
         _, hashes, M = self._load_matrix()

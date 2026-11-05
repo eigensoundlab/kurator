@@ -65,7 +65,8 @@ def test_textures_are_found_and_sampled(models, name):
     s = texture_summary(m)
     assert s["textured"] and {x["role"] for x in s["maps"]} >= {"base", "normal"}
     if name == "board.obj":   # absolute path from another PC, found by name in Textures/; the bump map is missing
-        assert m.materials[0].maps["base"].path.endswith("Board_Albedo.png")
+        # (on case-insensitive disks the path may keep the case written in the .mtl)
+        assert m.materials[0].maps["base"].path.lower().endswith(os.path.join("textures", "board_albedo.png"))
         assert s["missing_textures"] == ["board_normal.png"]
     if name == "quad.fbx":    # texture embedded in the FBX (Video content); the normal map is missing
         assert m.materials[0].maps["base"].data is not None and s["missing_textures"] == ["wood_normal.png"]

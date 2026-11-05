@@ -125,10 +125,11 @@ def model_companions(path: str, meta: dict | None = None) -> list[str]:
                     add(b["uri"])
         else:
             m = (meta or {}).get("model") or {}
-            for t in (m.get("textures") or []) if isinstance(m.get("textures"), list) else []:
-                add(t)
-            for t in m.get("images") or []:
-                add(t)
+            for key in ("textures", "images"):   # lists of names (a .blend stores counts here)
+                names = m.get(key)
+                for t in names if isinstance(names, list) else []:
+                    if isinstance(t, str):
+                        add(t)
     except (OSError, ValueError):
         pass
     # a texture set named like the model (sword.fbx + sword_albedo.png ...)

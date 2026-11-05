@@ -345,7 +345,9 @@ def godot_resources(sprites: list[Sprite], png: str, mode: str, fps: float = 12.
     return out
 
 
-def save(img: Image.Image, sprites: list[Sprite], mode: str, dest: str, name: str, godot: bool = False, fps: float = 12.0) -> list[str]:
+def save(img: Image.Image, sprites: list[Sprite], mode: str, dest: str, name: str, godot: bool = False, fps: float = 12.0,
+         unity: bool | None = None, ppu: float = 100, pixel_art: bool = False) -> list[str]:
+    """unity: write Unity's .meta with the sprites sliced (None: when saved inside a Unity project)."""
     folder = _out_dir(dest)
     stem = _safe_name(name) or f"{'spritesheet' if mode == 'frames' else 'atlas'}_{time.strftime('%Y-%m-%d')}"
     png = _unique(os.path.join(folder, stem + ".png"))
@@ -355,6 +357,13 @@ def save(img: Image.Image, sprites: list[Sprite], mode: str, dest: str, name: st
     with open(js, "w", encoding="utf-8") as f:
         json.dump(describe(sprites, os.path.basename(png), img.size, mode), f, indent=1)
     out = [png, js]
+    if unity is None:
+        from .projectdirs import engine_root
+        root = engine_root(png)
+        unity = bool(root and root[0] == "Unity")
+    if unity:
+        from .unity import write_sheet_meta
+        out.append(write_sheet_meta(png, img.width, img.height, sprites, mode, ppu, "point" if pixel_art else "bilinear"))
     if godot:
         out += godot_resources(sprites, png, mode, fps)
     return out

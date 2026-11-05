@@ -19,6 +19,22 @@ export async function openSettingsDialog(app) {
     try { await api.saveSettings({ svg_all: svgAll.checked }); app.toast('SVG previews are being made again'); }
     catch (e) { app.toast(e.message); svgAll.checked = !svgAll.checked; }
   };
+  // CMYK proofing profile (print preview of RGB pictures, ink views)
+  const proofSel = el('select', {}, el('option', { value: '', text: 'None' }));
+  const proofPath = el('input', { type: 'text', value: st.proof_profile || '', spellcheck: 'false', placeholder: 'or the path of a CMYK .icc file' });
+  const saveProof = async (v) => {
+    try {
+      await api.saveSettings({ proof_profile: v });
+      if (app.state) app.state.proof_profile = !!v;
+      app.toast(v ? 'Proofing profile set' : 'No proofing profile');
+    } catch (e) { app.toast(e.message); }
+  };
+  api.iccProfiles().then((r) => {
+    for (const p of r.profiles) proofSel.append(el('option', { value: p.path, text: p.name }));
+    proofSel.value = r.current && r.profiles.some((p) => p.path === r.current) ? r.current : '';
+  }).catch(() => {});
+  proofSel.onchange = () => { proofPath.value = proofSel.value; saveProof(proofSel.value); };
+  proofPath.onchange = () => saveProof(proofPath.value.trim());
   const untagged = el('input', { type: 'checkbox' });
   const out = el('div', { class: 'move-preview' });
 
@@ -82,6 +98,9 @@ export async function openSettingsDialog(app) {
       el('h3', { text: 'Previews' }),
       el('label', { class: 'chk' }, svgAll, 'SVG: show all objects, also those outside the page'),
       el('div', { class: 'p-hint small', text: 'Inkscape and Illustrator drawings often keep parts beside the page. With this on, previews and the viewer grow the page to take them in. Drawings whose page has no size always show everything.' }),
+      el('h3', { text: 'Print' }),
+      el('div', { class: 'p-hint small', text: 'A CMYK profile of your printing condition (e.g. Coated FOGRA39, GRACoL, PSO Uncoated) lets the viewer show RGB pictures as they would print: ◧ Inks shows the C, M, Y, K plates, total ink and colours out of gamut. CMYK pictures always have it, with their own profile. Profiles installed by Adobe apps, ECI or printer drivers are listed.' }),
+      el('div', { class: 'row' }, proofSel), proofPath,
       el('h3', { text: 'About this installation' }),
       el('table', { class: 'kv' },
         el('tr', {}, el('th', { text: 'Version' }), el('td', { text: app.state?.version || '' })),

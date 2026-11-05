@@ -162,6 +162,13 @@ def load(data: bytes, path: str, target: int | None) -> Loaded:
         meta["dpi"] = _scalar(img.info["dpi"])
     if img.info.get("icc_profile"):
         meta["icc_profile"] = True
+    bits = {"I;16": 16, "I;16B": 16, "I;16L": 16, "I": 32, "F": 32, "1": 1}.get(img.mode)
+    if img.format == "TIFF":
+        bps = img.tag_v2.get(258) if hasattr(img, "tag_v2") else None
+        if bps:
+            bits = int(bps[0] if isinstance(bps, tuple) else bps)
+    if bits:
+        meta["bits"] = bits
 
     _read_exif(img, meta, found)
 
@@ -215,6 +222,17 @@ def load(data: bytes, path: str, target: int | None) -> Loaded:
         try:
             img.draft("RGB", (target, target))
         except Exception:
+            pass
+    # Embedded colour profiles (CMYK print files, Adobe RGB, ProPhoto...): previews in sRGB, the way they
+    # print or show in Photoshop. Big pictures are reduced first - the preview needs no more.
+    if n_frames == 1 and (img.mode == "CMYK" or img.info.get("icc_profile")):
+        from ..printinfo import to_srgb
+        try:
+            if target and max(img.size) > 2 * target:
+                img.thumbnail((2 * target, 2 * target), Image.Resampling.LANCZOS)
+            img, colour = to_srgb(img)
+            meta["colour"] = colour
+        except (OSError, ValueError):
             pass
     return Loaded(img, meta, found, orig_size)
 

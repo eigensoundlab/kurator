@@ -49,12 +49,20 @@ export async function openAIDialog(app) {
     model.value = s.model in models ? s.model : 'fast';
     model.onchange = async () => { await api.aiSettings({ model: model.value }).catch((e) => app.toast(e.message)); show(); };
     const pct = info.images ? Math.round((100 * info.embedded) / info.images) : 0;
+    const smodel = el('select', {}, [['off', 'Off'], ...Object.entries(info.sound_models || {})].map(([k, label]) => el('option', { value: k, text: label })));
+    smodel.value = s.sound_model || 'clap';
+    smodel.onchange = async () => { await api.aiSettings({ sound_model: smodel.value }).catch((e) => app.toast(e.message)); show(); };
+    const todo = info.embedded < info.images || (info.sound_search && s.sound_model !== 'off' && info.sounds_embedded < info.sounds);
     const head = el('div', { class: 'ai-head' },
       el('div', {}, el('b', { text: st.device === 'cuda' ? `GPU: ${st.gpu || 'CUDA'}${st.vram_gb ? ` (${st.vram_gb} GB)` : ''}` : st.device === 'mps' ? 'Apple GPU (Metal)' : 'CPU (no CUDA GPU found - works, but slower)' }),
         el('span', { class: 'muted small', text: ` · PyTorch ${st.torch}` })),
       el('div', { class: 'row' }, el('label', { class: 'chk' }, 'Model', model),
         el('span', { class: 'muted small', text: `${fmtNum(info.embedded)} of ${fmtNum(info.images)} images prepared (${pct}%)` }),
-        btn(info.embedded < info.images ? 'Prepare images' : 'Up to date ✓', async () => { try { await api.aiEmbed(); progress(); } catch (e) { app.toast(e.message); } }, info.embedded < info.images ? 'primary' : '')),
+        btn(todo ? 'Prepare images and sounds' : 'Up to date ✓', async () => { try { await api.aiEmbed(); progress(); } catch (e) { app.toast(e.message); } }, todo ? 'primary' : '')),
+      el('div', { class: 'row' }, el('label', { class: 'chk' }, 'Sounds', smodel),
+        info.sound_search
+          ? el('span', { class: 'muted small', text: `${fmtNum(info.sounds_embedded)} of ${fmtNum(info.sounds)} sounds prepared - search sounds by description (?rain on a tin roof), S finds sounds that sound alike` })
+          : el('span', { class: 'muted small', text: 'Text-to-sound search needs transformers: run install.bat ai (or ./install.sh ai) again' })),
       el('div', { class: 'p-hint small', text: 'Preparing reads each image once (from the thumbnail cache) and stores a compact "fingerprint". It powers search by description (type ?dragon with wings in the search box), Find similar (S) and the tag pools below. The first use downloads the model.' }));
 
     const cards = profiles.map((p) => {

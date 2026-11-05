@@ -1,8 +1,9 @@
 // Full-screen viewer / quick look. Browsing here never changes a multi-selection.
 
-import { originalUrl, thumbUrl } from './api.js';
+import { api, originalUrl, thumbUrl } from './api.js';
 import { Lit2D } from './lit2d.js';
 import { MeshView } from './meshview.js';
+import { BoxOverlay, InkView } from './printview.js';
 import { openRegionDialog } from './regiondlg.js';
 import { WaveView } from './waveview.js';
 import { AUDIO, el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
@@ -20,6 +21,8 @@ export class Viewer {
     this.selBadge = el('button', { class: 'v-sel', title: 'Toggle selection (X)', onclick: () => this.toggleSel() });
     this.zoomLbl = el('div', { class: 'v-zoom' });
     this.bar = el('div', { class: 'v-bar' }, this.selBadge, this.title, this.tagsEl, this.info, this.zoomLbl,
+      this.inkBtn = el('button', { class: 'v-btn v-inkbtn', title: 'Inks: C, M, Y, K plates, total ink, gamut (I)', text: '◧ Inks', onclick: () => this.toggleInks() }),
+      this.boxBtn = el('button', { class: 'v-btn v-boxbtn', title: 'Trim and bleed boxes of the PDF page', text: '▭ Boxes', onclick: () => this.toggleBoxes() }),
       this.litBtn = el('button', { class: 'v-btn v-litbtn', title: 'Lit preview with the companion maps (L)', text: '☀ Lit', onclick: () => this.toggleLit() }),
       el('button', { class: 'v-btn', title: 'Background (B)', text: 'BG', onclick: () => this.cycleBg() }),
       el('button', { class: 'v-btn v-2d', title: 'Pixel-art zoom (N)', text: 'PX', onclick: () => this.togglePixel() }),
@@ -63,6 +66,7 @@ export class Viewer {
     this.img.removeAttribute('src');
     this.mv?.clear();
     this.setLit(false, true);
+    this.setInks(false);
     this.setLoading(null);
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); }
     this.isVideo = false;
@@ -92,6 +96,7 @@ export class Viewer {
     this.showVideo(isVideo && this.viewable ? it.ids[i] : null);
     this.showSound(AUDIO.has(ext) ? it.ids[i] : null);
     this.findMaps(!this.is3d && !isVideo && !AUDIO.has(ext) ? it.ids[i] : null);
+    this.findPrint(!this.is3d && !isVideo && !AUDIO.has(ext) ? it.ids[i] : null);
     if (this.w && this.h) this.fitView();
     this.title.textContent = it.n[i];
     this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
@@ -124,6 +129,69 @@ export class Viewer {
     if (prefs.get('viewer.lit', false)) this.setLit(true, true);
   }
 
+  /** Print views: inks for CMYK pictures (or any picture with a proofing profile), boxes for PDFs. */
+  async findPrint(id) {
+    this.root.classList.remove('has-inks', 'has-boxes');
+    this.printFor = id;
+    if (id == null) { this.setInks(false); this.setBoxes(null); return; }
+    let d = this.app.panel.detail?.id === id ? this.app.panel.detail : null;
+    if (!d) { try { d = await api.item(id); } catch { return; } }
+    if (!this.isOpen || this.printFor !== id) return;
+    const m = d.meta || {};
+    const cmyk = m.mode === 'CMYK' || m.colour?.mode === 'CMYK';
+    this.inksOk = d.kind === 'image' && (cmyk || !!this.app.state?.proof_profile);
+    this.root.classList.toggle('has-inks', this.inksOk);
+    const rel = m.print?.boxes_rel;
+    const boxes = rel && (rel.trim || rel.bleed) ? rel : null;
+    this.root.classList.toggle('has-boxes', !!boxes);
+    this.setBoxes(boxes);
+    if (this.inksOn && this.inksOk) this.setInks(true); else if (!this.inksOk) this.setInks(false, true);
+  }
+
+  toggleInks() {
+    if (!this.inksOk) { this.app.toast('Inks: for CMYK pictures, or choose a CMYK proofing profile in ⚙ Settings'); return; }
+    this.setInks(!this.inksOn);
+  }
+
+  setInks(on, keep = false) {
+    if (on && !this.ink) {
+      this.ink = new InkView(this.stage, this);
+      this.inkBox = this.ink.controls();
+      this.root.append(this.inkBox);
+    }
+    if (on && this.litOn) this.setLit(false);
+    if (!keep) this.inksOn = !!on;
+    this.root.classList.toggle('ink-on', !!on);
+    this.inkBtn.classList.toggle('on', !!on);
+    if (!this.ink) return;
+    this.ink.on = !!on;
+    if (!on) return;
+    const id = this.items.ids[this.i];
+    if (this.ink.id !== id) {
+      this.ink.clear();
+      this.ink.onChange();
+      this.ink.load(id).then(() => this.apply()).catch((e) => { this.app.toast(`Inks: ${e.message}`, 5000); this.setInks(false); });
+    }
+    this.apply();
+  }
+
+  toggleBoxes() {
+    this.boxesOn = !this.boxesOn;
+    prefs.set('viewer.boxes', this.boxesOn);
+    if (this.boxes) this.boxes.on = this.boxesOn;
+    this.boxBtn.classList.toggle('on', this.boxesOn);
+  }
+
+  setBoxes(rel) {
+    if (!rel) { if (this.boxes) this.boxes.on = false; return; }
+    if (!this.boxes) this.boxes = new BoxOverlay(this.stage);
+    this.boxes.show(rel);
+    this.boxesOn = prefs.get('viewer.boxes', true);
+    this.boxes.on = this.boxesOn;
+    this.boxBtn.classList.toggle('on', this.boxesOn);
+    this.apply();
+  }
+
   toggleLit() {
     if (!this.maps2d) { this.app.toast('No companion maps (like name_normal.png, name_glow.png) next to this picture'); return; }
     this.setLit(!this.litOn);
@@ -132,6 +200,7 @@ export class Viewer {
 
   setLit(on, quiet = false) {
     if (on && !this.maps2d) on = false;
+    if (on && this.inksOn) this.setInks(false);
     if (on && !this.lit) {
       this.lit = new Lit2D(this.stage, this);
       this.litBox = this.lit.controls();
@@ -289,8 +358,9 @@ export class Viewer {
     im.style.width = `${this.w}px`;
     im.style.height = `${this.h}px`;
     im.style.transform = `translate(${this.tx}px,${this.ty}px) scale(${this.s})`;
-    if (this.lit && this.litOn) {
-      const c = this.lit.canvas.style;
+    for (const node of [this.lit && this.litOn && this.lit.canvas, this.ink && this.inksOn && this.ink.canvas, this.boxes?.root]) {
+      if (!node) continue;
+      const c = node.style;
       c.width = im.style.width; c.height = im.style.height; c.transform = im.style.transform;
     }
     if (!this.root.classList.contains('mesh-ready')) this.zoomLbl.textContent = `${Math.round(this.s * 100)}%`;
@@ -379,6 +449,7 @@ export class Viewer {
     if (k === 'b' || k === 'B') { this.cycleBg(); return true; }
     if ((k === 'l' || k === 'L') && this.is3d && this.mv?.n) { this.app.toast(`Light: ${this.mv.cycleLights()}`); return true; }
     if ((k === 'l' || k === 'L') && !this.is3d && !this.isVideo && !this.isSound) { this.toggleLit(); return true; }
+    if ((k === 'i' || k === 'I') && !this.is3d && !this.isVideo && !this.isSound) { this.toggleInks(); return true; }
     if (k === 'n' || k === 'N') { this.togglePixel(); return true; }
     if (k === '0') { if (this.is3d) this.mv?.reset(); else this.fitView(); return true; }
     if (k === 'z' || k === 'Z') { if (this.fitted) this.zoomTo(1); else this.fitView(); return true; }

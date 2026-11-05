@@ -2,6 +2,19 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.14.0 – print views, text-to-sound search, Unity import settings, KTX2
+- **Print:** previews through embedded ICC profiles (CMYK, Adobe RGB…); colour mode, profile, print
+  size; PDF page/trim/bleed, PDF/X, output intent, spot colours, fonts; **◧ Inks** (C/M/Y/K
+  plates, total ink with a limit, ink readout), **soft proofing** with a CMYK profile (proof,
+  plates, gamut warning), **▭ Boxes** for PDF trim and bleed.
+- **Text-to-sound search** with LAION CLAP (AI add-on): `?rain on a tin roof` finds sounds, together
+  with pictures; **S** finds sounds that sound alike.
+- **Unity sprite import settings** (.meta, keeps GUIDs, links _normal/_mask maps, undo); sprite
+  sheets and atlases saved into Unity projects come pre-sliced.
+- **KTX2 textures:** uncompressed, BC1–7, ETC2/EAC and ASTC, Zstd/zlib; Basis Universal shows a card.
+- Fixes: a .blend in the side panel could raise *'int' object is not iterable*; the side preview no
+  longer jumps when the sharper picture or the scrollbar arrives; macOS test on case-insensitive disks.
+
 ## 0.13.0 – compressed glTF, binary USD, turntables, sound regions, Godot resources
 - **Meshopt-compressed glTF** read by Kurator itself; **Draco glTF** and **binary USD**
   (`.usd`/`.usdc`, USDZ) with the optional 3D add-on (`install.bat 3d`), decoded in a separate

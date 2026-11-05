@@ -223,6 +223,13 @@ def _pdf_render(data: bytes, target: int | None) -> tuple[Image.Image, dict, tup
             pw, ph = page.get_size()
             scale = max(0.1, min(6.0, ((target or 512) * 1.5) / max(pw, ph, 1)))
             img = page.render(scale=scale).to_pil()
+            try:   # page boxes, PDF/X, spot colours, fonts - for print work
+                from ..printinfo import pdf_info
+                pr = pdf_info(data, page)
+                if pr:
+                    meta["print"] = pr
+            except Exception:
+                pass
             page.close()
         finally:
             doc.close()

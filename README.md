@@ -4,13 +4,15 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.13 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.14 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
 > **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
 > you work inside, similar images, version stacks, colour and shape filters, a timeline,
 > sprite sheets and texture atlases, **textured 3D models with lights**, a **lit preview for 2D art
-> with normal/glow/depth maps**, and optional local AI (search by description, find similar,
+> with normal/glow/depth maps**, **print previews (CMYK inks, ink limit, proofing, PDF boxes and
+> spot colours)**, **Unity sprite import settings**, and optional local AI (search pictures *and
+> sounds* by description, find similar,
 > tag suggestions from a pool you choose) work.
 > See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
 
@@ -126,7 +128,7 @@ Nothing ticked means all types. The choice is remembered.
 | Work files | **psd**, kra, ora, **procreate**, **clip** (Clip Studio), afphoto, xcf, sai, sai2, mdp, pdn | the embedded preview the app saved; Affinity/SAI/… show a card unless Windows has a thumbnail for them |
 | Vector | **svg svgz** (resvg), **ai** (PDF-based Illustrator files), **eps** (embedded preview; Ghostscript if installed), **cdr** (embedded thumbnail), afdesign, fig, sketch, xd | rendered or embedded |
 | Documents | **pdf** (first page, pdfium), **indd** (XMP thumbnail), afpub, sla | first page / embedded |
-| Game textures | tga, dds, blp | full |
+| Game textures | tga, dds, blp, **ktx2** | full; KTX2: uncompressed, BC1–7, ETC2/EAC and ASTC (3D add-on), Zstd/zlib supercompression - Basis Universal (ETC1S/UASTC) shows a card |
 | Video | **mp4 m4v mov webm ogv** (play in Kurator), mkv avi wmv flv mpg mpeg m2ts mts ts 3gp mxf vob | a frame + hover scrubbing (needs ffmpeg) |
 | 3D models | **glb gltf obj fbx stl ply dae 3mf 3ds off usda usdz vox**, **usd usdc** (3D add-on), **blend** (also .blend1), ma mb max c4d ztl zpr abc 3dm skp lwo hip spp sbs sbsar | rendered by Kurator / Blender's saved thumbnail / embedded (3MF, SketchUp) / Windows |
 | Audio | wav, mp3, ogg, oga, opus, flac, m4a, aac, aif/aiff/aifc, caf, w64, rf64, wma | waveform |
@@ -200,13 +202,17 @@ without a waveform.
 Install with `install.bat ai` / `./install.sh ai`, then use the **AI** button. Nothing is uploaded:
 the models run on your computer. The first use of a model downloads it once from Hugging Face.
 
-1. **Prepare images.** Kurator computes a compact "fingerprint" (an embedding from **SigLIP 2**)
-   for each image, from the thumbnail cache. It is done once per image; a GPU makes it many times
+1. **Prepare images and sounds.** Kurator computes a compact "fingerprint" (an embedding from
+   **SigLIP 2**) for each image, from the thumbnail cache, and one from **LAION CLAP** for each
+   sound (from up to three 10-second windows). It is done once per file; a GPU makes it many times
    faster than a CPU. Choose *fast* (Base, 0.4 GB), *better* (Large, 1.8 GB) or *best* (So400m, 4.5 GB;
-   fine on a 16 GB card).
+   fine on a 16 GB card) for images, and the CLAP model (general sounds and music, or music and
+   speech, 0.8 GB) or *off* for sounds.
 2. **Search by description:** type `?` and a description in the search box, e.g.
-   `?pencil sketch of a dragon with wings`. Results are ranked best first.
-3. **Find similar:** select an image and press **S** (or *≈ similar* in the panel).
+   `?pencil sketch of a dragon with wings` or `?rain on a tin roof`, `?wooden door creak`,
+   `?sad solo piano`. Pictures and sounds come in one list, best first (each ranked by how much it
+   stands out among its own kind).
+3. **Find similar:** select an image or a sound and press **S** (or *≈ similar* in the panel).
 4. **Tag pools** answer the question "which of *these* tags fits?". A pool is a set of tags the AI
    may choose from (e.g. *human / robot / creature / icon* for a characters folder). It never
    invents other tags. For each pool you choose:
@@ -505,6 +511,22 @@ chip per filter (× removes it, *Clear filters* removes all but the project).
   place and the same content appears elsewhere, its tags are re-attached by content hash. Removing a
   library folder keeps its tags for when it comes back.
 
+### Print and desktop publishing
+
+- **Colour profiles:** pictures with an embedded ICC profile (CMYK print files, Adobe RGB, ProPhoto,
+  Gray) are shown through that profile (LittleCMS), as they print or as Photoshop shows them.
+- **Side panel:** colour mode, profile and bit depth; **print size** at the picture's own resolution
+  and at 300 ppi. For PDF and Illustrator files: page size (trim box) and **bleed**, PDF version,
+  **PDF/X** conformance and output intent, **spot colours** (e.g. *PANTONE 185 C*) and **fonts**.
+- **◧ Inks** (viewer, **I**) on CMYK pictures: the **C, M, Y, K plates** (in their ink colour or
+  grey), **total ink** with an adjustable **ink limit** (300 % coated, 260–280 % uncoated, 240 %
+  newsprint; areas above it turn red), and the ink percentages under the mouse.
+- **Soft proofing for RGB pictures:** choose a CMYK profile of your printing condition in ⚙ Settings
+  → Print (Kurator lists the profiles installed by Adobe apps, ECI/FOGRA or printer drivers, or give
+  a path). ◧ Inks then shows the *Proof* (how it prints), the plates as they'd be separated, total
+  ink, and **Gamut** (green: colours the press can't reach).
+- **▭ Boxes** draws the trim (green) and bleed (red) boxes over a PDF page in the viewer.
+
 ### Game projects and code repositories
 
 Kurator keeps its catalog and all previews in its own data folder (see ⚙ Settings → *About*). It
@@ -517,6 +539,13 @@ you do yourself write there: moves, and XMP sidecars if you turn them on.)
   `bin/`, `Debug/`, `Release/`, `target/`, `out/`) next to Visual Studio, CMake, Cargo, Gradle or
   Maven projects; Python virtual environments; hidden folders (`.git`, `.godot`, `.import`, `.vs`…).
   Live updates ignore them too, so an engine rewriting its cache costs nothing.
+- **Unity sprite import settings:** for pictures inside a Unity project, *Unity import…* in the side
+  panel writes their `.meta` files the way the Inspector would: texture type Sprite, pixels per unit,
+  filter (Point for pixel art), compression, mip maps, and the picture's `_normal` / `_mask` maps
+  linked as secondary textures for 2D lights. Existing `.meta` files keep their GUID and every other
+  setting; **Undo** puts the old files back (they are kept in Kurator's data folder). Sprite sheets and
+  atlases saved into a Unity project get a `.meta` with the sprites already sliced (Sprite Mode
+  *Multiple*, trimmed sprites keep their pivot). Unity re-imports when its window gets focus.
 - **Moves keep engine references working:** a file's Unity `.meta` (its GUID, which scenes and
   prefabs refer to) and Godot `.import`/`.uid` files move with it, like XMP sidecars, and undo
   brings them back.
@@ -713,6 +742,8 @@ kurator/
   sheets.py        contact sheets and joined images
   maps2d.py        companion maps of 2D art (normal, glow, AO, depth, layers)
   projectdirs.py   engine projects and repositories: generated folders, sidecar rules
+  unity.py         Unity .meta files: sprite import settings, sliced sprite sheets, undo
+  printinfo.py     ICC conversion, CMYK inks, soft proofing, PDF print facts
   atlas.py         sprite sheets and packed texture atlases (+ TexturePacker JSON)
   audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms
   blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
@@ -736,9 +767,11 @@ kurator/
     render.py      numpy z-buffer rasteriser for thumbnails (textures sampled per pixel)
     pack.py        geometry, materials and maps for the 3D viewer
     meshopt.py     EXT_meshopt_compression decoder (pure Python/numpy)
+    (handlers/ktx2.py: KTX2 textures)
     native.py      Draco and binary USD decoders, run in a separate process (optional add-on)
   ai/              optional (install.bat ai)
     embed.py       SigLIP 2 / open_clip image+text embeddings, lazy load, GPU fp16, idle unload
+    sound.py       LAION CLAP sound+text embeddings (transformers), 10 s windows at 48 kHz
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
     vlm.py         Ollama client with a fixed-answer JSON schema
   static/          the UI: plain ES modules, no build step, no npm dependencies
@@ -831,10 +864,12 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
     maps, SVG sizes, engine projects left untouched~~ ✅
 16. ~~Meshopt and Draco glTF, binary USD, turntables on hover, cutting regions out of sounds,
     Godot SpriteFrames/AtlasTexture export~~ ✅
-    Next: more waveform styles (in development), KTX2/Basis textures, CLAP text-to-sound search,
-    Unity sprite import settings. (PureRef's board format isn't open, so boards are best made by
-    dragging images into PureRef.)
-17. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+17. ~~KTX2 textures, text-to-sound search (CLAP), Unity sprite import settings, print views (inks,
+    ink limit, soft proofing, PDF boxes, spot colours, fonts)~~ ✅
+    Next: more waveform styles (in development), Basis Universal (ETC1S/UASTC) KTX2 textures,
+    multi-page PDF browsing. (PureRef's board format isn't open, so boards are best made by dragging
+    images into PureRef.)
+18. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License
 

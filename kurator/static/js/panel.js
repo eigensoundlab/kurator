@@ -2,6 +2,7 @@
 
 import { api, originalUrl, thumbUrl } from './api.js';
 import { AUDIO, el, extOf, setKids, fmtBytes, fmtDate, fmtDuration, fmtNum, prefs, SOURCE_LABEL, VIEWABLE } from './util.js';
+import { openUnityDialog } from './unitydlg.js';
 import { WaveView } from './waveview.js';
 
 const MAX_PRE = 20000;
@@ -60,11 +61,23 @@ export class Panel {
     this.previewBox.classList.toggle('alpha', !!it.a[i]);
     const c = it.c[i];
     this.previewBox.style.backgroundColor = c >= 0 && !it.a[i] ? `#${c.toString(16).padStart(6, '0')}` : '';
+    // The picture gets its final size right away, so swapping the 256 thumbnail for the 512 one
+    // (or the scrollbar appearing) never makes it jump.
+    this.sizePreview(it.w[i], it.h[i]);
     // Show the grid thumbnail instantly (already cached), then upgrade to 512.
     const small = thumbUrl(it, i, 256);
     if (this.preview.getAttribute('src') !== small) this.preview.src = small;
     const id = it.ids[i];
     this.timer = setTimeout(() => this.load(id, i), 90);
+  }
+
+  sizePreview(w, h) {
+    const st = this.preview.style;
+    const bw = (this.previewBox.clientWidth || 300) - 16, bh = (this.previewBox.clientHeight || 300) - 16;
+    if (!(w > 0 && h > 0) || bw <= 0) { st.width = '100%'; st.height = '100%'; return; }
+    const k = Math.min(bw / w, bh / h, 1);   // never larger than the original
+    st.width = `${Math.max(1, Math.round(w * k))}px`;
+    st.height = `${Math.max(1, Math.round(h * k))}px`;
   }
 
   async load(id, i) {
@@ -98,7 +111,9 @@ export class Panel {
         el('button', { class: 'btn small', text: 'Open', title: 'Open in its application (O)', onclick: () => api.open(d.id).catch((e) => this.app.toast(e.message)) }),
         el('button', { class: 'btn small', text: revealLabel, onclick: () => api.reveal(d.id).catch((e) => this.app.toast(e.message)) }),
         el('button', { class: 'btn small', text: 'Copy path', onclick: () => navigator.clipboard?.writeText(d.path).then(() => this.app.toast('Path copied')) }),
-        el('button', { class: 'btn small', text: 'Open folder here', title: 'Show this folder in the grid', onclick: () => this.app.openPath(d.dir) })),
+        el('button', { class: 'btn small', text: 'Open folder here', title: 'Show this folder in the grid', onclick: () => this.app.openPath(d.dir) }),
+        d.engine === 'Unity' && d.kind === 'image' ? el('button', { class: 'btn small', text: 'Unity import…', title: 'Sprite import settings (.meta) - with a selection: for all selected pictures',
+          onclick: () => openUnityDialog(this.app, this.app.selected.size ? [...this.app.selected] : [d.id]) }) : null),
       m.audio ? this.player(d) : null,
       this.tagBox,
       el('table', { class: 'kv facts' },
@@ -109,6 +124,7 @@ export class Panel {
           : m.model?.triangles != null
             ? el('tr', {}, el('th', { text: 'Geometry' }), el('td', { text: `${fmtNum(m.model.triangles)} triangles · ${fmtNum(m.model.vertices)} vertices` }))
             : el('tr', {}, el('th', { text: 'Size' }), el('td', { text: d.width ? `${d.width} × ${d.height} px` : (m.canvas ? `${m.canvas} px` : '—') })),
+        ...this.printRows(d, m),
         m.video_info?.duration ? el('tr', {}, el('th', { text: 'Length' }), el('td', { text: [fmtDuration(m.video_info.duration),
           m.video_info.fps ? `${m.video_info.fps} fps` : null, m.video_info.video_codec?.toUpperCase(),
           m.video_info.audio_codec ? `${m.video_info.audio_codec.toUpperCase()} audio` : 'no audio'].filter(Boolean).join(' · ') })) : null,
@@ -192,6 +208,35 @@ export class Panel {
     setKids(this.body, ...parts);
     this.loadRelated(d);
     this.renderTags();
+  }
+
+  /** Colour mode, profile, print size; PDF page boxes, PDF/X, spot colours, fonts. */
+  printRows(d, m) {
+    const rows = [];
+    const tr = (k, v, title) => el('tr', {}, el('th', { text: k, title: title || '' }), el('td', { text: v, title: title || '' }));
+    const mode = m.colour?.mode || m.mode;
+    if (d.kind === 'image' && (m.colour || m.icc_profile || mode === 'CMYK' || m.bits)) {
+      const name = { CMYK: 'CMYK', RGB: 'RGB', RGBA: 'RGB + alpha', L: 'Grayscale', LA: 'Grayscale + alpha', P: 'Indexed', '1': 'Bitmap', LAB: 'Lab' }[mode] || mode;
+      rows.push(tr('Colour', [name, m.colour?.profile || (m.icc_profile ? 'embedded profile' : null), m.bits ? `${m.bits} bit` : null].filter(Boolean).join(' · '),
+        m.colour?.converted ? 'Previews are converted to sRGB through the embedded profile' : ''));
+    }
+    const dpi = Array.isArray(m.dpi) ? m.dpi[0] : m.dpi;
+    if (d.kind === 'image' && d.width && d.height && !m.placeholder) {
+      const cm = (px, r) => (px / r * 2.54).toFixed(1);
+      const at = dpi && dpi > 1 ? `${cm(d.width, dpi)} × ${cm(d.height, dpi)} cm at ${Math.round(dpi)} ppi` : null;
+      const fine = `${cm(d.width, 300)} × ${cm(d.height, 300)} cm at 300 ppi`;
+      rows.push(tr('Print size', at && Math.round(dpi) !== 300 ? `${at} · ${fine}` : (at || fine), 'Largest print at full quality: 300 ppi (photos and art), 150 ppi is enough for posters seen from afar'));
+    }
+    const p = m.print;
+    if (p) {
+      const b = p.boxes_mm || {};
+      const trim = b.trim || b.crop || b.media;
+      if (trim) rows.push(tr('Page', `${trim[0]} × ${trim[1]} mm${b.trim ? ' (trim)' : ''}${p.bleed_mm != null ? ` · bleed ${p.bleed_mm} mm` : b.trim ? '' : ' · no trim box'}`));
+      if (p.pdfx || p.pdf_version) rows.push(tr('PDF', [p.pdf_version ? `PDF ${p.pdf_version}` : null, p.pdfx, p.output_intent ? `output intent${p.output_condition ? `: ${p.output_condition}` : ''}` : null].filter(Boolean).join(' · ')));
+      if (p.spot_colours?.length) rows.push(tr('Spot colours', p.spot_colours.join(', '), 'Separations besides C, M, Y, K'));
+      if (p.fonts?.length) rows.push(tr('Fonts', `${p.fonts.length}${p.fonts_subset ? ' (subsets embedded)' : ''}: ${p.fonts.slice(0, 6).join(', ')}${p.fonts.length > 6 ? '…' : ''}`, p.fonts.join('\n')));
+    }
+    return rows;
   }
 
   /** Texture maps of the same set, the files a model uses, models using a texture. */
@@ -323,6 +368,7 @@ export class Panel {
       el('div', { class: 'p-actions' },
         el('button', { class: 'btn small', text: 'Stack as versions', title: 'Show these as one item, the newest on top (Ctrl+G)', onclick: () => app.stackSelection() }),
         el('button', { class: 'btn small', text: 'Stack by name', title: 'Find versions by their names (hero_sketch, hero_lineart, hero_v2…) and stack each group', onclick: () => app.stackSelection(true) }),
-        n <= 4 ? el('button', { class: 'btn small', text: 'Compare', title: 'Side by side, zoom together (C)', onclick: () => app.compare() }) : null));
+        n <= 4 ? el('button', { class: 'btn small', text: 'Compare', title: 'Side by side, zoom together (C)', onclick: () => app.compare() }) : null,
+        this.detail?.engine === 'Unity' ? el('button', { class: 'btn small', text: 'Unity import…', title: 'Sprite import settings for the selected pictures (.meta)', onclick: () => openUnityDialog(app, [...app.selected]) }) : null));
   }
 }
