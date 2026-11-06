@@ -117,7 +117,7 @@ export class Viewer {
     this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
       + (this.is3d ? ' · drag: turn · right-drag: move · wheel: zoom · 0: reset' : '')
       + (this.isVideo ? ' · Space: play/pause · Shift+← →: 5 s' : isVideo ? ' · this format plays in your video app (O)' : '')
-      + (this.isSound ? ' · click: play from there · drag: select · wheel: zoom · double-click: whole sound · Space: play/pause' : '')
+      + (this.isSound ? ' · click: play from there · drag: select · wheel: zoom · Shift+wheel: move · double-click: whole sound · Space: play/pause' : '')
       + (ext === 'pdf' || ext === 'ai' ? ' · [ ]: pages' : '');
     this.paintSel();
     this.paintTags();

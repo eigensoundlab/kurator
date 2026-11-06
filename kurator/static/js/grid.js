@@ -3,13 +3,16 @@
 // so 100k items cost the same as 100. Layout is pure arithmetic - no image has to load first.
 
 import { originalUrl, thumbUrl } from './api.js';
-import { AUDIO, el, extOf, fmtMonth, MESHES, VIDEO, VIEWABLE } from './util.js';
+import { phEnabled, phGridPref, phLib, phLibNow, phOnSetting, phTheme, phThumb } from './playhead.js';
+import { AUDIO, el, extOf, fmtDuration, fmtMonth, MESHES, VIDEO, VIEWABLE } from './util.js';
 
 const PAD = 12;
 const GAP = 8;
 const LABEL_H = 20;
 const OVERSCAN = 3;
 const BADGE_EXT = new Set(['gif', 'kra', 'ora', 'webp', 'tif', 'tiff', 'bmp', 'avif']);
+// Playhead strips: the colours of Kurator's waveform thumbnails (long sounds orange, short ones blue)
+const PH_PAL = { blue: { outline: '#4662a8', body: '#8cb0ff', line: '#7aa2ff' }, orange: { outline: '#a85c24', body: '#ffac5c', line: '#fa9646' } };
 
 export class Grid {
   constructor(scrollEl, app) {
@@ -31,6 +34,10 @@ export class Grid {
     this.dirty = true;
     this.raf = 0;
     this.badgeTimer = 0;
+    // Playhead strips in place of waveform thumbnails (sounds with an analysis; ⚙ Settings → Sounds)
+    const phPrefs = () => { const g = phGridPref(); this.phOn = phEnabled() && g.on; this.phLook = g.look || 'auto'; if (this.phOn) phLib().catch(() => {}); };
+    phPrefs();
+    phOnSetting(() => { phPrefs(); this.dirty = true; this.schedule(); });
     this.el.addEventListener('scroll', () => { this.schedule(); this.showBadge(); this.stopHover(); }, { passive: true });
     // Animated GIF/WebP/APNG play when hovered (the grid shows a still first frame).
     this.hovered = null;
@@ -230,7 +237,52 @@ export class Grid {
     cell.classList.toggle('audio', AUDIO.has(ext) && VIEWABLE.has(ext));   // ▶ only where the browser can play it
     if (this.labels) cell._label.textContent = name;
     cell.title = name;
+    this.paintPh(cell, i);
     this.paintState(cell, i);
+  }
+
+  /** A Playhead strip over a sound's waveform thumbnail, drawn by Playhead.drawStrip() from a light
+   *  copy of its stored analysis; sounds without one keep the waveform. */
+  paintPh(cell, i) {
+    const it = this.items;
+    const stamp = this.phOn ? it.p?.[i] || 0 : 0;
+    const id = it.ids[i];
+    const cover = this.el.classList.contains('fit-cover');
+    const key = stamp ? `${id}:${stamp}:${this.cellW}:${this.phLook}:${cover}` : '';
+    if (cell._phKey === key) return;
+    cell._phKey = key;
+    cell.classList.remove('ph-strip');
+    if (!key) return;
+    phThumb(id, stamp).then(async (t) => {
+      const P = phLibNow() || await phLib().catch(() => null);
+      if (cell._phKey !== key || !t || !P) return;
+      if (!cell._ph) { cell._ph = el('canvas', { class: 'ph-thumb' }); cell._th.append(cell._ph); }
+      const c = cell._ph;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = this.cellW, h = cover ? this.cellW : Math.round(this.cellW / 2);
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+      const g = c.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.fillStyle = '#1c1f26';
+      g.fillRect(0, 0, w, h);
+      const done = t.doc.source?.duration || 0, dur = Math.max(t.duration || 0, done);
+      const sw = dur > done + 1 ? Math.max(1, Math.round((w * done) / dur)) : w;   // only the analysed first 10 minutes
+      const look = this.phLook === 'auto' || !P.looks[this.phLook] || P.lookFits(t.doc, this.phLook) ? this.phLook : 'auto';
+      try {
+        P.drawStrip(g, t.doc, { width: sw, height: h, theme: phTheme(dur >= 30 ? PH_PAL.orange : PH_PAL.blue), look: look === 'auto' ? undefined : look });
+      } catch { return; }
+      if (sw < w) { g.fillStyle = '#ffffff0d'; g.fillRect(sw, 0, w - sw, h); }
+      if (dur && w >= 90) {   // the length, as on the waveform thumbnails
+        const label = fmtDuration(dur);
+        g.font = '11px system-ui, sans-serif';
+        const tw = g.measureText(label).width;
+        g.fillStyle = '#000c';
+        g.fillRect(w - tw - 10, h - 17, tw + 8, 14);
+        g.fillStyle = '#e6ebf5';
+        g.fillText(label, w - tw - 6, h - 6);
+      }
+      cell.classList.add('ph-strip');
+    });
   }
 
   paintState(cell, i) {

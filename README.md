@@ -4,7 +4,7 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.16 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.17 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
 > **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
@@ -13,7 +13,8 @@ and metadata**.
 > with normal/glow/depth maps**, **print previews (CMYK inks, ink limit, proofing, PDF boxes and
 > spot colours)**, **Unity sprite import settings**, **Basis Universal KTX2 and HDR (EXR) textures**,
 > **PDF page browsing**, **source / author / licence** per file, **training-dataset export**,
-> backup reminders, an optional **Playhead analysis** view of sounds, and optional local AI (search pictures *and sounds* by description, find
+> backup reminders, optional **Playhead analysis** of sounds (a view, filters by sound character,
+> grid strips), and optional local AI (search pictures *and sounds* by description, find
 > similar, tag suggestions from a pool you choose, Ollama or any OpenAI-compatible vision server)
 > work.
 > See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
@@ -170,8 +171,8 @@ the view has sounds) or **P** turns this off; then Space plays.
 
 **Waveform view:** clicking a sound shows its waveform with a **playhead** in the side panel; Enter
 (or double-click) opens it full size with a time ruler. Click anywhere to play from there, drag to
-scrub, use the wheel to zoom into a part and double-click to see the whole sound again. The menu in the
-corner switches between styles:
+scrub, use the wheel to zoom into a part, **Shift+wheel** (or a sideways swipe) to move along it, and
+double-click to see the whole sound again. The menu in the corner switches between styles:
 
 | Style | Shows |
 |---|---|
@@ -184,6 +185,24 @@ corner switches between styles:
 | Playhead analysis | optional, see below |
 
 The choice is remembered.
+
+**Rows for long sounds:** the **Rows** menu next to the style menu sets a row height (in the viewer
+320 to 80 px, in the side panel 140 to 64 px). A long sound then wraps onto as many rows as fit, like
+lines of text:
+- every row covers the same time, starting at round times (5 s, 10 s, 30 s, 1 min, 5 min…), and has
+  its own time ruler in the viewer; the menu's tooltip says how many rows there are and how long each is;
+- every row holds at least 5 seconds, so short effects stay on one row;
+- clicking, selecting (also across rows), hovering, zooming and the playback cursor work on every row,
+  in every style, the spectrogram and Playhead analysis included;
+- *One row* is the full-height view of earlier versions. The panel and the viewer remember their own.
+
+In the side panel, **drag the bottom edge** of the sound preview to make it taller or shorter;
+double-click the edge to go back to the normal height.
+
+When rows or zoom need more detail than the whole-sound overview has, the part on screen is read
+again, finer: the waveform down to single samples, the spectrogram with the same colours as the
+overview. Spectrograms cover the whole sound, however long (M4A, AAC and WMA: 10 minutes per
+picture; zoom in for the rest).
 
 **Playhead analysis (optional, experimental).** [Playhead](https://github.com/eigensoundlab/playhead)
 is an analysis library by the same author. It describes a sound with more than a waveform:
@@ -219,6 +238,23 @@ Descriptors for Sound Design* [Preprint], Zenodo,
   - effects: events and their types, decay and material, time arrow, burstiness;
   - music: tempo, the section letters (e.g. `ABACA`), loudness range.
   - *Analyse with Playhead* when there is no analysis yet. Opening the panel never starts one.
+  - *Markers…* saves sections as regions and sound events, bar lines or onsets as markers: a
+    REAPER Region/Marker Manager CSV, Audacity labels, or tab-separated like `playhead markers`.
+- **Analyse many sounds** (⚙ Settings → Sounds → *Analyse sounds…*, or in **Look ▾**): the sounds
+  not analysed yet, the current view, or all of them again.
+  - With the **Playhead command line** installed (`playhead` on the PATH, or the environment variable
+    `KURATOR_PLAYHEAD` pointing to it), Kurator runs it in the background, a few sounds at a time,
+    and feeds it the samples it decodes. The dialog can be closed meanwhile.
+  - Without it, the browser analyses them one after another (keep the tab open).
+- **Look ▾ → Sound character** filters analysed sounds: *Hit-like* / *Swell-like* (time arrow),
+  *Bursty* / *Regular*, *Metal-like* / *Glass-like* / *Damped*, *Long ring* / *Short decay*,
+  *Tonal* / *Noisy*, *Harsh* and *Impulsive* (the top quarter of your analysed sounds), *Steady beat*,
+  *Sections*, *Analysed* / *Not analysed*. Choices in one line are alternatives; lines combine. The
+  tooltips give the exact rule.
+- **Sort by** *Harshness*, *Impulsiveness*, *Ring time*, *Burstiness* or *Loudness range* (sounds
+  without a value go last; ring time only where Playhead trusts its decay estimate).
+- **Playhead strips as thumbnails** (⚙ Settings → Sounds, with a look of your choice): analysed
+  sounds show a small Playhead strip in the grid instead of the waveform.
 - Kurator draws only through Playhead's own `drawStrip()`, so a new Playhead build changes the look
   by replacing one file (`kurator/static/js/vendor/playhead-core.mjs`, see the README there).
   The usual waveform styles stay the default.
@@ -832,7 +868,8 @@ kurator/
   fileinfo.py      source / author / licence per file, licence names and links, search terms
   dataset.py       training datasets: captions, dedupe, resize, train/val split
   atlas.py         sprite sheets and packed texture atlases (+ TexturePacker JSON)
-  audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms
+  audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms (whole or a part)
+  playhead_index.py  Playhead documents: store, catalog summaries, filters / sorts, command-line job
   blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
   xmp.py           XMP sidecars (write), keyword import (XMP, Windows tags, sidecars)
   watcher.py       live folder watching (watchdog), debounced re-check of changed folders
@@ -862,8 +899,10 @@ kurator/
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
     vlm.py         Ollama and OpenAI-compatible clients with a fixed-answer JSON schema
   static/          the UI: plain ES modules, no build step, no npm dependencies
-    js/playhead.js         optional Playhead analysis: documents, worker queue, theme, panel rows
+    js/playhead.js         optional Playhead analysis: documents, worker queue, batches, grid strips
     js/playhead-worker.js  the analysis in a module worker
+    js/phlibdlg.js         "Analyse sounds with Playhead" (command line or browser)
+    js/phmarkers.js        markers for REAPER / Audacity from a Playhead analysis
     js/vendor/             playhead-core.mjs (Playhead 0.2.0, unchanged; checksum in its README)
 tests/             pytest: dates, indexing, API + security, tags, moves, rules, sidecars, watching
 tools/             sample library generator, indexing benchmark, browser UI checks
@@ -903,8 +942,11 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
 - **Playhead analysis** (optional, off by default) runs in the browser. The Playhead library is a
   vendored, unchanged file with a recorded checksum, loaded only when the feature is on. Kurator
   sends it decoded samples from its own server and stores the results (checked against the
-  `playhead-analysis` schema, at most 8 MB each) in its data folder. Nothing leaves your computer.
-  The *Tell us if this helps* link only opens a GitHub form in your browser.
+  `playhead-analysis` schema, at most 8 MB each, at most 2 GB in all) in its data folder. Nothing
+  leaves your computer. The *Tell us if this helps* link only opens a GitHub form in your browser.
+  The optional Playhead command line is only run when you start an analysis of many sounds: it is
+  found on the PATH or through `KURATOR_PLAYHEAD`, gets samples on stdin, and its output is checked
+  like the browser's.
 - Basis Universal, EXR and HDR files are decoded by Kurator's own Python code with size limits
   (a fuzz test feeds it damaged files). The optional `basisu` tool runs as a separate process
   with a time limit, on a temporary copy. The frontend has
@@ -968,10 +1010,11 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
     Next: PIZ-compressed EXR.
 19. ~~Playhead analysis of sounds (optional): a Playhead view with looks, a Playhead section in the
     side panel, analyses kept per file and Playhead version~~ ✅
-    Next: library-wide analysis with the `playhead` command-line tool (sorting and filtering by
-    descriptors), Playhead mini-strips as grid thumbnails once a look for small sizes wins, and a
-    small study of whether they help people find sounds. (PureRef's board format
-    isn't open, so boards are best made by dragging images into PureRef.)
+    ~~Library-wide analysis (command line or browser), filtering and sorting by sound character,
+    Playhead strips as grid thumbnails, REAPER / Audacity markers; rows for long sounds~~ ✅ 0.17
+    Next: a small study, with consent, of whether the strips and filters help people find sounds;
+    curves as REAPER envelopes. (PureRef's board format isn't open, so boards are best made by
+    dragging images into PureRef.)
 20. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License

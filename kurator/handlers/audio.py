@@ -17,6 +17,7 @@ import re
 import shutil
 import struct
 import subprocess
+import tempfile
 from datetime import datetime
 
 from PIL import Image, ImageDraw, ImageFont
@@ -67,8 +68,17 @@ def _decode(data: bytes, ext: str):
             pass
     ff = shutil.which("ffmpeg")
     if ff:
-        p = subprocess.run([ff, "-v", "error", "-i", "pipe:0", "-ac", "1", "-ar", "11025", "-f", "f32le", "pipe:1"],
-                           input=data, capture_output=True, timeout=120)
+        args = ["-ac", "1", "-ar", "11025", "-f", "f32le", "pipe:1"]
+        p = subprocess.run([ff, "-v", "error", "-i", "pipe:0", *args], input=data, capture_output=True, timeout=120)
+        if (p.returncode != 0 or not p.stdout) and data[4:8] == b"ftyp":
+            # MP4 / M4A with its index (moov) at the end can't be read from a pipe: read it from a file
+            fd, tmp = tempfile.mkstemp(suffix=ext or ".m4a")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                p = subprocess.run([ff, "-v", "error", "-i", tmp, *args], capture_output=True, timeout=120, stdin=subprocess.DEVNULL)
+            finally:
+                os.unlink(tmp)
         if p.returncode == 0 and p.stdout:
             a = np.frombuffer(p.stdout, dtype="<f4").reshape(-1, 1)
             return a, 11025, None, len(a) / 11025

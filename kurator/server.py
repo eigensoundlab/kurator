@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
+import math
 import mimetypes
 import os
-import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +20,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import __version__, assets, backup, dates, fileops, projects, rclone, rules, tags, xmp
+from . import __version__, assets, backup, dates, fileops, playhead_index, projects, rclone, rules, tags, xmp
 from . import similar as similar_mod
 from .sheets import SheetError
 from . import stacks as stacks_mod
@@ -43,10 +42,10 @@ mimetypes.add_type("text/javascript", ".mjs")   # can map .js to something else
 
 
 class _GZip(GZipMiddleware):
-    """Gzip, except decoded samples: float audio hardly compresses and can be large."""
+    """Gzip, except decoded samples (float audio hardly compresses and can be large) and spectrogram PNGs."""
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"].endswith("/samples"):
+        if scope["type"] == "http" and scope["path"].endswith(("/samples", "/spectrogram")):
             await self.app(scope, receive, send)
             return
         await super().__call__(scope, receive, send)
@@ -185,7 +184,16 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @asynccontextmanager
     async def lifespan(_app):
         sched = backup.Scheduler(db, jobs).start()      # automatic backups that are due
+        if not db.get_setting("ph_backfill") and os.path.isdir(ph_dir):   # Playhead documents stored by 0.16
+            def ph_backfill():
+                try:
+                    playhead_index.backfill(db, ph_dir)
+                    db.set_setting("ph_backfill", 1)
+                except Exception:  # noqa: BLE001 - a summary is a convenience; try again next start
+                    pass
+            threading.Thread(target=ph_backfill, name="kurator-ph-backfill", daemon=True).start()
         yield
+        ph_job.cancel()
         sched.stop()
         ondemand.shutdown(wait=False, cancel_futures=True)
         jobs.cancel()
@@ -195,6 +203,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         scanner.stop()
 
     jobs = backup.Jobs(db, scanner)
+    ph_dir = os.path.join(db.data_dir, "cache", "playhead")   # Playhead documents (see playhead_index.py)
+    ph_job = playhead_index.LibraryJob(db, ph_dir)
     rc = rclone.shared(db, os.path.join(db.data_dir, "logs"))
     app = FastAPI(title="Kurator", version=__version__, docs_url=None, redoc_url=None, openapi_url=None,
                   lifespan=lifespan)
@@ -366,8 +376,14 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         len_min: float | None = None,
         len_max: float | None = None,
         tex: str = "",
+        ph: str = "",
+        phinfo: bool = False,
     ):
         where, args = [], []
+        phc = playhead_index.filter_clause(db, ph)      # sound character from Playhead analysis
+        if phc:
+            where.append(phc[0])
+            args += phc[1]
         # the look of a picture / the character of a sound
         if hues:
             where.append("(hues & ?) != 0")
@@ -463,7 +479,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         if guessed:
             where.append("date_source IN ('file-created','file-modified')")
         o = "ASC" if order.lower() == "asc" else "DESC"
-        order_sql = SORTS.get(sort, SORTS["date"]).format(o=o)
+        order_sql = (playhead_index.sort_sql(sort) or SORTS.get(sort, SORTS["date"])).format(o=o)
         if dupes:
             order_sql = "hash, " + order_sql
         if suggested:
@@ -494,6 +510,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                 out["k"] = [sizes.get(i, 0) for i in out["ids"]]
         else:
             out = _payload(db.cat.execute(sql, args))
+        if phinfo:      # Playhead strips in the grid: which sounds have a document (and since when)
+            st = playhead_index.stamps(db)
+            out["p"] = [st.get(i, 0) for i in out["ids"]]
         if member_of:   # "add from library" mode: which items are already in the active project
             mem = projects.member_ids(db, member_of)
             out["m"] = [1 if i in mem else 0 for i in out["ids"]]
@@ -1074,27 +1093,51 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             wave_cache[key] = v
         return v
 
+    def _span(start, end) -> tuple[float, float | None]:
+        """A part of a sound in seconds: start >= 0, end after it (or None: to the end)."""
+        start = 0.0 if start is None else float(start)
+        if not (math.isfinite(start) and 0 <= start <= 1e7):
+            raise HTTPException(422, "start must be a time in seconds")
+        if end is not None:
+            end = float(end)
+            if not (math.isfinite(end) and start < end <= 1e7):
+                raise HTTPException(422, "end must be a time after start")
+            end = round(end, 6)
+        return round(start, 6), end
+
     @app.get("/api/audio/{item_id}/wave")
-    def audio_wave(item_id: int, bins: int = 1600):
+    def audio_wave(item_id: int, bins: int = 1600, start: float | None = None, end: float | None = None):
+        """The waveform overview (min / max / RMS per bin); `start` / `end` (seconds) ask for a part of the
+        sound in more detail (rows and zoom in the waveform view)."""
         from . import audio_analysis
         row = _sound(item_id)
-        bins = max(100, min(int(bins), 8000))
+        ranged = start is not None or end is not None
+        bins = max(100, min(int(bins), 16000 if ranged else 8000))
+        a, b = _span(start, end)
         try:
-            data = _cached(("w", row[0], row[3], bins), lambda: audio_analysis.wave_data(row[0], bins))
+            data = _cached(("w", row[0], row[3], bins, a, b), lambda: audio_analysis.wave_data(row[0], bins, a, b))
         except Exception as e:
             raise HTTPException(422, f"can't read this sound: {e}") from None
         return _json(data)
 
     @app.get("/api/audio/{item_id}/spectrogram")
-    def audio_spectrogram(item_id: int, w: int = 1600, h: int = 256):
+    def audio_spectrogram(item_id: int, w: int = 1600, h: int = 256, start: float | None = None, end: float | None = None,
+                          ref: float | None = None):
+        """Spectrogram PNG of the sound or of [start, end) seconds. Headers: X-Start / X-End (the part it
+        really covers) and X-Ref (the level drawn brightest; pass it back as `ref` for matching colours)."""
         from . import audio_analysis
         row = _sound(item_id)
         w, h = max(200, min(int(w), 4000)), max(64, min(int(h), 1024))
+        a, b = _span(start, end)
+        if ref is not None and not (math.isfinite(ref) and -400 <= ref <= 400):
+            raise HTTPException(422, "ref must be a level in dB")
         try:
-            png = _cached(("s", row[0], row[3], w, h), lambda: audio_analysis.spectrogram_png(row[0], w, h))
+            png, s0, s1, top = _cached(("s", row[0], row[3], w, h, a, b, ref),
+                                       lambda: audio_analysis.spectrogram(row[0], w, h, a, b, ref))
         except Exception as e:
             raise HTTPException(422, f"can't read this sound: {e}") from None
-        return Response(png, media_type="image/png", headers={"Cache-Control": "private, no-cache"})
+        return Response(png, media_type="image/png", headers={
+            "Cache-Control": "private, no-cache", "X-Start": f"{s0:.6f}", "X-End": f"{s1:.6f}", "X-Ref": f"{top:.3f}"})
 
     # -- sound: decoded samples and stored documents for Playhead analysis (in the browser) ---
     @app.get("/api/audio/{item_id}/samples")
@@ -1124,14 +1167,10 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                 yield bytes(need - sent)
         return StreamingResponse(body(), media_type="application/octet-stream", headers=headers)
 
-    ph_dir = os.path.join(db.data_dir, "cache", "playhead")
-    PH_MAX = 8 * 1024 * 1024
-
     def _ph_file(row, v: str) -> str:
-        if not re.fullmatch(r"[0-9A-Za-z.+\-]{1,32}", v or ""):
+        if not playhead_index.VERSION_RE.fullmatch(v or ""):
             raise HTTPException(400, "bad Playhead version")
-        key = hashlib.sha1(f"{row[0]}\n{row[3]}\n{v}".encode("utf-8", "surrogatepass")).hexdigest()
-        return os.path.join(ph_dir, key + ".json")
+        return playhead_index.doc_file(ph_dir, row[0], row[3], v)
 
     @app.get("/api/audio/{item_id}/playhead")
     def playhead_get(item_id: int, v: str = ""):
@@ -1146,40 +1185,86 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.put("/api/audio/{item_id}/playhead")
     async def playhead_put(item_id: int, request: Request, v: str = ""):
+        """Store a document the browser made (and remember its summary for filters and sorts)."""
         row = await run_in_threadpool(_sound, item_id)
         f = _ph_file(row, v)
-        if int(request.headers.get("content-length") or 0) > PH_MAX:
+        if int(request.headers.get("content-length") or 0) > playhead_index.DOC_MAX:
             raise HTTPException(413, "Playhead document too big")
         body = bytearray()
         async for chunk in request.stream():
             body += chunk
-            if len(body) > PH_MAX:
+            if len(body) > playhead_index.DOC_MAX:
                 raise HTTPException(413, "Playhead document too big")
         try:
-            doc = json.loads(body)
-        except ValueError:
-            raise HTTPException(400, "not JSON") from None
-        if not (isinstance(doc, dict) and doc.get("schema") == "playhead-analysis" and doc.get("schemaVersion") == 1):
-            raise HTTPException(400, "not a Playhead analysis (schema playhead-analysis, version 1)")
-        gen = doc.get("generator")
-        if not isinstance(gen, dict) or gen.get("version") != v:
-            raise HTTPException(400, "the document's Playhead version doesn't match")
+            doc = playhead_index.check(bytes(body), v)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
 
         def save():
-            os.makedirs(ph_dir, exist_ok=True)
-            tmp = f + ".part"
-            with open(tmp, "wb") as fh:
-                fh.write(body)
-            os.replace(tmp, f)
-            files = [e for e in os.scandir(ph_dir) if e.name.endswith(".json")]
-            if len(files) > 3000:                  # keep the store bounded: drop the oldest tenth
-                for e in sorted(files, key=lambda e: e.stat().st_mtime)[: len(files) // 10]:
-                    try:
-                        os.remove(e.path)
-                    except OSError:
-                        pass
+            playhead_index.save(ph_dir, f, bytes(body))
+            playhead_index.index(db, item_id, row[3], doc)
         await run_in_threadpool(save)
         return _json({"ok": True, "bytes": len(body)})
+
+    ph_thin: dict = {}
+
+    @app.get("/api/audio/{item_id}/playhead/thumb")
+    def playhead_thumb(item_id: int):
+        """A light copy of the sound's latest stored document, for Playhead strips in the grid (404: none)."""
+        row = _sound(item_id)
+        s = db.cat.execute("SELECT version FROM ph_summary WHERE file_id = ? AND mtime_ns = ?", (item_id, row[3])).fetchone()
+        if not s:
+            raise HTTPException(404, "no Playhead analysis yet")
+        f = playhead_index.doc_file(ph_dir, row[0], row[3], s[0])
+        body = ph_thin.get(f)
+        if body is None:
+            try:
+                with open(f, "rb") as fh:
+                    doc = playhead_index.check(fh.read())
+            except (OSError, ValueError):
+                raise HTTPException(404, "no Playhead analysis yet") from None
+            body = json.dumps(playhead_index.thin(doc), separators=(",", ":")).encode()
+            if len(ph_thin) >= 400:
+                ph_thin.pop(next(iter(ph_thin)))
+            ph_thin[f] = body
+        meta = db.cat.execute("SELECT json_extract(meta, '$.duration') FROM files WHERE id = ?", (item_id,)).fetchone()
+        return Response(body, media_type="application/json",
+                        headers={"Cache-Control": "private, no-store", "X-Duration": f"{float(meta[0] or 0):.3f}" if meta else "0"})
+
+    # -- Playhead across the library: counts, the command line, analysing many sounds -------
+    @app.get("/api/playhead/status")
+    def playhead_status():
+        """Sounds analysed so far, the command line (if installed) and the background job."""
+        return _json({**playhead_index.counts(db), "cli": playhead_index.cli_info(), "job": ph_job.status(),
+                      "filters": {k: {"group": g, "label": lab, "title": t} for k, (g, lab, t, _) in playhead_index.FILTERS.items()}})
+
+    @app.get("/api/playhead/todo")
+    def playhead_todo(scope: str = "missing", limit: int = Query(20000, ge=1, le=200000)):
+        """Sounds to analyse in the browser: [[id, duration, name], ...] (not analysed yet, or all)."""
+        if scope not in ("missing", "all"):
+            raise HTTPException(422, "scope is missing or all")
+        rows = playhead_index.todo(db, scope, limit=limit)
+        return _json({"items": [[r[0], r[3] or 0, r[4]] for r in rows]})
+
+    @app.post("/api/playhead/analyse")
+    def playhead_analyse(body: dict):
+        """Analyse sounds with the Playhead command line in the background: scope "missing" (not analysed
+        yet), "all", or "ids" with a list of ids."""
+        scope = body.get("scope") or "missing"
+        if scope not in ("missing", "all", "ids"):
+            raise HTTPException(422, "scope is missing, all or ids")
+        ids = body.get("ids") or []
+        if scope == "ids" and not (isinstance(ids, list) and all(isinstance(i, int) for i in ids)):
+            raise HTTPException(422, "ids must be a list of numbers")
+        try:
+            return _json(ph_job.start(playhead_index.todo(db, scope, ids)))
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.post("/api/playhead/cancel")
+    def playhead_cancel():
+        ph_job.cancel()
+        return _json(ph_job.status())
 
     # -- version stacks --------------------------------------------------------------------
     @app.post("/api/stacks")
@@ -1211,7 +1296,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     # -- saved views ("smart folders"): a name for the grid's current filters -----------------
     VIEW_KEYS = {"folder", "recursive", "q", "ext", "sort", "order", "guessed", "tag", "exclude", "missing",
-                 "hues", "shape", "alpha", "minside", "bpm_min", "bpm_max", "key", "len_min", "len_max", "tex",
+                 "hues", "shape", "alpha", "minside", "bpm_min", "bpm_max", "key", "len_min", "len_max", "tex", "ph",
                  "untagged", "project", "dupes", "similar", "suggested"}
 
     @app.get("/api/views")

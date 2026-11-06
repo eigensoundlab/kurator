@@ -28,6 +28,13 @@ export function phSetEnabled(on) {
   window.dispatchEvent(new CustomEvent(CHANGED, { detail: { on: !!on } }));
 }
 export const phOnSetting = (fn) => window.addEventListener(CHANGED, fn);
+
+/** Playhead strips as grid thumbnails of analysed sounds: { on, look } (a setting of this browser). */
+export const phGridPref = () => ({ on: false, look: 'auto', ...prefs.get('playhead.grid', {}) });
+export function phSetGridPref(p) {
+  prefs.set('playhead.grid', { ...phGridPref(), ...p });
+  window.dispatchEvent(new CustomEvent(CHANGED, { detail: { on: phEnabled() } }));
+}
 /** A document became available: fn({ detail: { id, doc } }). */
 export const phOnDoc = (fn) => window.addEventListener(GOT_DOC, fn);
 
@@ -69,10 +76,11 @@ async function stored(id, P) {
   } catch { return null; }
 }
 
+/** Keep a document in Kurator's store (which also files its summary for the Look filter and sorts). */
 function store(id, doc) {
   const v = doc.generator?.version;
-  if (!v) return;
-  fetch(`/api/audio/${id}/playhead?v=${encodeURIComponent(v)}`, {
+  if (!v) return Promise.resolve();
+  return fetch(`/api/audio/${id}/playhead?v=${encodeURIComponent(v)}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc),
   }).catch(() => { /* the document still works in this session */ });
 }
@@ -108,7 +116,7 @@ export async function phDoc(id, { owner = null, onProgress = null, duration = 0 
           enqueue({ id, key: f.key, name: f.name, duration: duration || f.duration, entry: p, resolve, reject });
         });
         remember(f.key, id, doc);
-        if (!kept) store(id, doc);
+        if (!kept) await store(id, doc);
         return doc;
       } finally { pending.delete(f.key); }
     })();
@@ -121,6 +129,76 @@ export async function phDoc(id, { owner = null, onProgress = null, duration = 0 
 export class PhReplaced extends Error {
   constructor() { super('replaced by a newer request'); this.replaced = true; }
 }
+
+// -------------------------------------------------------------------------- grid thumbnails
+
+const thumbs = new Map();   // id:stamp -> Promise<{ doc, duration } | null> (a thinned document, see /playhead/thumb)
+const THUMB_MAX = 300;
+const thumbQueue = [];
+let thumbActive = 0;
+
+/** The light document for a sound's grid strip; `stamp` is when its analysis was filed (items.p). */
+export function phThumb(id, stamp) {
+  const key = `${id}:${stamp}`;
+  let p = thumbs.get(key);
+  if (p) { thumbs.delete(key); thumbs.set(key, p); return p; }
+  p = new Promise((resolve) => { thumbQueue.push({ id, resolve }); pumpThumbs(); });
+  thumbs.set(key, p);
+  while (thumbs.size > THUMB_MAX) thumbs.delete(thumbs.keys().next().value);
+  return p;
+}
+
+function pumpThumbs() {
+  while (thumbActive < 4 && thumbQueue.length) {
+    const { id, resolve } = thumbQueue.pop();   // newest first: the cells just scrolled into view
+    thumbActive++;
+    fetch(`/api/audio/${id}/playhead/thumb`)
+      .then(async (r) => (r.ok ? { doc: accept(await r.json()), duration: parseFloat(r.headers.get('X-Duration')) || 0 } : null))
+      .catch(() => null)
+      .then((v) => { thumbActive--; resolve(v && v.doc ? v : null); pumpThumbs(); });
+  }
+}
+
+// -------------------------------------------------------------------------- many sounds in this browser
+
+const batch = { running: false, done: 0, failed: 0, total: 0, current: '', errors: [], cancelled: false };
+const BATCH = 'kurator-playhead-batch';
+/** Where the browser batch is (running, done, failed, total, current, errors, cancelled). */
+export const phBatchState = () => ({ ...batch, errors: [...batch.errors] });
+/** fn() after every sound of a browser batch, and when it ends. */
+export const phOnBatch = (fn) => { window.addEventListener(BATCH, fn); return () => window.removeEventListener(BATCH, fn); };
+
+/**
+ * Analyse sounds one after another in this browser (the worker), keeping each document in Kurator's
+ * store: items are [id, duration, name] (duration 0: read from the catalog). Sounds analysed before are
+ * only fetched. Resolves with the final state.
+ */
+export async function phBatch(items) {
+  if (batch.running) throw new Error('Playhead is already analysing sounds in this browser');
+  Object.assign(batch, { running: true, done: 0, failed: 0, total: items.length, current: '', errors: [], cancelled: false });
+  const tick = () => window.dispatchEvent(new CustomEvent(BATCH, { detail: phBatchState() }));
+  tick();
+  try {
+    for (const [id, duration, name] of items) {
+      if (batch.cancelled) break;
+      batch.current = name || `#${id}`;
+      try {
+        await phDoc(id, { duration: duration || 0 });
+        batch.done++;
+      } catch (e) {
+        batch.failed++;
+        batch.errors = [...batch.errors, `${name || `#${id}`}: ${e.message}`].slice(-20);
+      }
+      tick();
+    }
+  } finally {
+    batch.running = false;
+    batch.current = '';
+    tick();
+  }
+  return phBatchState();
+}
+export function phBatchCancel() { if (batch.running) batch.cancelled = true; }
 
 // -------------------------------------------------------------------------- worker queue (one job at a time)
 

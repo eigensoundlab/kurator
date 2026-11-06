@@ -15,6 +15,7 @@ import { LookFilter } from './lookfilter.js';
 import { Timeline } from './timeline.js';
 import { openMoveDialog } from './movedlg.js';
 import { Panel } from './panel.js';
+import { phEnabled, phGridPref, phOnBatch, phOnSetting } from './playhead.js';
 import { Projects } from './projects.js';
 import { openRulesDialog } from './rulesdlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
@@ -23,7 +24,7 @@ import { Sidebar } from './sidebar.js';
 import { Tags } from './tags.js';
 import { TypeFilter } from './typefilter.js';
 import { AUDIO, MESHES, VIDEO, VIEWABLE, extOf } from './util.js';
-import { $, debounce, el, fmtNum, isTyping, prefs } from './util.js';
+import { $, debounce, el, fmtNum, isTyping, prefs, setKids } from './util.js';
 import { Viewer } from './viewer.js';
 
 const EMPTY = { count: 0, ids: [], v: [], c: [], d: [], n: [], w: [], h: [], ds: [], a: [], t: [], f: [], s: [] };
@@ -31,6 +32,8 @@ const HISTORY_MAX = 100;
 
 const SORTS = { date: 'Date', name: 'Name', folder: 'Folder', type: 'Type', size: 'File size', dimensions: 'Dimensions',
   length: 'Length', bpm: 'Tempo', loudness: 'Loudness' };
+// with Playhead analysis switched on (sounds without an analysis go last)
+const PH_SORTS = { harshness: 'Harshness', impulsiveness: 'Impulsiveness', ring: 'Ring time', burstiness: 'Burstiness', dynamics: 'Loudness range' };
 
 class App {
   constructor() {
@@ -111,6 +114,8 @@ class App {
     if (this.reloadCtrl) this.reloadCtrl.abort();
     this.reloadCtrl = new AbortController();
     const q = { ...this.query, recursive: this.query.recursive ? 1 : 0, guessed: this.query.guessed ? 1 : 0 };
+    if (!phEnabled()) { q.ph = ''; if (PH_SORTS[q.sort]) q.sort = 'date'; }   // Playhead switched off: its filters and sorts rest
+    else if (phGridPref().on) q.phinfo = 1;                                      // which sounds get a Playhead strip
     let data;
     try {
       if (this.aiView?.kind === 'search') data = await api.aiSearch(this.aiView.q);
@@ -287,7 +292,7 @@ class App {
     const q = this.query;
     return { folder: q.folder, recursive: q.recursive, q: q.q, ext: q.ext, sort: q.sort, order: q.order, guessed: q.guessed,
       tag: q.tag, exclude: q.exclude, missing: q.missing, project: this.projects.active || '', dupes: q.dupes, similar: q.similar,
-      hues: q.hues, shape: q.shape, alpha: q.alpha, minside: q.minside, bpm_min: q.bpm_min, bpm_max: q.bpm_max, key: q.key, len_min: q.len_min, len_max: q.len_max, tex: q.tex };
+      hues: q.hues, shape: q.shape, alpha: q.alpha, minside: q.minside, bpm_min: q.bpm_min, bpm_max: q.bpm_max, key: q.key, len_min: q.len_min, len_max: q.len_max, tex: q.tex, ph: q.ph };
   }
 
   saveView() {
@@ -312,7 +317,7 @@ class App {
       sort: q.sort || this.query.sort, order: q.order || this.query.order, guessed: !!q.guessed, tag: q.tag || '', exclude: q.exclude || '',
       missing: q.missing || '', dupes: !!q.dupes, similar: +q.similar || 0, untagged: false, suggested: false,
       hues: +q.hues || 0, shape: q.shape || '', alpha: !!q.alpha, minside: +q.minside || 0, bpm_min: q.bpm_min ?? '', bpm_max: q.bpm_max ?? '',
-      key: q.key || '', len_min: q.len_min ?? '', len_max: q.len_max ?? '', tex: q.tex || '' });
+      key: q.key || '', len_min: q.len_min ?? '', len_max: q.len_max ?? '', tex: q.tex || '', ph: q.ph || '' });
     this.lookFilter.paint();
     prefs.set('folder', this.query.folder);
     this.typeFilter.setSelected?.(this.query.ext);
@@ -991,8 +996,15 @@ class App {
     const dates = el('select', { title: 'Date filter' }, el('option', { value: '', text: 'All dates' }), el('option', { value: '1', text: 'Guessed dates only' }));
     dates.onchange = () => { this.query.guessed = dates.value === '1'; this.reload({ keepScroll: false }); };
 
-    const sort = el('select', { title: 'Sort by' }, Object.entries(SORTS).map(([v, t]) => el('option', { value: v, text: t })));
-    sort.value = this.query.sort;
+    const sort = el('select', { title: 'Sort by' });
+    const fillSorts = () => {
+      setKids(sort, Object.entries(SORTS).map(([v, t]) => el('option', { value: v, text: t })),
+        phEnabled() ? el('optgroup', { label: 'Playhead analysis' }, Object.entries(PH_SORTS).map(([v, t]) => el('option', { value: v, text: t }))) : null);
+      sort.value = PH_SORTS[this.query.sort] && !phEnabled() ? 'date' : this.query.sort;
+    };
+    fillSorts();
+    phOnSetting(() => { fillSorts(); this.reload({ keepScroll: true }); });
+    phOnBatch((e) => { if (!e.detail.running) this.reload({ keepScroll: true }); });   // new analyses: filters and sorts change
     sort.onchange = () => { this.query.sort = sort.value; prefs.set('sort', sort.value); this.reload({ keepScroll: false }); };
     const order = el('button', { class: 'btn icon', title: 'Sort direction' });
     const paintOrder = () => { order.textContent = this.query.order === 'desc' ? '↓' : '↑'; };
@@ -1233,7 +1245,7 @@ class App {
       ['☆ Save view', 'Remember the current filters under a name (sidebar: Saved views)'],
       ['Duplicates (sidebar)', 'Files whose exact content is in more than one place'],
       ['Similar images (sidebar)', 'Groups of pictures that look nearly the same'],
-      ['Look ▾ (top bar)', 'Filter by colour, shape, transparency, size; sounds by tempo, key and length'],
+      ['Look ▾ (top bar)', 'Filter by colour, shape, transparency, size; sounds by tempo, key and length (with Playhead also by character: hit or swell, bursty, metal-like, long ring…)'],
       ['Timeline (right edge)', 'When sorted by date: drag along it to jump through years and months'],
       ['J', 'Join the selected images (side by side, stacked, grid), contact sheet, sprite sheet or texture atlas'],
       ['Ctrl+G · Ctrl+Shift+G', 'Stack the selection as versions (newest on top) · unstack'],
@@ -1261,7 +1273,7 @@ class App {
       ['I', 'Inks: C, M, Y, K plates, total ink and ink limit (CMYK pictures, or RGB with a proofing profile)'],
       ['[ ]  PgUp PgDn', 'Pages of a PDF (in the viewer); zooming in renders the page sharper'],
       ['Videos', 'Space: play / pause · Shift+← →: 5 s back / forward · O: open in your player'],
-      ['Sounds', 'Click the waveform to jump · wheel: zoom · Space: play / pause · the menu switches waveform styles'],
+      ['Sounds', 'Click the waveform to jump · wheel: zoom · Shift+wheel: move along · Space: play / pause · the menus switch waveform styles and row height (long sounds wrap onto rows)'],
       ['Sounds: drag · E', 'Select a region (Space plays it) · save the region as a new file'],
       ['0 / Z', 'Fit / toggle 100%'],
       ['B', 'Background: dark, gray, light, checkerboard'],

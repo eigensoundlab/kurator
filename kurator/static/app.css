@@ -472,6 +472,18 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .waveview.ph-mode .ph-look, .waveview.ph-mode .ph-code.show { display: inline-block; }
 .waveview:hover .ph-look, .waveview.big .ph-look, .waveview .ph-code.show { opacity: 1; }
 .waveview.big .wavemode, .waveview.big .ph-look, .waveview.big .ph-code { font-size: 12px; }
+/* row height (long sounds wrap onto rows) */
+.wave-rows { font-size: 11px; padding: 1px 4px; background: #000a; color: #ddd; border: 1px solid #fff2; border-radius: 4px; opacity: .55; }
+.waveview:hover .wave-rows, .waveview.big .wave-rows { opacity: 1; }
+.waveview.big .wave-rows { font-size: 12px; }
+.waveview:not(.big) .wave-rows { max-width: 120px; }
+.waveview:not(.big) .wave-tools { flex-wrap: wrap; justify-content: flex-end; left: 6px; pointer-events: none; }
+.waveview:not(.big) .wave-tools > * { pointer-events: auto; }
+/* the panel's sound preview: drag its bottom edge to change the height */
+.p-grip { display: none; position: absolute; left: 0; right: 0; bottom: -4px; height: 9px; cursor: ns-resize; z-index: 4; touch-action: none; }
+.p-grip::after { content: ""; position: absolute; left: 50%; top: 3px; width: 44px; height: 3px; margin-left: -22px; border-radius: 2px; background: #ffffff30; }
+.p-grip:hover::after, .p-grip.drag::after { background: #7aa2ff; }
+.p-preview-box.sound .p-grip { display: block; }
 /* Playhead's legend (from drawStrip) and the feedback link: top right under the menus in the viewer
    (the ruler's time labels stay readable), bottom left in the panel */
 .ph-info { display: none; position: absolute; z-index: 2; gap: 6px; align-items: center; pointer-events: none; max-width: calc(100% - 12px); }
@@ -582,3 +594,18 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .dsdlg .row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: flex-start; }
 .dsdlg .row label.chk { white-space: nowrap; }
 .dsdlg .row > * { flex: none; }
+
+/* Playhead across the library: the Look filter's sound character, the "Analyse sounds" dialog, markers */
+.ph-look-box .ph-chips { gap: 4px; margin: 4px 0; }
+.ph-look-box .ph-chips .btn { padding: 2px 8px; }
+.phlibdlg label.chk.block { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; margin: 6px 0; white-space: normal; }
+.phlibdlg label.chk.block .p-hint { grid-column: 2; margin: 0; }
+.phlibdlg .tp-head { margin-top: 12px; cursor: default; }
+.phlibdlg .ph-run { margin-top: 10px; }
+.phmarkdlg label.chk { margin: 4px 0; }
+.phmarkdlg select { margin-left: 8px; }
+.dlg-inline-buttons.left { justify-content: flex-start; }
+.cell .ph-thumb { position: absolute; left: 0; top: 25%; width: 100%; height: 50%; display: none; pointer-events: none; }
+#grid.fit-cover .cell .ph-thumb { top: 0; height: 100%; }
+.cell.ph-strip .ph-thumb { display: block; }
+.cell.ph-strip img { visibility: hidden; }

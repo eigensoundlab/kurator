@@ -14,7 +14,9 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 10
+from .playhead_index import MIGRATION as _PH_MIGRATION
+
+SCHEMA_VERSION = 11
 
 CATALOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -227,6 +229,10 @@ MIGRATIONS = {
         # Backup schedule: every N days a reminder, or (auto) the backup runs by itself
         "ALTER TABLE backup_sets ADD COLUMN every_days REAL",
         "ALTER TABLE backup_sets ADD COLUMN auto INTEGER NOT NULL DEFAULT 0",
+    ],
+    10: [
+        # Playhead analysis: a summary of each sound's latest document (see playhead_index.py)
+        *_PH_MIGRATION,
     ],
 }
 

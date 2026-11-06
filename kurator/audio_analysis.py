@@ -17,8 +17,9 @@ MAX_ANALYSE_SECONDS = 600     # loudness over the first 10 minutes; tempo/key ov
 
 
 # ---------------------------------------------------------------- decoding
-def blocks(path: str, blocksize: int = 65536):
-    """Yield (samplerate, channels, frames-total or None) once, then float32 blocks (frames x channels)."""
+def blocks(path: str, blocksize: int = 65536, start: float = 0.0, end: float | None = None):
+    """Yield (samplerate, channels, frames or None) once, then float32 blocks (frames x channels).
+    `start` / `end` (seconds) read only that part of the sound; frames is then the length of the part."""
     import soundfile as sf
     try:
         f = sf.SoundFile(path)
@@ -26,16 +27,40 @@ def blocks(path: str, blocksize: int = 65536):
         f = None
     if f is not None:
         with f:
-            yield f.samplerate, f.channels, f.frames
-            for b in f.blocks(blocksize=blocksize, dtype="float32", always_2d=True):
-                yield b
+            sr, total = f.samplerate, f.frames
+            a = min(total, max(0, int(round(start * sr))))
+            b = None if end is None else min(total, max(a, int(round(end * sr))))
+            yield sr, f.channels, (total - a) if b is None else (b - a)
+            if a:
+                if f.seekable():
+                    f.seek(a)
+                else:   # rare: skip by reading
+                    skip = a
+                    while skip > 0:
+                        got = len(f.read(min(blocksize, skip), dtype="float32", always_2d=True))
+                        if not got:
+                            return
+                        skip -= got
+            left = None if b is None else b - a
+            while left is None or left > 0:
+                blk = f.read(blocksize if left is None else min(blocksize, left), dtype="float32", always_2d=True)
+                if not len(blk):
+                    break
+                if left is not None:
+                    left -= len(blk)
+                yield blk
         return
     ff = shutil.which("ffmpeg")
     if not ff:
         raise ValueError("can't decode this sound (install ffmpeg for M4A/AAC/WMA)")
     sr = 44100
-    p = subprocess.Popen([ff, "-v", "error", "-i", path, "-ac", "2", "-ar", str(sr), "-f", "f32le", "pipe:1"],
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+    cmd = [ff, "-v", "error"]
+    if start > 0:
+        cmd += ["-ss", f"{start:.6f}"]
+    if end is not None:
+        cmd += ["-t", f"{max(0.0, end - start):.6f}"]
+    cmd += ["-i", path, "-ac", "2", "-ar", str(sr), "-f", "f32le", "pipe:1"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
     yield sr, 2, None
     try:
         while True:
@@ -48,12 +73,14 @@ def blocks(path: str, blocksize: int = 65536):
         p.kill()
 
 
-def wave_data(path: str, bins: int = 1600) -> dict:
-    """Per channel min, max and RMS in `bins` equal slices of the whole sound."""
-    it = blocks(path)
+def wave_data(path: str, bins: int = 1600, start: float = 0.0, end: float | None = None) -> dict:
+    """Per channel min, max and RMS in `bins` equal slices of the sound, or of [start, end) seconds of it
+    (the waveform view asks for a part when rows or zoom need more detail than the whole-sound overview)."""
+    it = blocks(path, start=start, end=end)
     sr, ch, frames = next(it)
     data = None
     if frames:   # known length: fill the bins as blocks arrive
+        bins = max(1, min(bins, frames))   # never more bins than samples
         edges = np.linspace(0, frames, bins + 1).astype(np.int64)
         mn = np.full((ch, bins), np.inf, np.float32)
         mx = np.full((ch, bins), -np.inf, np.float32)
@@ -77,7 +104,7 @@ def wave_data(path: str, bins: int = 1600) -> dict:
         parts = [b for b in it]
         data = np.concatenate(parts) if parts else np.zeros((0, ch), np.float32)
         frames = len(data)
-        sl = np.array_split(np.arange(frames), bins) if frames >= bins else [np.arange(frames)]
+        sl = np.array_split(np.arange(frames), max(1, min(bins, frames)))
         mn = np.array([[data[s, c].min() if len(s) else 0 for s in sl] for c in range(ch)], np.float32)
         mx = np.array([[data[s, c].max() if len(s) else 0 for s in sl] for c in range(ch)], np.float32)
         ss = np.array([[float((data[s, c].astype(np.float64) ** 2).sum()) for s in sl] for c in range(ch)])
@@ -87,8 +114,11 @@ def wave_data(path: str, bins: int = 1600) -> dict:
     mx = np.where(np.isfinite(mx), mx, 0)
     rms = np.sqrt(np.where(ok, ss / np.maximum(cnt, 1), 0))
     r3 = lambda a: [[round(float(x), 4) for x in row] for row in a]  # noqa: E731
-    return {"samplerate": sr, "channels": ch, "duration": frames / sr if sr else 0, "bins": int(mn.shape[1]),
-            "min": r3(mn), "max": r3(mx), "rms": r3(rms)}
+    if start > 0 and sr:   # where the part really starts (whole samples)
+        start = round(start * sr) / sr
+    length = frames / sr if sr else 0
+    return {"samplerate": sr, "channels": ch, "duration": length, "start": start, "end": start + length,
+            "bins": int(mn.shape[1]), "min": r3(mn), "max": r3(mx), "rms": r3(rms)}
 
 
 def mono(path: str, rate: int = 11025, seconds: float | None = None) -> tuple[np.ndarray, int]:
@@ -337,29 +367,103 @@ def _lut() -> np.ndarray:
     return np.stack([np.interp(t, xs, [c[k] for c in _PALETTE]) for k in range(3)], 1).astype(np.uint8)
 
 
-def spectrogram_png(path: str, width: int = 1600, height: int = 256) -> bytes:
-    """Log-frequency spectrogram (30 Hz .. Nyquist), one column per pixel, magma-like colours."""
+SPEC_RATE = 22050      # spectrograms look at the sound at about this rate (up to ~11 kHz)
+_SEQ_LIMIT = 8_000_000   # source frames: a part longer than this is read one window per column
+
+
+def _cut(x: np.ndarray, centres: np.ndarray, n: int) -> np.ndarray:
+    """Windows of n samples centred on `centres` (indices into x), zero-padded at the ends."""
+    xp = np.pad(x, (n // 2, n))
+    starts = np.clip(np.round(centres).astype(np.int64), 0, len(x))
+    return xp[starts[:, None] + np.arange(n)[None, :]]
+
+
+def _decimate(x: np.ndarray, k: int) -> np.ndarray:
+    return x[: len(x) // k * k].reshape(-1, k).mean(axis=1) if k > 1 else x
+
+
+def _spec_windows(path: str, width: int, n_fft: int, start: float, end: float | None):
+    """`width` mono windows of `n_fft` samples at about SPEC_RATE, centred on equal steps across [start, end)
+    seconds: (windows, rate, start, end) where start / end are the part really covered. Formats only ffmpeg
+    reads cover at most MAX_ANALYSE_SECONDS from `start`; the others any length (long parts are read one
+    window per column, so an hour costs about as much as a minute)."""
+    import soundfile as sf
+    try:
+        f = sf.SoundFile(path)
+    except Exception:
+        f = None
+    if f is None:
+        stop = start + MAX_ANALYSE_SECONDS if end is None else min(end, start + MAX_ANALYSE_SECONDS)
+        it = blocks(path, start=start, end=stop)
+        sr, _, _ = next(it)
+        k = max(1, round(sr / SPEC_RATE))
+        parts = [b.mean(axis=1) for b in it]
+        x = _decimate(np.concatenate(parts) if parts else np.zeros(0, np.float32), k)
+        rate = sr / k
+        return _cut(x, (np.arange(width) + 0.5) / width * len(x), n_fft), rate, start, start + len(x) / rate
+    with f:
+        sr, frames = f.samplerate, f.frames
+        k = max(1, round(sr / SPEC_RATE))
+        a = min(frames, max(0, int(round(start * sr))))
+        b = frames if end is None else min(frames, max(a, int(round(end * sr))))
+        win = n_fft * k
+        centres = a + (np.arange(width) + 0.5) / width * (b - a)   # in source frames
+        if b - a <= max(_SEQ_LIMIT, width * win // 4) or not f.seekable():   # read the part at once
+            lo = max(0, a - win // 2) if f.seekable() else 0
+            hi = min(frames, b + win // 2)
+            if lo:
+                f.seek(lo)
+            parts, left = [], hi - lo
+            while left > 0:
+                blk = f.read(min(1 << 20, left), dtype="float32", always_2d=True)
+                if not len(blk):
+                    break
+                left -= len(blk)
+                parts.append(blk.mean(axis=1))
+            x = _decimate(np.concatenate(parts) if parts else np.zeros(0, np.float32), k)
+            seg = _cut(x, (centres - lo) / k, n_fft)
+        else:   # long part: one window per column, read where it is (centred; zeros beyond the ends, as above)
+            seg = np.zeros((width, n_fft), np.float32)
+            buf = np.zeros(win, np.float32)
+            for i, c in enumerate(centres):
+                s0 = int(np.round(c)) - win // 2
+                lo, hi = max(0, s0), min(frames, s0 + win)
+                buf[:] = 0
+                if hi > lo:
+                    f.seek(lo)
+                    r = f.read(hi - lo, dtype="float32", always_2d=True).mean(axis=1)
+                    buf[lo - s0: lo - s0 + len(r)] = r
+                seg[i] = _decimate(buf, k)[:n_fft]
+        return seg, sr / k, a / sr, b / sr
+
+
+def spectrogram(path: str, width: int = 1600, height: int = 256, start: float = 0.0, end: float | None = None,
+                ref: float | None = None) -> tuple[bytes, float, float, float]:
+    """Log-frequency spectrogram (30 Hz .. Nyquist) of the sound or of [start, end) seconds of it, one column
+    per pixel, magma-like colours: (PNG, start, end, ref). `ref` is the level drawn brightest (dB); pass the
+    one an overview returned so a detailed part gets the same colours."""
     import io
     from PIL import Image
-    x, sr = mono(path, 22050, MAX_ANALYSE_SECONDS)
     n_fft = 2048
-    if len(x) < n_fft:
-        x = np.pad(x, (0, n_fft - len(x)))
-    pos = np.linspace(0, len(x) - n_fft, width).astype(np.int64)
-    seg = x[pos[:, None] + np.arange(n_fft)[None, :]] * np.hanning(n_fft)
-    mag = np.abs(np.fft.rfft(seg, axis=1))
+    seg, sr, a, b = _spec_windows(path, width, n_fft, start, end)
+    mag = np.abs(np.fft.rfft(seg * np.hanning(n_fft).astype(np.float32), axis=1))
     f = np.fft.rfftfreq(n_fft, 1 / sr)
     edges = np.geomspace(30, sr / 2, height + 1)
     bins = np.clip(np.searchsorted(f, edges), 1, len(f) - 1)
-    rows = np.stack([mag[:, a:max(b, a + 1)].max(axis=1) for a, b in zip(bins[:-1], bins[1:])], 1)   # width x height
+    rows = np.stack([mag[:, i:max(j, i + 1)].max(axis=1) for i, j in zip(bins[:-1], bins[1:])], 1)   # width x height
     db = 20 * np.log10(np.maximum(rows, 1e-9))
-    top = np.percentile(db, 99.5)
+    top = float(np.percentile(db, 99.5)) if ref is None else float(ref)
     v = np.clip((db - (top - 80)) / 80, 0, 1)
     img = _lut()[(v * 255).astype(np.uint8)]                    # width x height x 3
     img = np.flipud(np.transpose(img, (1, 0, 2)))               # low frequencies at the bottom
     buf = io.BytesIO()
     Image.fromarray(np.ascontiguousarray(img), "RGB").save(buf, "PNG", optimize=False)
-    return buf.getvalue()
+    return buf.getvalue(), a, b, top
+
+
+def spectrogram_png(path: str, width: int = 1600, height: int = 256) -> bytes:
+    """The whole sound's spectrogram as PNG (see spectrogram())."""
+    return spectrogram(path, width, height)[0]
 
 
 # ---------------------------------------------------------------- cutting a region out

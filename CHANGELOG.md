@@ -2,6 +2,22 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.17.0 – Rows for long sounds, Playhead across the library
+- **Rows for long sounds:** a *Rows* menu sets a row height (viewer and side panel); a long sound
+  wraps onto rows of equal, round time spans, each with its own ruler. Click, select (also across
+  rows), hover, zoom and playback work on every row, in every style.
+- **Side panel:** drag the bottom edge of the sound preview to change its height (remembered).
+- **Detail where needed:** rows and zoom read the part on screen again, finer (waveform down to
+  single samples; spectrogram with matching colours). Spectrograms cover the whole of long sounds.
+  Shift+wheel moves along a zoomed sound. Playback redraws only the cursor.
+- **Playhead across the library** (optional): *Analyse sounds…* with the Playhead command line in the
+  background, or in the browser; summaries in the catalog; **Look ▾ → Sound character** (hit or swell,
+  bursty, metal-like, long ring, tonal, harsh, impulsive…); sorts by harshness, impulsiveness, ring
+  time, burstiness, loudness range; **Playhead strips as grid thumbnails**; **markers** for REAPER
+  and Audacity.
+- **Fixes:** blank thumbnails of M4A files with their index at the end; `0.00 s` on the ruler of long
+  sounds; spectrogram frequency labels of 48 kHz files.
+
 ## 0.16.0 – Playhead analysis of sounds (optional)
 - **Playhead analysis** ([Playhead](https://github.com/eigensoundlab/playhead) 0.2.0, off by
   default; ⚙ Settings → Sounds): a new waveform style that shows Playhead's curves, events,

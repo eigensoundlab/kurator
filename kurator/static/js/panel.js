@@ -3,6 +3,7 @@
 import { api, originalUrl, thumbUrl } from './api.js';
 import { AUDIO, el, extOf, setKids, fmtBytes, fmtDate, fmtDuration, fmtNum, prefs, SOURCE_LABEL, VIEWABLE } from './util.js';
 import { PH_PAPER, phCached, phDoc, phEnabled, phOnDoc, phOnSetting, phSummary } from './playhead.js';
+import { openPhMarkersDialog } from './phmarkers.js';
 import { openUnityDialog } from './unitydlg.js';
 import { WaveView } from './waveview.js';
 
@@ -23,6 +24,8 @@ function section(title, body, open = false) {
   return el('details', { class: 'sec', open }, el('summary', { text: title }), body);
 }
 
+const WAVE_H = 300, WAVE_MIN = 90;   // the sound preview's normal and smallest height (CSS px)
+
 export class Panel {
   constructor(root, app) {
     this.root = root;
@@ -30,6 +33,10 @@ export class Panel {
     this.selBox = el('div', { class: 'p-selection' });
     this.preview = el('img', { class: 'p-preview', alt: '', draggable: 'false' });
     this.previewBox = el('div', { class: 'p-preview-box', title: 'Open viewer (Enter)', onclick: () => app.openViewer() }, this.preview);
+    // sounds: drag the bottom edge to make the waveform taller or shorter (remembered)
+    this.grip = el('div', { class: 'p-grip', title: 'Drag to make the waveform taller or shorter (double-click: back to normal)' });
+    this.previewBox.append(this.grip);
+    this.bindGrip();
     this.body = el('div', { class: 'p-body' });
     this.root.append(this.selBox, this.previewBox, this.body);
     this.ctrl = null;
@@ -49,6 +56,7 @@ export class Panel {
       this.preview.removeAttribute('src');
       this.previewBox.classList.add('empty');
       this.previewBox.classList.remove('sound');
+      this.previewBox.style.height = '';
       if (this.wave?.root.isConnected) { this.wave.root.remove(); this.wave.id = null; }
       this.body.replaceChildren(el('div', { class: 'p-hint', text: 'Nothing focused. Click an image, or use the arrow keys.' }));
       return;
@@ -57,6 +65,8 @@ export class Panel {
     // sounds: an interactive waveform with a playhead instead of the picture
     const sound = AUDIO.has(extOf(it.n[i]));
     this.previewBox.classList.toggle('sound', sound);
+    if (sound) this.setWaveHeight(prefs.get('panel.waveH', 0) || WAVE_H);
+    else this.previewBox.style.height = '';
     if (sound) {
       if (!this.wave) { this.wave = new WaveView(this.app, { bins: 1200 }); }
       if (!this.wave.root.isConnected) this.previewBox.append(this.wave.root);
@@ -73,6 +83,38 @@ export class Panel {
     if (this.preview.getAttribute('src') !== small) this.preview.src = small;
     const id = it.ids[i];
     this.timer = setTimeout(() => this.load(id, i), 90);
+  }
+
+  /** The sound preview's height (CSS px), kept between WAVE_MIN and most of the window. */
+  setWaveHeight(h) {
+    const max = Math.max(WAVE_MIN, Math.round(window.innerHeight * 0.8));
+    h = Math.round(Math.min(max, Math.max(WAVE_MIN, h)));
+    if (this.previewBox.style.height !== `${h}px`) this.previewBox.style.height = `${h}px`;
+    return h;
+  }
+
+  bindGrip() {
+    const g = this.grip;
+    let drag = null;
+    g.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      g.setPointerCapture(e.pointerId);
+      drag = { y: e.clientY, h: this.previewBox.getBoundingClientRect().height };
+      g.classList.add('drag');
+    });
+    g.addEventListener('pointermove', (e) => { if (drag) this.setWaveHeight(drag.h + e.clientY - drag.y); });
+    const end = () => {
+      if (!drag) return;
+      drag = null;
+      g.classList.remove('drag');
+      prefs.set('panel.waveH', Math.round(this.previewBox.getBoundingClientRect().height));
+    };
+    g.addEventListener('pointerup', end);
+    g.addEventListener('pointercancel', end);
+    g.addEventListener('click', (e) => e.stopPropagation());
+    g.addEventListener('dblclick', (e) => { e.stopPropagation(); prefs.set('panel.waveH', 0); this.setWaveHeight(WAVE_H); });
   }
 
   sizePreview(w, h) {
@@ -240,6 +282,8 @@ export class Panel {
       const rows = phSummary(doc, duration);
       setKids(box,
         rows.length ? el('table', { class: 'kv' }, rows.map(([k, v, t]) => el('tr', {}, el('th', { text: k, title: t || '' }), el('td', { text: v })))) : null,
+        el('div', { class: 'dlg-inline-buttons left' }, el('button', { class: 'btn small', text: 'Markers…',
+          title: 'Sections, sound events, bar lines as markers for REAPER or Audacity', onclick: () => openPhMarkersDialog(this.app, doc, d.name) })),
         el('div', { class: 'muted small' }, `Playhead ${doc.generator?.version || ''} · ${doc.profile || ''} profile · `, about()));
     };
     const analyse = () => {

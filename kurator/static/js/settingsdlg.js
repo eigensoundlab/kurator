@@ -1,8 +1,9 @@
 // Settings: XMP sidecars (write tags + dates next to your files), keyword import, info.
 
 import { api } from './api.js';
-import { PH_HOME, PH_PAPER, phEnabled, phSetEnabled } from './playhead.js';
+import { PH_HOME, PH_PAPER, phEnabled, phGridPref, phLib, phSetEnabled, phSetGridPref } from './playhead.js';
 import { openDialog } from './dialog.js';
+import { openPhLibraryDialog } from './phlibdlg.js';
 import { el, fmtNum, setKids } from './util.js';
 
 export async function openSettingsDialog(app) {
@@ -20,11 +21,29 @@ export async function openSettingsDialog(app) {
     try { await api.saveSettings({ xmp_merge: merge.checked }); app.toast(merge.checked ? 'Keywords will also go into sidecars of other programs' : 'Sidecars of other programs are left alone'); }
     catch (e) { app.toast(e.message); merge.checked = !merge.checked; }
   };
-  // Playhead analysis: a setting of this browser (the analysis runs here, not on the server)
+  // Playhead analysis: a setting of this browser (it runs here, or with the command line on the server)
   const ph = el('input', { type: 'checkbox' });
   ph.checked = phEnabled();
+  // ... and its strips as grid thumbnails of analysed sounds, in a look of Playhead's
+  const gp = phGridPref();
+  const phGrid = el('input', { type: 'checkbox' });
+  phGrid.checked = gp.on;
+  const phLook = el('select', { title: 'How Playhead draws the strips (its looks)' }, el('option', { value: gp.look, text: gp.look === 'auto' ? 'Automatic' : gp.look }));
+  const fillLooks = () => phLib().then((P) => {   // only while Playhead is on: no request for it otherwise
+    setKids(phLook, Object.entries(P.looks).map(([k, L]) => el('option', { value: k, text: L.name, title: L.desc })));
+    phLook.value = P.looks[gp.look] ? gp.look : 'auto';
+  }).catch(() => {});
+  if (ph.checked) fillLooks();
+  phGrid.onchange = () => phSetGridPref({ on: phGrid.checked });
+  phLook.onchange = () => phSetGridPref({ look: phLook.value });
+  const phRow = el('div', { style: { display: ph.checked ? '' : 'none' } },
+    el('div', { class: 'row' }, el('label', { class: 'chk' }, phGrid, 'Playhead strips as thumbnails of analysed sounds'), phLook),
+    el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Analyse sounds…', title: 'Analyse many sounds at once (for the Look filter, the sorts and the grid strips)',
+      onclick: () => openPhLibraryDialog(app) })));
   ph.onchange = () => {
     phSetEnabled(ph.checked);
+    phRow.style.display = ph.checked ? '' : 'none';
+    if (ph.checked) fillLooks();
     app.toast(ph.checked ? 'Playhead analysis is on: choose it in the waveform\'s style menu' : 'Playhead analysis is off');
   };
   const svgAll = el('input', { type: 'checkbox' });
@@ -116,9 +135,10 @@ export async function openSettingsDialog(app) {
       el('h3', { text: 'Sounds' }),
       el('label', { class: 'chk' }, ph, 'Playhead analysis (experimental)'),
       el('div', { class: 'p-hint small' },
-        'Adds "Playhead analysis" to the waveform\'s style menu: curves for loudness, activity, harshness and tension, sound events and their types, beats and sections for music, with a Look menu to compare ways of drawing them. A Playhead section in the side panel lists events, decay and material, time arrow, tempo and sections. It runs in this browser; results are kept for next time. ',
+        'Adds "Playhead analysis" to the waveform\'s style menu: curves for loudness, activity, harshness and tension, sound events and their types, beats and sections for music, with a Look menu to compare ways of drawing them. A Playhead section in the side panel lists events, decay and material, time arrow, tempo and sections, and saves them as markers for REAPER or Audacity. Analysed sounds can be filtered by character (Look ▾) and sorted by harshness, ring time and more. It runs in this browser, or with the Playhead command line when it is installed; results are kept for next time. ',
         el('a', { href: PH_HOME, target: '_blank', rel: 'noopener noreferrer', text: 'Playhead' }), ' · ',
         el('a', { href: PH_PAPER, target: '_blank', rel: 'noopener noreferrer', text: 'About Playhead analysis (paper)' })),
+      phRow,
       el('h3', { text: 'Previews' }),
       el('label', { class: 'chk' }, svgAll, 'SVG: show all objects, also those outside the page'),
       el('div', { class: 'p-hint small', text: 'Inkscape and Illustrator drawings often keep parts beside the page. With this on, previews and the viewer grow the page to take them in. Drawings whose page has no size always show everything.' }),

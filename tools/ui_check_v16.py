@@ -96,13 +96,13 @@ with sync_playwright() as p:
 
     # zoom with the wheel: the strip follows
     box = page.locator(".viewer canvas.wavecanvas").bounding_box()
-    k0 = page.evaluate(f"{K}.viewer.wave.phCache.key")
+    k0 = page.evaluate(f"{K}.viewer.wave.baseKey")
     page.mouse.move(box["x"] + box["width"] * 0.3, box["y"] + box["height"] * 0.5)
     for _ in range(5):
         page.mouse.wheel(0, -300); page.wait_for_timeout(100)
     page.wait_for_timeout(400)
     print("zoom:", [round(v, 3) for v in page.evaluate(f"[{K}.viewer.wave.t0, {K}.viewer.wave.t1]")],
-          "| strip redrawn:", page.evaluate(f"{K}.viewer.wave.phCache.key") != k0, "| canvas:", strip_stats())
+          "| strip redrawn:", page.evaluate(f"{K}.viewer.wave.baseKey") != k0, "| canvas:", strip_stats())
     page.screenshot(path=f"{OUT}/3_viewer_zoomed.png")
     page.dblclick(".viewer canvas.wavecanvas"); page.wait_for_timeout(300)
 
