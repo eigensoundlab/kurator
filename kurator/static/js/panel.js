@@ -135,6 +135,11 @@ export class Panel {
               el('span', { class: 'muted', text: `${x.role.replace('_', '/')}: ` }), x.name)))) : (m.mesh && m.model && m.model.textured === false ? el('tr', {}, el('th', { text: 'Textures' }), el('td', { class: 'muted', text: 'none assigned' })) : null),
         m.model?.dimensions?.length === 3 ? el('tr', {}, el('th', { text: 'Dimensions' }), el('td', { text: `${m.model.dimensions.join(' × ')}${m.model.unit ? ' ' + ({ millimeter: 'mm', centimeter: 'cm', meter: 'm', inch: 'in' }[m.model.unit] || m.model.unit) : ''}` })) : null,
         m.pages ? el('tr', {}, el('th', { text: 'Pages' }), el('td', { text: String(m.pages) })) : null,
+        m.texture ? el('tr', {}, el('th', { text: 'Texture' }), el('td', { text: [m.texture, m.levels > 1 ? `${m.levels} mip levels` : null,
+          m.channels && typeof m.channels === 'string' && m.format === 'KTX2' ? `${m.channels} channels` : null, m.cubemap ? 'cubemap' : null,
+          m.layers ? `${m.layers} layers` : null, m.srgb ? 'sRGB' : null, m.alpha ? 'alpha' : null, m.hdr ? 'HDR' : null].filter(Boolean).join(' · ') })) : null,
+        m.hdr && !m.texture ? el('tr', {}, el('th', { text: 'HDR', title: 'High dynamic range: shown tone-mapped' }), el('td', { text: [m.channels, m.compression ? `${m.compression} compression` : null,
+          m.pixels ? `${m.pixels} float` : null, m.brightest != null ? `brightest ${m.brightest}` : null, m.data].filter(Boolean).join(' · ') })) : null,
         m.peak_dbfs != null ? el('tr', {}, el('th', { text: 'Level' }), el('td', { text: `peak ${m.peak_dbfs} dBFS · RMS ${m.rms_dbfs ?? '—'} dBFS` })) : null,
         m.lufs != null ? el('tr', {}, el('th', { text: 'Loudness', title: 'Integrated loudness, ITU-R BS.1770 / EBU R128' }),
           el('td', { text: `${m.lufs} LUFS${m.max_momentary_lufs != null ? ` · loudest moment ${m.max_momentary_lufs} LUFS` : ''}` })) : null,
@@ -155,6 +160,7 @@ export class Panel {
         d.status === 2 ? el('tr', {}, el('th', { text: 'Error' }), el('td', { class: 'err', text: d.error || 'cannot read' })) : null,
         d.status === 0 ? el('tr', {}, el('th', { text: 'Status' }), el('td', { text: 'waiting for indexing' })) : null),
     ];
+    parts.push(this.infoBox(d));
     if (m.generation) {
       const g = m.generation;
       const body = el('div', {}, el('div', { class: 'p-tool', text: g.tool }));
@@ -208,6 +214,60 @@ export class Panel {
     setKids(this.body, ...parts);
     this.loadRelated(d);
     this.renderTags();
+  }
+
+  /** Where the file came from, who made it, the licence - editable; can be copied to the selection. */
+  infoBox(d) {
+    const app = this.app;
+    const inf = d.info || {};
+    if (!app.infoOptions) {
+      app.infoOptions = api.infoOptions().catch(() => ({ licences: {}, used: {} }));
+    }
+    const lists = {};
+    for (const k of ['source', 'author', 'licence']) lists[k] = el('datalist', { id: `info-${k}-list` });
+    app.infoOptions.then((o) => {
+      setKids(lists.licence, [...new Set([...Object.keys(o.licences || {}), ...(o.used?.licence || [])])].map((v) => el('option', { value: v })));
+      setKids(lists.author, (o.used?.author || []).map((v) => el('option', { value: v })));
+      setKids(lists.source, (o.used?.source || []).map((v) => el('option', { value: v })));
+    });
+    const link = el('a', { class: 'small', target: '_blank', rel: 'noopener noreferrer' });
+    const paintLink = (url) => { link.href = url || '#'; link.textContent = url ? 'licence text ↗' : ''; link.style.display = url ? '' : 'none'; };
+    paintLink(inf.licence_url);
+    const inputs = {};
+    const save = async (patch) => {
+      try {
+        await api.setInfo({ ids: [d.id], ...patch });
+        const o = await api.item(d.id);
+        d.info = o.info;
+        paintLink(o.info?.licence_url);
+        app.infoOptions = null;      // new values show up in the suggestions next time
+      } catch (e) { app.toast(e.message, 4000); }
+    };
+    const field = (key, label, ph) => {
+      const i = el('input', { type: 'text', value: inf[key] || '', placeholder: ph, spellcheck: 'false', list: `info-${key}-list` });
+      i.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') i.blur(); });
+      i.onchange = () => save({ [key]: i.value });
+      inputs[key] = i;
+      return el('tr', {}, el('th', { text: label }), el('td', {}, i, key === 'licence' ? link : null));
+    };
+    const n = app.selected.size;
+    const toSel = n > 1 && app.selected.has(d.id)
+      ? el('button', { class: 'btn small', text: `Copy to the ${fmtNum(n)} selected`, title: 'Give all selected files this source, author and licence',
+        onclick: async () => {
+          const patch = {};
+          for (const [k, i] of Object.entries(inputs)) patch[k] = i.value;
+          try { const r = await api.setInfo({ ids: [...app.selected], ...patch }); app.toast(`Source and licence set on ${fmtNum(r.changed)} files`); } catch (e) { app.toast(e.message, 4000); }
+        } })
+      : null;
+    const any = inf.source || inf.author || inf.licence;
+    const box = section('Source & licence', el('div', { class: 'p-info' },
+      el('table', { class: 'kv' }, field('source', 'Source', 'where it came from: URL, shop, book…'), field('author', 'Author', 'who made it'),
+        field('licence', 'Licence', 'e.g. CC BY 4.0, Own work')),
+      ...Object.values(lists),
+      el('div', { class: 'muted small', text: 'Search with source:… author:… licence:… (licence:none finds files without one). Written into XMP sidecars.' }),
+      toSel), !!any || n > 1 || prefs.get('panel.info', false));
+    box.addEventListener('toggle', () => { if (!any) prefs.set('panel.info', box.open); });   // stays open once opened
+    return box;
   }
 
   /** Colour mode, profile, print size; PDF page boxes, PDF/X, spot colours, fonts. */

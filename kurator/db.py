@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 CATALOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -213,6 +213,21 @@ MIGRATIONS = {
         # Colours that cover a good part of the picture (bitmask, see processing.colour_info)
         "ALTER TABLE files ADD COLUMN hues INTEGER",
     ],
+    9: [
+        # Where a file came from, who made it, under which licence (see fileinfo.py)
+        """CREATE TABLE file_info (
+            file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+            source TEXT, author TEXT, licence TEXT, updated REAL
+        )""",
+        # ... parked by content hash when the file leaves the catalog, like tags
+        """CREATE TABLE orphan_info (
+            hash TEXT PRIMARY KEY,
+            source TEXT, author TEXT, licence TEXT, updated REAL, orphaned REAL
+        ) WITHOUT ROWID""",
+        # Backup schedule: every N days a reminder, or (auto) the backup runs by itself
+        "ALTER TABLE backup_sets ADD COLUMN every_days REAL",
+        "ALTER TABLE backup_sets ADD COLUMN auto INTEGER NOT NULL DEFAULT 0",
+    ],
 }
 
 TAG_COLORS = ["#e5484d", "#f76b15", "#ffc53d", "#46a758", "#12a594", "#0090ff", "#6e56cf", "#d6409f",
@@ -383,21 +398,30 @@ class Database:
                 self.remove_root(r["id"])
         with self.write_lock:
             self.cat.execute("DELETE FROM orphan_tags WHERE orphaned < ?", (now - orphan_days * 86400,))
+            self.cat.execute("DELETE FROM orphan_info WHERE orphaned < ?", (now - orphan_days * 86400,))
 
     # -- tags --------------------------------------------------------------
     @staticmethod
     def _orphan_tags_where(c, where: str, args: tuple) -> None:
+        """Park the tags (and source / author / licence) of files about to leave the catalog."""
         c.execute(
             "INSERT OR IGNORE INTO orphan_tags(hash, tag_id, source, confidence, added, orphaned) "
             "SELECT f.hash, ft.tag_id, ft.source, ft.confidence, ft.added, ? FROM file_tags ft "
             f"JOIN files f ON f.id = ft.file_id WHERE f.hash IS NOT NULL AND {where}",
             (time.time(), *args),
         )
+        c.execute(
+            "INSERT OR REPLACE INTO orphan_info(hash, source, author, licence, updated, orphaned) "
+            "SELECT f.hash, i.source, i.author, i.licence, i.updated, ? FROM file_info i "
+            f"JOIN files f ON f.id = i.file_id WHERE f.hash IS NOT NULL AND {where}",
+            (time.time(), *args),
+        )
 
     def relink_orphans(self, hashes: list[str]) -> int:
         """Re-attach parked tags to files with the same content (moved/renamed outside the app)."""
         c = self.cat
-        if not hashes or c.execute("SELECT 1 FROM orphan_tags LIMIT 1").fetchone() is None:
+        if not hashes or (c.execute("SELECT 1 FROM orphan_tags LIMIT 1").fetchone() is None
+                          and c.execute("SELECT 1 FROM orphan_info LIMIT 1").fetchone() is None):
             return 0
         n = 0
         with self.write_lock:
@@ -410,6 +434,11 @@ class Database:
                     "SELECT f.id, o.tag_id, o.source, o.confidence, o.added FROM orphan_tags o "
                     f"JOIN files f ON f.hash = o.hash WHERE o.hash IN ({q})", chunk).rowcount
                 c.execute(f"DELETE FROM orphan_tags WHERE hash IN ({q})", chunk)
+                c.execute(
+                    "INSERT OR IGNORE INTO file_info(file_id, source, author, licence, updated) "
+                    "SELECT f.id, o.source, o.author, o.licence, o.updated FROM orphan_info o "
+                    f"JOIN files f ON f.hash = o.hash WHERE o.hash IN ({q})", chunk)
+                c.execute(f"DELETE FROM orphan_info WHERE hash IN ({q})", chunk)
                 c.execute("COMMIT")
         return n
 

@@ -5,8 +5,12 @@ Writing: "photo.jpg" gets "photo.jpg.xmp" next to it with
     lr:hierarchicalSubject  Creatures|Dragons      (Lightroom, Bridge, darktable ...)
     digiKam:TagsList        Creatures/Dragons      (digiKam)
     xmp:CreateDate / photoshop:DateCreated         the resolved creation date
+    dc:source, dc:creator, dc:rights, xmpRights:WebStatement    source, author, licence
 Original image files are never modified. A sidecar written by another program is never
-overwritten (it is reported as skipped); only Kurator's own sidecars are updated.
+replaced: by default it is left alone (reported as skipped); with "merge" only its keyword lists
+are updated - and source/author/licence added where it has none - and everything else in it
+(develop settings, ratings, history...) stays exactly as it was. Before the first change a copy
+goes to the data folder (xmp-backup).
 
 Reading: keywords from embedded XMP, Windows Explorer tags (EXIF XPKeywords) and sidecars can be
 imported as tags. A Kurator sidecar's date is also used when indexing, so the date survives copies.
@@ -14,9 +18,12 @@ imported as tags. A Kurator sidecar's date is also used when indexing, so the da
 
 from __future__ import annotations
 
+import hashlib
 import html
 import os
 import re
+import shutil
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
 
@@ -49,14 +56,49 @@ def is_ours(text: str | None) -> bool:
     return bool(text) and NS in text
 
 
-def build(tag_names: list[str], date_ts: float | None, date_source: str | None) -> str:
+URIS = {"dc": "http://purl.org/dc/elements/1.1/", "lr": "http://ns.adobe.com/lightroom/1.0/",
+        "digiKam": "http://www.digikam.org/ns/1.0/", "xmpRights": "http://ns.adobe.com/xap/1.0/rights/"}
+
+
+def _bag(tag: str, kind: str, items: list[str]) -> str:
+    if not items:
+        return ""
+    lis = "".join(f"\n     <rdf:li>{escape(i)}</rdf:li>" for i in items)
+    return f"\n   <{tag}>\n    <rdf:{kind}>{lis}\n    </rdf:{kind}>\n   </{tag}>"
+
+
+def _keyword_blocks(tag_names: list[str], extra_flat: set | None = None) -> str:
     hier = sorted(set(tag_names), key=str.lower)
-    flat = sorted({part for t in hier for part in t.split("/")}, key=str.lower)
+    flat = sorted({part for t in hier for part in t.split("/")} | (extra_flat or set()), key=str.lower)
+    return (_bag("dc:subject", "Bag", flat)
+            + _bag("lr:hierarchicalSubject", "Bag", [t.replace("/", "|") for t in hier])
+            + _bag("digiKam:TagsList", "Seq", hier))
+
+
+def _info_blocks(info: dict | None, have: set | None = None) -> str:
+    """dc:source, dc:creator, dc:rights, xmpRights:WebStatement - the ones not in `have`."""
+    from .fileinfo import licence_url
+    info, have = info or {}, have or set()
+    out = ""
+    if info.get("source") and "dc:source" not in have:
+        out += f"\n   <dc:source>{escape(info['source'])}</dc:source>"
+    if info.get("author") and "dc:creator" not in have:
+        out += _bag("dc:creator", "Seq", [info["author"]])
+    if info.get("licence") and "dc:rights" not in have:
+        out += f'\n   <dc:rights>\n    <rdf:Alt>\n     <rdf:li xml:lang="x-default">{escape(info["licence"])}</rdf:li>\n    </rdf:Alt>\n   </dc:rights>'
+    url = licence_url(info.get("licence"))
+    if url and "xmpRights:WebStatement" not in have and "dc:rights" not in have:   # never contradict their rights
+        out += f"\n   <xmpRights:WebStatement>{escape(url)}</xmpRights:WebStatement>"
+    return out
+
+
+def build(tag_names: list[str], date_ts: float | None, date_source: str | None, info: dict | None = None) -> str:
     attrs = ['xmlns:dc="http://purl.org/dc/elements/1.1/"',
              'xmlns:lr="http://ns.adobe.com/lightroom/1.0/"',
              'xmlns:digiKam="http://www.digikam.org/ns/1.0/"',
              'xmlns:xmp="http://ns.adobe.com/xap/1.0/"',
              'xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"',
+             'xmlns:xmpRights="http://ns.adobe.com/xap/1.0/rights/"',
              f'xmlns:kurator="{NS}"']
     if date_ts:
         iso = datetime.fromtimestamp(date_ts).astimezone().isoformat(timespec="seconds")
@@ -64,16 +106,7 @@ def build(tag_names: list[str], date_ts: float | None, date_source: str | None) 
         if date_source:
             attrs.append(f"kurator:DateSource={quoteattr(date_source)}")
     attrs.append(f"kurator:Version={quoteattr(__version__)}")
-
-    def bag(tag: str, kind: str, items: list[str]) -> str:
-        if not items:
-            return ""
-        lis = "".join(f"\n     <rdf:li>{escape(i)}</rdf:li>" for i in items)
-        return f"\n   <{tag}>\n    <rdf:{kind}>{lis}\n    </rdf:{kind}>\n   </{tag}>"
-
-    body = (bag("dc:subject", "Bag", flat)
-            + bag("lr:hierarchicalSubject", "Bag", [t.replace("/", "|") for t in hier])
-            + bag("digiKam:TagsList", "Seq", hier))
+    body = _keyword_blocks(tag_names) + _info_blocks(info)
     sep = "\n    "
     return (
         '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
@@ -85,11 +118,95 @@ def build(tag_names: list[str], date_ts: float | None, date_source: str | None) 
     )
 
 
-def write_sidecars(db: Database, ids: list[int], include_untagged: bool = False) -> dict:
+_KEYWORD_PROPS = ("dc:subject", "lr:hierarchicalSubject", "digiKam:TagsList")
+
+
+def _list_items(text: str, prop: str) -> list[str]:
+    out = []
+    for block in re.findall(rf"<{prop}\b[^>]*>(.*?)</{prop}>", text, re.S):
+        out += [html.unescape(li).strip() for li in _LI.findall(block)]
+    return [x for x in out if x]
+_INFO_PROPS = ("dc:source", "dc:creator", "dc:rights", "xmpRights:WebStatement")
+
+
+def merge_foreign(text: str, tag_names: list[str], info: dict | None = None) -> str | None:
+    """A sidecar written by another program with Kurator's keywords added (the keywords already
+    in it stay) and source/author/licence where it has none; everything else untouched.
+    None when it can't be done safely."""
+    if not text or is_ours(text):
+        return None
+    m = re.search(r"<rdf:Description\b[^>]*?(/?)>", text)
+    if not m:
+        return None
+    # the prefixes we write must mean what we think (or be free)
+    for prefix, uri in URIS.items():
+        bound = re.findall(rf'xmlns:{prefix}\s*=\s*["\']([^"\']*)["\']', text)
+        if any(b != uri for b in bound):
+            return None
+        other = re.findall(rf'xmlns:(\w+)\s*=\s*["\']{re.escape(uri)}["\']', text)
+        if any(o != prefix for o in other):
+            return None
+    # keywords already there stay: lists = theirs + Kurator's
+    hier = {k.replace("|", "/") for k in _list_items(text, "lr:hierarchicalSubject")}
+    hier |= set(_list_items(text, "digiKam:TagsList"))
+    flat = set(_list_items(text, "dc:subject"))
+    tag_names = sorted(hier | set(tag_names), key=str.lower)
+    out = text
+    mark = "\x00kurator-keywords\x00"
+    for prop in _KEYWORD_PROPS:                    # replace the old keyword lists (elements, any form)
+        for pat in (rf"\s*<{prop}\b[^>]*/>", rf"\s*<{prop}\b[^>]*>.*?</{prop}>"):
+            out = re.sub(pat, lambda _m: "" if mark in out else mark, out, count=1, flags=re.S)
+            out = re.sub(pat, "", out, flags=re.S)
+    have = {p for p in _INFO_PROPS if re.search(rf"<{p}\b|\b{p}\s*=", out)}
+    keywords = _keyword_blocks(tag_names, flat)
+    extra = _info_blocks(info, have)
+    blocks = keywords + extra
+    if mark in out:                                 # the keywords go where the old ones were
+        out = out.replace(mark, keywords)
+        blocks = extra
+    m = re.search(r"<rdf:Description\b[^>]*?(/?)>", out)
+    start = m.group(0)
+    need = [f'xmlns:{p}="{u}"' for p, u in URIS.items()
+            if (f"<{p}:" in keywords + extra) and not re.search(rf"xmlns:{p}\s*=", out)]
+    new_start = start[:-2 if m.group(1) else -1].rstrip() + "".join("\n    " + n for n in need) + ">"
+    if m.group(1):                                  # <rdf:Description .../> becomes an element with content
+        out = out[:m.start()] + new_start + blocks + "\n  </rdf:Description>" + out[m.end():]
+    else:
+        close = out.find("</rdf:Description>", m.end())
+        if close < 0:
+            return None
+        body = out[m.end():close].rstrip()
+        out = out[:m.start()] + new_start + body + blocks + "\n  " + out[close:]
+    try:                                            # still well-formed XML?
+        ET.fromstring(re.sub(r"<\?xpacket[^>]*\?>", "", out).strip())
+    except ET.ParseError:
+        return None
+    return out
+
+
+def _backup_foreign(db: Database, path: str) -> None:
+    """A copy of another program's sidecar before Kurator first changes it (once per file)."""
+    folder = os.path.join(db.data_dir, "xmp-backup")
+    os.makedirs(folder, exist_ok=True)
+    name = hashlib.sha1(os.path.abspath(path).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    dest = os.path.join(folder, f"{name}_{os.path.basename(path)}")
+    if not os.path.exists(dest):
+        shutil.copy2(path, dest)
+        with open(os.path.join(folder, "index.txt"), "a", encoding="utf-8") as f:
+            f.write(f"{os.path.basename(dest)}\t{path}\n")
+
+
+def write_sidecars(db: Database, ids: list[int], include_untagged: bool = False, merge: bool | None = None) -> dict:
+    """Write Kurator's sidecars; with `merge` (default: the "xmp_merge" setting) also update the
+    keywords in sidecars written by other programs."""
+    if merge is None:
+        merge = bool(db.get_setting("xmp_merge", False))
     # Projects/Status/Source get a root keyword ("Projects|Game A") so other programs keep them apart.
     names = {r[0]: tagmod.display_name(r[1], r[2]) for r in db.cat.execute("SELECT id, name, facet FROM tags")}
+    from .fileinfo import get_many
     from .projectdirs import engine_root
-    res = {"written": 0, "unchanged": 0, "skipped_foreign": [], "skipped_untagged": 0, "skipped_project": 0, "errors": []}
+    res = {"written": 0, "unchanged": 0, "merged": 0, "skipped_foreign": [], "skipped_untagged": 0,
+           "skipped_project": 0, "errors": []}
     ids = list(dict.fromkeys(int(i) for i in ids))
     for i in range(0, len(ids), 900):
         chunk = ids[i:i + 900]
@@ -97,6 +214,7 @@ def write_sidecars(db: Database, ids: list[int], include_untagged: bool = False)
         by_file: dict[int, list[str]] = {}
         for fid, tid in db.cat.execute(f"SELECT file_id, tag_id FROM file_tags WHERE file_id IN ({q})", chunk):
             by_file.setdefault(fid, []).append(names[tid])
+        infos = get_many(db, chunk)
         for fid, path, ts, src in db.cat.execute(
                 f"SELECT id, path, date_ts, date_source FROM files WHERE id IN ({q})", chunk):
             target = path + ".xmp"
@@ -105,14 +223,34 @@ def write_sidecars(db: Database, ids: list[int], include_untagged: bool = False)
                 continue
             existing = {c: _read_text(c) for c in sidecar_candidates(path) if os.path.isfile(c)}
             foreign = [c for c, t in existing.items() if not is_ours(t)]
-            if foreign:
-                res["skipped_foreign"].append(foreign[0])
-                continue
             tag_names = by_file.get(fid, [])
-            if not tag_names and not include_untagged and target not in existing:
+            info = infos.get(fid)
+            if foreign:
+                if not merge:
+                    res["skipped_foreign"].append(foreign[0])
+                    continue
+                fp = foreign[0]
+                merged = merge_foreign(existing[fp] or "", tag_names, info)
+                if merged is None:
+                    res["skipped_foreign"].append(fp)
+                    continue
+                if merged == existing[fp]:
+                    res["unchanged"] += 1
+                    continue
+                try:
+                    _backup_foreign(db, fp)
+                    tmp = fp + ".kurator-tmp"
+                    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+                        f.write(merged)
+                    os.replace(tmp, fp)
+                    res["merged"] += 1
+                except OSError as e:
+                    res["errors"].append(f"{path}: {e}")
+                continue
+            if not tag_names and not info and not include_untagged and target not in existing:
                 res["skipped_untagged"] += 1
                 continue
-            content = build(tag_names, ts, src)
+            content = build(tag_names, ts, src, info)
             if existing.get(target) == content:
                 res["unchanged"] += 1
                 continue

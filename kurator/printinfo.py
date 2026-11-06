@@ -238,6 +238,13 @@ def pdf_info(data: bytes, page) -> dict:
         clean = sorted({re.sub(r"^[A-Z]{6}\+", "", f) for f in fonts})
         out["fonts"] = clean[:60]
         out["fonts_subset"] = any(re.match(r"^[A-Z]{6}\+", f) for f in fonts)
+    out.update(page_boxes(page))
+    return out
+
+
+def page_boxes(page) -> dict:
+    """The page boxes of one pdfium page: sizes in mm, and relative to the rendered crop box."""
+    out: dict = {}
     try:
         mm = 25.4 / 72
         crop = page.get_cropbox()

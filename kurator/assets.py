@@ -324,6 +324,10 @@ def plan_export(db: Database, project_id: int, dest: str, preset: str = "folders
             o["skip"] = False
         unchanged += o["skip"]
     todo = [o for o in ops if not o["skip"]]
+    from .fileinfo import get_many
+    infos = get_many(db, [o["id"] for o in ops if o["id"] is not None])
+    for o in ops:   # source / author / licence go into the export manifest
+        o["info"] = infos.get(o["id"], {}) if o["id"] is not None else {}
     return {"project": pr[0], "dest": dest, "root": root, "preset": preset, "ops": ops, "counts": counts,
             "files": len(ops), "copy": len(todo), "unchanged": unchanged, "bytes": sum(o["size"] for o in todo)}
 
@@ -361,7 +365,8 @@ class ExportJob:
         try:
             for o in plan["ops"]:
                 dp = os.path.join(plan["dest"], o["rel"])
-                manifest.append({"file": o["rel"], "original": o["src"], "kind": o["kind"]})
+                manifest.append({"file": o["rel"], "original": o["src"], "kind": o["kind"],
+                                 **{k: v for k, v in (o.get("info") or {}).items() if v}})
                 if o["skip"]:
                     continue
                 if self._cancel.is_set():

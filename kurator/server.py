@@ -101,6 +101,7 @@ class IdIn(BaseModel):
 class IdsIn(BaseModel):
     ids: list[int]
     include_untagged: bool = False
+    merge: bool | None = None          # also other programs' sidecars (None: the setting)
 
 
 class RulesIn(BaseModel):
@@ -116,6 +117,8 @@ class BackupSetIn(BaseModel):
     verify: bool = True
     scope: dict = {}
     targets: list[dict] = []
+    every_days: float | None = None    # schedule: every N days (None: none)
+    auto: bool = False                 # ... run by itself (else: a reminder)
 
 
 class RestoreIn(BaseModel):
@@ -125,6 +128,7 @@ class RestoreIn(BaseModel):
 
 class SettingsIn(BaseModel):
     xmp_auto: bool | None = None
+    xmp_merge: bool | None = None
     svg_all: bool | None = None
     proof_profile: str | None = None
     rclone_path: str | None = None
@@ -163,7 +167,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @asynccontextmanager
     async def lifespan(_app):
+        sched = backup.Scheduler(db, jobs).start()      # automatic backups that are due
         yield
+        sched.stop()
         ondemand.shutdown(wait=False, cancel_futures=True)
         jobs.cancel()
         rc.stop()
@@ -244,6 +250,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             "date_sources": list(dates.SOURCES),
             "sep": os.sep,
             "proof_profile": bool(db.get_setting("proof_profile", None)),
+            "backup_due": backup.due(db),
         })
 
     def _norm_path(p: str) -> str:
@@ -416,9 +423,17 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         else:  # "All library items": browsed (temporary) folders are not part of the library
             where.append("root_id IN (SELECT id FROM roots WHERE kind = 'library')")
         if q:
+            from . import fileinfo
             for term in q.split():
-                where.append("name LIKE ? ESCAPE '\\'")
-                args.append(f"%{_like_escape(term)}%")
+                special = fileinfo.search_clause(term)        # source:x author:x licence:x licence:none
+                if special:
+                    where.append(special[0])
+                    args += special[1]
+                    continue
+                # a word in the name, or in the source / author / licence
+                where.append("(name LIKE ? ESCAPE '\\' OR id IN (SELECT file_id FROM file_info WHERE source LIKE ? ESCAPE '\\' "
+                             "OR author LIKE ? ESCAPE '\\' OR licence LIKE ? ESCAPE '\\'))")
+                args += [f"%{_like_escape(term)}%"] * 4
         if ext:
             exts = [("." + e.strip().lower().lstrip(".")) for e in ext.split(",") if e.strip()]
             if exts:
@@ -521,7 +536,26 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             "SELECT tag_id, source, confidence FROM file_tags WHERE file_id = ?", (item_id,))}
         out["captions"] = [{"model": m, "text": tx} for m, tx in db.cat.execute(
             "SELECT model, text FROM captions WHERE file_id = ? ORDER BY created DESC", (item_id,))]
+        from . import fileinfo
+        out["info"] = fileinfo.get(db, item_id)
         return _json(out)
+
+    @app.get("/api/info/options")
+    def info_options():
+        """Licence names (with links) and the values used so far, for suggestions while typing."""
+        from . import fileinfo
+        return _json({"licences": fileinfo.LICENCES, "used": {k: fileinfo.used_values(db, k) for k in fileinfo.FIELDS}})
+
+    @app.post("/api/info")
+    def set_info(body: dict):
+        """Source / author / licence for one or many files: {"ids": [...], "source": ..., ...}."""
+        from . import fileinfo
+        ids = [int(i) for i in body.get("ids") or []]
+        if not ids:
+            raise HTTPException(400, "no files")
+        r = fileinfo.set_many(db, ids, {k: body.get(k) for k in fileinfo.FIELDS})
+        _auto_sidecars(ids)
+        return _json(r)
 
     # -- browsing & pins ---------------------------------------------------
     @app.get("/api/fs/places")
@@ -649,7 +683,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     # -- settings, sidecars, rules -----------------------------------------
     @app.get("/api/settings")
     def get_settings():
-        return _json({"xmp_auto": db.get_setting("xmp_auto", False), "svg_all": db.get_setting("svg_all", False), "data_dir": db.data_dir,
+        return _json({"xmp_auto": db.get_setting("xmp_auto", False), "xmp_merge": db.get_setting("xmp_merge", False),
+                      "svg_all": db.get_setting("svg_all", False), "data_dir": db.data_dir,
                       "proof_profile": db.get_setting("proof_profile", None),
                       "rclone_path": db.get_setting("rclone_path", None)})
 
@@ -657,6 +692,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     def put_settings(body: SettingsIn):
         if body.xmp_auto is not None:
             db.set_setting("xmp_auto", body.xmp_auto)
+        if body.xmp_merge is not None:
+            db.set_setting("xmp_merge", body.xmp_merge)
         if body.proof_profile is not None:
             pp = body.proof_profile.strip().strip('"')
             if pp:
@@ -678,7 +715,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.post("/api/xmp/write")
     def xmp_write(body: IdsIn):
-        return _json(xmp.write_sidecars(db, body.ids, body.include_untagged))
+        return _json(xmp.write_sidecars(db, body.ids, body.include_untagged, body.merge))
 
     @app.post("/api/xmp/import")
     def xmp_import(body: IdsIn):
@@ -795,6 +832,43 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         img.save(buf, "WEBP", quality=92)
         return Response(buf.getvalue(), media_type="image/webp", headers={"Cache-Control": "private, no-cache"})
 
+    def _pdf_path(item_id: int) -> str:
+        row = db.cat.execute("SELECT path FROM files WHERE id = ?", (item_id,)).fetchone()
+        if not row or os.path.splitext(row[0])[1].lower() not in (".pdf", ".ai"):
+            raise HTTPException(404)
+        if not os.path.isfile(row[0]):
+            raise HTTPException(404, "file is missing on disk")
+        return row[0]
+
+    @app.get("/api/items/{item_id}/pages")
+    def pdf_pages(item_id: int):
+        """Pages of a PDF (or PDF-based .ai) for paging in the viewer."""
+        from . import pdfpages
+        try:
+            return _json(pdfpages.pages(_pdf_path(item_id)))
+        except pdfpages.PageError as e:
+            raise HTTPException(415, str(e)) from None
+
+    @app.get("/api/items/{item_id}/page/{n}")
+    def pdf_page(item_id: int, n: int, s: int = Query(1600, ge=16, le=8000)):
+        from . import pdfpages
+        path = _pdf_path(item_id)
+        try:
+            body = pdfpages.render(path, n, s)
+        except pdfpages.PageError as e:
+            raise HTTPException(404 if "no such page" in str(e) else 415, str(e)) from None
+        st = os.stat(path)
+        return Response(body, media_type="image/webp",
+                        headers={"Cache-Control": "private, max-age=600", "ETag": f'"{st.st_mtime_ns}-{st.st_size}-{n}-{s}"'})
+
+    @app.get("/api/items/{item_id}/page/{n}/info")
+    def pdf_page_info(item_id: int, n: int):
+        from . import pdfpages
+        try:
+            return _json(pdfpages.info(_pdf_path(item_id), n))
+        except pdfpages.PageError as e:
+            raise HTTPException(404 if "no such page" in str(e) else 415, str(e)) from None
+
     @app.get("/api/export/presets")
     def export_presets():
         return _json({k: v["label"] for k, v in assets.PRESETS.items()})
@@ -819,6 +893,45 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.post("/api/export/cancel")
     def export_cancel():
         exporter.cancel()
+        return _json({"ok": True})
+
+    # -- training datasets (image + caption .txt) ---------------------------------------
+    from . import dataset as dataset_mod
+    dataset_job = dataset_mod.DatasetJob(db)
+
+    def _dataset_plan(body: dict) -> dict:
+        try:
+            return dataset_mod.plan(
+                db, [int(i) for i in body.get("ids") or []], str(body.get("dest") or ""), str(body.get("folder") or "dataset"),
+                str(body.get("captions") or "both"), str(body.get("trigger") or ""), body.get("facets") or None,
+                bool(body.get("near_dupes", True)), int(body.get("max_side") or 0), str(body.get("format") or "keep"),
+                bool(body.get("flatten")), float(body.get("val") or 0), int(body.get("seed") or 1),
+                str(body.get("names") or "numbers"))
+        except dataset_mod.DatasetError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.get("/api/dataset/options")
+    def dataset_options():
+        return _json({"captions": dataset_mod.CAPTIONS, "formats": dataset_mod.FORMATS})
+
+    @app.post("/api/dataset/plan")
+    def dataset_plan(body: dict):
+        return _json(dataset_mod.summary(_dataset_plan(body)))
+
+    @app.post("/api/dataset/run")
+    def dataset_run(body: dict):
+        try:
+            return _json(dataset_job.start(_dataset_plan(body)))
+        except dataset_mod.DatasetError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.get("/api/dataset/job")
+    def dataset_status():
+        return _json(dataset_job.state)
+
+    @app.post("/api/dataset/cancel")
+    def dataset_cancel():
+        dataset_job.cancel()
         return _json({"ok": True})
 
     # -- contact sheets and joined images -------------------------------------------------
@@ -1128,7 +1241,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.put("/api/ai/settings")
     def ai_settings(body: dict):
-        return _json(_ai().save_settings(body))
+        a = _ai()
+        a.save_settings(body)
+        return _json(a.public_settings())
 
     @app.post("/api/ai/embed")
     def ai_embed(body: dict):
@@ -1201,11 +1316,15 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         return _json({"ok": True})
 
     @app.get("/api/ai/ollama")
-    def ai_ollama():
+    @app.get("/api/ai/vlm")
+    def ai_vlm_models():
+        """Models of the chosen vision model server (Ollama or OpenAI-compatible)."""
+        a = _ai()
+        provider = a.settings()["vlm_provider"]
         try:
-            return _json({"ok": True, "models": _ai().ollama_models()})
+            return _json({"ok": True, "provider": provider, "models": a.vlm_models()})
         except Exception as e:
-            return _json({"ok": False, "error": str(e), "models": []})
+            return _json({"ok": False, "provider": provider, "error": str(e), "models": []})
 
     @app.get("/api/job")
     def job_status():

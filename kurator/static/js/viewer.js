@@ -34,7 +34,20 @@ export class Viewer {
     this.back = el('button', { class: 'v-back', title: 'Back to the grid (Esc)', onclick: () => this.close() },
       el('span', { text: '← Back' }), el('span', { class: 'v-key', text: 'Esc' }));
     this.loading = el('div', { class: 'v-loading' }, el('div', { class: 'v-load-text' }), el('div', { class: 'pbar' }, el('span')));
-    this.root = el('div', { class: 'viewer', tabindex: '-1' }, this.stage, this.loading, this.back, this.bar, this.prev, this.next);
+    // pages of a PDF: ‹ page 3 / 12 ›
+    this.pageLbl = el('input', { class: 'v-page-in', type: 'text', inputmode: 'numeric', title: 'Page (type a number, Enter)' });
+    this.pageLbl.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { const n = parseInt(this.pageLbl.value, 10); if (n > 0) this.gotoPage(n - 1); this.pageLbl.blur(); }
+      if (e.key === 'Escape') { this.paintPage(); this.pageLbl.blur(); }
+    });
+    this.pageTotal = el('span', { class: 'v-page-total' });
+    this.pageBox = el('div', { class: 'v-pages' },
+      el('button', { class: 'v-btn', text: '‹', title: 'Previous page ([ or Page Up)', onclick: () => this.gotoPage(this.page - 1) }),
+      el('span', { text: 'Page' }), this.pageLbl, this.pageTotal,
+      el('button', { class: 'v-btn', text: '›', title: 'Next page (] or Page Down)', onclick: () => this.gotoPage(this.page + 1) }));
+    for (const ev of ['pointerdown', 'wheel', 'dblclick']) this.pageBox.addEventListener(ev, (e) => e.stopPropagation());
+    this.root = el('div', { class: 'viewer', tabindex: '-1' }, this.stage, this.loading, this.back, this.bar, this.prev, this.next, this.pageBox);
     document.body.append(this.root);
     this.bg = prefs.get('viewer.bg', 'dark');
     this.pixel = prefs.get('viewer.pixel', false);
@@ -71,8 +84,9 @@ export class Viewer {
     if (this.video) { this.video.pause(); this.video.removeAttribute('src'); this.video.load(); }
     this.isVideo = false;
     this.isSound = false;
+    this.pdf = null;
     if (this.wave?.root.isConnected) this.wave.root.remove();
-    this.root.classList.remove('mode3d', 'mesh-ready', 'mode-video', 'mode-sound');
+    this.root.classList.remove('mode3d', 'mesh-ready', 'mode-video', 'mode-sound', 'has-pages');
     this.app.onViewerClosed(this.i);
   }
 
@@ -97,12 +111,14 @@ export class Viewer {
     this.showSound(AUDIO.has(ext) ? it.ids[i] : null);
     this.findMaps(!this.is3d && !isVideo && !AUDIO.has(ext) ? it.ids[i] : null);
     this.findPrint(!this.is3d && !isVideo && !AUDIO.has(ext) ? it.ids[i] : null);
+    this.findPages((ext === 'pdf' || ext === 'ai') && it.v[i] !== 'e' ? it.ids[i] : null);
     if (this.w && this.h) this.fitView();
     this.title.textContent = it.n[i];
     this.info.textContent = `${fmtNum(i + 1)} / ${fmtNum(it.ids.length)} · ${this.w && this.h ? `${this.w}×${this.h} · ` : ''}${fmtDate(it.d[i])}`
       + (this.is3d ? ' · drag: turn · right-drag: move · wheel: zoom · 0: reset' : '')
       + (this.isVideo ? ' · Space: play/pause · Shift+← →: 5 s' : isVideo ? ' · this format plays in your video app (O)' : '')
-      + (this.isSound ? ' · click: play from there · drag: select · wheel: zoom · double-click: whole sound · Space: play/pause' : '');
+      + (this.isSound ? ' · click: play from there · drag: select · wheel: zoom · double-click: whole sound · Space: play/pause' : '')
+      + (ext === 'pdf' || ext === 'ai' ? ' · [ ]: pages' : '');
     this.paintSel();
     this.paintTags();
     this.root.classList.toggle('alpha', !!it.a[i]);
@@ -146,6 +162,68 @@ export class Viewer {
     this.root.classList.toggle('has-boxes', !!boxes);
     this.setBoxes(boxes);
     if (this.inksOn && this.inksOk) this.setInks(true); else if (!this.inksOk) this.setInks(false, true);
+  }
+
+  /** PDFs (and PDF-based .ai): page through the document, re-rendered sharp when zoomed in. */
+  async findPages(id) {
+    this.pdf = null;
+    this.page = 0;
+    this.renderedSide = 1600;
+    this.root.classList.remove('has-pages');
+    if (id == null) return;
+    let d;
+    try { d = await (await fetch(`/api/items/${id}/pages`)).json(); } catch { return; }
+    if (!this.isOpen || this.items.ids[this.i] !== id || !d?.count) return;
+    this.pdf = { id, ...d };
+    this.root.classList.toggle('has-pages', d.count > 1);
+    if (d.count > 1 && this.fitted) this.fitView();
+    this.paintPage();
+  }
+
+  paintPage() {
+    if (!this.pdf) return;
+    const lab = this.pdf.labels?.[this.page];
+    this.pageLbl.value = lab || String(this.page + 1);
+    this.pageTotal.textContent = `/ ${fmtNum(this.pdf.count)}`;
+  }
+
+  gotoPage(n) {
+    const p = this.pdf;
+    if (!p) return false;
+    n = Math.max(0, Math.min(p.count - 1, n));
+    if (n === this.page) { this.paintPage(); return true; }
+    this.page = n;
+    [this.w, this.h] = p.pages[n];
+    this.renderedSide = 1600;
+    this.img.classList.remove('ready');
+    this.img.src = n === 0 ? thumbUrl(this.items, this.i, 1600) : `/api/items/${p.id}/page/${n}?s=1600`;
+    this.fitView();
+    this.paintPage();
+    this.info.textContent = this.info.textContent.replace(/^([^·]+· )(\d+×\d+ · )?/, `$1${this.w}×${this.h} · `);
+    fetch(`/api/items/${p.id}/page/${n}/info`).then((r) => r.json()).then((pi) => {
+      if (!this.isOpen || this.pdf !== p || this.page !== n) return;
+      const rel = pi.boxes_rel;
+      const boxes = rel && (rel.trim || rel.bleed) ? rel : null;
+      this.root.classList.toggle('has-boxes', !!boxes);
+      this.setBoxes(boxes);
+    }).catch(() => {});
+    return true;
+  }
+
+  /** Zoomed in on a PDF page: render it again with more pixels (vector sharp), a moment after zooming stops. */
+  sharpenPage() {
+    const p = this.pdf;
+    if (!p) return;
+    const need = Math.min(8000, Math.ceil(Math.max(this.w, this.h) * this.s * (window.devicePixelRatio || 1)));
+    if (need <= this.renderedSide * 1.15) return;
+    clearTimeout(this.sharpTimer);
+    this.sharpTimer = setTimeout(() => {
+      if (!this.isOpen || this.pdf !== p) return;
+      const n = this.page, side = Math.min(8000, Math.ceil(need / 256) * 256);
+      const pre = new Image();
+      pre.onload = () => { if (this.isOpen && this.pdf === p && this.page === n) { this.img.src = pre.src; this.renderedSide = side; } };
+      pre.src = `/api/items/${p.id}/page/${n}?s=${side}`;
+    }, 250);
   }
 
   toggleInks() {
@@ -334,9 +412,10 @@ export class Viewer {
     const r = this.stage.getBoundingClientRect();
     if (!this.w || !this.h || !r.width) return;
     const maxUp = this.pixel ? 16 : 4;
-    this.s = Math.min((r.width - 40) / this.w, (r.height - 40) / this.h, maxUp);
+    const top = this.root.classList.contains('has-pages') ? 36 : 0;   // room for the page bar
+    this.s = Math.min((r.width - 40) / this.w, (r.height - 40 - top) / this.h, maxUp);
     this.tx = (r.width - this.w * this.s) / 2;
-    this.ty = (r.height - this.h * this.s) / 2;
+    this.ty = top + (r.height - top - this.h * this.s) / 2;
     this.fitted = true;
     this.apply();
   }
@@ -364,6 +443,7 @@ export class Viewer {
       c.width = im.style.width; c.height = im.style.height; c.transform = im.style.transform;
     }
     if (!this.root.classList.contains('mesh-ready')) this.zoomLbl.textContent = `${Math.round(this.s * 100)}%`;
+    if (this.pdf) this.sharpenPage();
     // Need more pixels than the 1600 preview has? Switch to the original file.
     if (!this.full && this.viewable && Math.max(this.w, this.h) * this.s > 1700 && Math.max(this.w, this.h) > 1600) {
       this.full = true;
@@ -441,6 +521,8 @@ export class Viewer {
     }
     if (this.isVideo && e.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) { this.video.currentTime += k === 'ArrowLeft' ? -5 : 5; return true; }
     if (k === ' ' && !e.ctrlKey) { if (!e.repeat) this.close(); return true; }
+    if (this.pdf?.count > 1 && (k === ']' || k === 'PageDown')) { this.gotoPage(this.page + 1); return true; }
+    if (this.pdf?.count > 1 && (k === '[' || k === 'PageUp')) { this.gotoPage(this.page - 1); return true; }
     if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown') { this.step(1); return true; }
     if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp') { this.step(-1); return true; }
     if (k === 'Home') { this.show(0); return true; }

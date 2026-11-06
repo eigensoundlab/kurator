@@ -186,6 +186,18 @@ class App {
       const pct = j.bytes_total ? Math.round((100 * j.bytes_done) / j.bytes_total) : 0;
       this.stJob.textContent = `${j.kind === 'ai' ? 'AI' : j.kind === 'restore' ? 'Restoring' : 'Backing up'} ${pct}% · ${fmtNum(j.files_done)}/${fmtNum(j.files_total)}`;
     } else this.stJob.textContent = '';
+    this.paintBackupDue(st.backup_due || [], j.running);
+  }
+
+  /** "Backup due" reminder in the status bar (sets with a schedule, see Backup → set → When). */
+  paintBackupDue(due, running) {
+    const show = !running && due.length;
+    this.stDue.style.display = show ? '' : 'none';
+    if (!show) return;
+    const d = due[0];
+    const when = d.days == null ? 'never backed up' : `last backup ${Math.floor(d.days)} day${Math.floor(d.days) === 1 ? '' : 's'} ago`;
+    this.stDue.textContent = `⚠ Backup due: ${d.name}${due.length > 1 ? ` (+${due.length - 1})` : ''}`;
+    this.stDue.title = `${when}${!d.reachable ? ' - connect the backup disk' : d.auto ? ' - starts by itself in a few minutes' : ''}. Click to open Backup.`;
   }
 
   poll() {
@@ -1033,11 +1045,12 @@ class App {
     this.stScan = el('span', { class: 'st-scan' });
     this.stSel = el('span', { class: 'st-sel' });
     this.stJob = el('span', { class: 'st-job', title: 'Open Backup', onclick: () => openBackupDialog(this) });
+    this.stDue = el('button', { class: 'btn small st-due', style: { display: 'none' }, onclick: () => openBackupDialog(this) });
     this.autoPlayBtn = el('button', { class: 'btn small', title: 'Play sounds when you click them or move onto them with the arrow keys (P)',
       onclick: () => this.setAutoPlay(!this.autoPlay) });
     this.showSelBtn = el('button', { class: 'btn small', text: 'Show only selected', title: 'Temporarily show only the selected items',
       onclick: () => { this.showSel = !this.showSel; this.showSelBtn.classList.toggle('on', this.showSel); this.applyView({ keepScroll: false }); } });
-    bar.append(this.stCount, this.stScan, this.stJob, el('div', { class: 'spacer' }), this.autoPlayBtn, this.stSel,
+    bar.append(this.stCount, this.stScan, this.stJob, this.stDue, el('div', { class: 'spacer' }), this.autoPlayBtn, this.stSel,
       el('button', { class: 'btn small', text: 'All', title: 'Select all (Ctrl+A)', onclick: () => this.selectAll() }),
       el('button', { class: 'btn small', text: 'Invert', title: 'Invert selection (Ctrl+I)', onclick: () => this.invertSelection() }),
       el('button', { class: 'btn small', text: 'Clear', title: 'Clear selection (Esc)', onclick: () => this.clearSelection() }),
@@ -1246,6 +1259,7 @@ class App {
       ['3D: L · Alt+drag', 'Next light preset · turn the lights (view modes and maps: panel top right)'],
       ['L on 2D art', 'Lit preview with its _normal / _glow / _depth maps: the light follows the mouse'],
       ['I', 'Inks: C, M, Y, K plates, total ink and ink limit (CMYK pictures, or RGB with a proofing profile)'],
+      ['[ ]  PgUp PgDn', 'Pages of a PDF (in the viewer); zooming in renders the page sharper'],
       ['Videos', 'Space: play / pause · Shift+← →: 5 s back / forward · O: open in your player'],
       ['Sounds', 'Click the waveform to jump · wheel: zoom · Space: play / pause · the menu switches waveform styles'],
       ['Sounds: drag · E', 'Select a region (Space plays it) · save the region as a new file'],

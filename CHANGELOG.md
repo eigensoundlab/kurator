@@ -2,6 +2,27 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.15.0 – Basis Universal textures, HDR pictures, PDF pages, datasets, licences
+- **Basis Universal KTX2** (ETC1S and UASTC, also inside glTF via `KHR_texture_basisu`) decoded by
+  Kurator itself - a Python port of the official transcoder, checked pixel for pixel against it.
+  Thumbnails use the smallest mip level that is big enough. The newest Basis formats (UASTC HDR,
+  XUASTC) and HDR ASTC go through the official `basisu` tool when it is installed.
+- **HDR pictures:** OpenEXR (`.exr`: uncompressed, RLE, ZIP; scanline and tiled; layers, depth) and
+  Radiance `.hdr`, tone-mapped.
+- **PDF pages** in the viewer: `[` `]` or Page Up/Down, type a page number; zooming in renders the
+  page sharper.
+- **Vision models through any OpenAI-compatible server** (llama.cpp, LM Studio, vLLM...) besides
+  Ollama, for tag suggestions and captions.
+- **Training datasets:** pictures + caption `.txt` + `metadata.jsonl` (kohya-ss, OneTrainer,
+  ai-toolkit, diffusers), captions from AI captions and/or tags, trigger word, duplicates and
+  near-duplicates left out, resizing, format, train/validation split.
+- **Source, author and licence** per file: panel fields, search (`licence:none`, `author:...`),
+  XMP sidecars, export and dataset manifests; they follow files moved outside Kurator.
+- **XMP:** keywords can be merged into sidecars written by Lightroom, darktable, digiKam or Bridge
+  (their keywords and everything else stay; a copy is kept first).
+- **Backup schedule:** a reminder every N days, or backups that run by themselves while Kurator is
+  open and the disk is connected.
+
 ## 0.14.0 – print views, text-to-sound search, Unity import settings, KTX2
 - **Print:** previews through embedded ICC profiles (CMYK, Adobe RGB…); colour mode, profile, print
   size; PDF page/trim/bleed, PDF/X, output intent, spot colours, fonts; **◧ Inks** (C/M/Y/K

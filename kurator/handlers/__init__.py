@@ -87,4 +87,5 @@ from . import audio as _audio  # noqa: E402,F401
 from . import model3d as _model3d  # noqa: E402,F401
 from . import video as _video  # noqa: E402,F401
 from . import ktx2 as _ktx2  # noqa: E402,F401
+from . import hdr as _hdr  # noqa: E402,F401
 from . import placeholder as _placeholder  # noqa: E402,F401

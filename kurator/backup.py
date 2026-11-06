@@ -133,16 +133,18 @@ def save_set(db: Database, data: dict, set_id: int | None = None) -> dict:
     with db.write_lock:
         c.execute("BEGIN")
         try:
+            every = data.get("every_days")
+            every = min(365.0, max(0.25, float(every))) if every not in (None, "", 0, "0") else None
             vals = (name, layout, tmpl, policy, mode, int(bool(data.get("verify", True))), json.dumps(scope),
-                    int(bool(data.get("dedupe", True))))
+                    int(bool(data.get("dedupe", True))), every, int(bool(data.get("auto")) and every is not None))
             if set_id is None:
-                set_id = c.execute("INSERT INTO backup_sets(name, layout, tag_template, policy, mode, verify, scope, dedupe, created) "
-                                   "VALUES (?,?,?,?,?,?,?,?,?)", (*vals, time.time())).lastrowid
+                set_id = c.execute("INSERT INTO backup_sets(name, layout, tag_template, policy, mode, verify, scope, dedupe, "
+                                   "every_days, auto, created) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (*vals, time.time())).lastrowid
             else:
                 if not c.execute("SELECT 1 FROM backup_sets WHERE id=?", (set_id,)).fetchone():
                     raise BackupError("No such backup set")
-                c.execute("UPDATE backup_sets SET name=?, layout=?, tag_template=?, policy=?, mode=?, verify=?, scope=?, dedupe=? WHERE id=?",
-                          (*vals, set_id))
+                c.execute("UPDATE backup_sets SET name=?, layout=?, tag_template=?, policy=?, mode=?, verify=?, scope=?, dedupe=?, "
+                          "every_days=?, auto=? WHERE id=?", (*vals, set_id))
             existing = {r[0]: r[1] for r in c.execute("SELECT id, location FROM backup_targets WHERE set_id=?", (set_id,))}
             keep = set()
             for pos, (t, loc, kind) in enumerate(zip(targets, locs, kinds)):
@@ -166,6 +168,70 @@ def save_set(db: Database, data: dict, set_id: int | None = None) -> dict:
             c.execute("ROLLBACK")
             raise
     return _set_row(db, set_id)
+
+
+def due(db: Database, now: float | None = None) -> list[dict]:
+    """Backup sets with a schedule whose time has come: {id, name, days (since the last run, None:
+    never), auto, reachable (a target can be written now - a disk may be unplugged)}."""
+    now = now or time.time()
+    out = []
+    for sid, name, every, auto, last in db.cat.execute(
+            "SELECT id, name, every_days, auto, last_run FROM backup_sets WHERE every_days IS NOT NULL ORDER BY id").fetchall():
+        if last and now - last < every * 86400:
+            continue
+        reachable = False
+        for t in db.cat.execute("SELECT * FROM backup_targets WHERE set_id = ? ORDER BY position, id", (sid,)).fetchall():
+            t = dict(t)
+            if t["kind"] != "local":                     # cloud: assume reachable; the run reports problems
+                reachable = True
+                break
+            if os.path.isdir(t["location"]) or os.path.isdir(os.path.dirname(t["location"].rstrip("\\/")) or "/"):
+                reachable = True
+                break
+        out.append({"id": sid, "name": name, "days": round((now - last) / 86400, 1) if last else None,
+                    "every_days": every, "auto": bool(auto), "reachable": reachable})
+    return out
+
+
+def run_due(db: Database, jobs: "Jobs") -> list[int]:
+    """Start the first due automatic backup (one job at a time). Returns the set ids started."""
+    if jobs.status().get("running"):
+        return []
+    for d in due(db):
+        if d["auto"] and d["reachable"]:
+            try:
+                jobs.start_backup(d["id"])
+                return [d["id"]]
+            except BackupError:
+                return []
+    return []
+
+
+class Scheduler:
+    """Checks every few minutes for automatic backups that are due (while Kurator runs)."""
+
+    def __init__(self, db: Database, jobs: "Jobs", first: float = 120, every: float = 600):
+        self.db, self.jobs = db, jobs
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, args=(first, every), name="kurator-backup-schedule", daemon=True)
+
+    def start(self) -> "Scheduler":
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self, first: float, every: float) -> None:
+        if self._stop.wait(first):
+            return
+        while True:
+            try:
+                run_due(self.db, self.jobs)
+            except Exception:
+                pass
+            if self._stop.wait(every):
+                return
 
 
 def delete_set(db: Database, set_id: int) -> None:

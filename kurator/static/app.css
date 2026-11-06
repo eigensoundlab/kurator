@@ -541,3 +541,21 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .pbox { position: absolute; border: 1px dashed; box-sizing: border-box; }
 .pbox span { position: absolute; left: 2px; top: 1px; font-size: 10px; color: #fff; background: #000a; padding: 0 3px; border-radius: 2px; }
 .pbox-bleed span { top: auto; bottom: 1px; }
+
+/* v0.15: pages of a PDF in the viewer */
+.v-pages { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 3; display: none;
+  align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; background: #000c; color: #ddd; font-size: 13px; }
+.viewer.has-pages .v-pages { display: inline-flex; }
+.viewer.mode3d .v-pages, .viewer.mode-video .v-pages, .viewer.mode-sound .v-pages { display: none; }
+.v-page-in { width: 3.2em; text-align: center; background: #222; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 2px 4px; font: inherit; }
+.v-page-total { color: #aaa; }
+
+/* v0.15: source & licence in the panel */
+.p-info input[type=text] { width: 100%; box-sizing: border-box; }
+.p-info .kv th { width: 64px; vertical-align: middle; }
+.p-info .btn { margin-top: 6px; }
+.st-due { background: #5a4500; border-color: #a07c00; color: #ffe08a; }
+.ds-facets { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+.dsdlg .row { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: flex-start; }
+.dsdlg .row label.chk { white-space: nowrap; }
+.dsdlg .row > * { flex: none; }

@@ -152,6 +152,17 @@ export async function openBackupDialog(app) {
     mode.value = v.mode;
     const verify = el('input', { type: 'checkbox' });
     verify.checked = !!v.verify;
+    // schedule: a reminder, or the backup runs by itself while Kurator is open
+    const when = el('select', {}, el('option', { value: 'off', text: 'Only when I start it' }),
+      el('option', { value: 'remind', text: 'Remind me every' }), el('option', { value: 'auto', text: 'Back up by itself every' }));
+    when.value = v.every_days ? (v.auto ? 'auto' : 'remind') : 'off';
+    const every = el('select', {}, [[1, 'day'], [2, '2 days'], [3, '3 days'], [7, 'week'], [14, '2 weeks'], [30, 'month']]
+      .map(([d, t]) => el('option', { value: String(d), text: t })));
+    every.value = String(v.every_days || 7);
+    if (![...every.options].some((o) => o.value === every.value)) every.append(el('option', { value: every.value, text: `${every.value} days` }));
+    const syncWhen = () => { every.style.display = when.value === 'off' ? 'none' : ''; };
+    when.onchange = syncWhen;
+    syncWhen();
     const dedupe = el('input', { type: 'checkbox' });
     dedupe.checked = v.dedupe == null ? true : !!v.dedupe;
     const msg = el('div');
@@ -159,6 +170,7 @@ export async function openBackupDialog(app) {
     const save = async () => {
       const payload = {
         name: name.value, policy: policy.value, mode: mode.value, verify: verify.checked, dedupe: dedupe.checked,
+        every_days: when.value === 'off' ? null : +every.value, auto: when.value === 'auto',
         layout: layoutTags.checked ? 'tags' : 'original', tag_template: tmpl.value || '{tagpath}',
         scope: scopeSel.value === 'tags' ? { tags: [...chosen] } : {},
         targets: v.targets.filter((t) => (t.location || '').trim()).map((t) => ({ id: t.id, kind: t.kind || 'local', location: t.location, reserve_gb: (t.reserve ?? 1024 ** 3) / 1024 ** 3 })),
@@ -185,6 +197,9 @@ export async function openBackupDialog(app) {
       el('label', { class: 'chk' }, verify, 'Verify every copy (read it back and compare checksums)'),
       el('label', { class: 'chk', title: 'The same image in several folders is stored once; restoring puts it back in every folder' }, dedupe,
         'Store identical files once (copies in other folders point to it)'),
+      el('h3', { text: 'When' }),
+      el('div', { class: 'row' }, when, every),
+      el('div', { class: 'p-hint small', text: 'A reminder shows in the status bar when the backup is due. "By itself" starts the backup while Kurator is open, when the target disk is connected (otherwise you get the reminder). Each run only copies what changed.' }),
       msg,
       footer(btn('Back', showList), btn(isNew ? 'Create backup set' : 'Save', save, 'primary')));
   }

@@ -19,13 +19,16 @@ from ..processing import process_file
 from .embed import MODELS, AIUnavailable, Embedder, image_from_bytes, prompts_for, status
 from .sound import SOUND_MODELS, SoundEmbedder, SoundUnavailable
 from .sound import available as sound_available
-from .vlm import NONE, Ollama, VLMError, jpeg_for_vlm
+from .vlm import NONE, Ollama, OpenAICompatible, VLMError, jpeg_for_vlm
 
 # files that only have a generic 'no preview' card are not worth an embedding
 REAL_PREVIEW = "(meta IS NULL OR json_extract(meta, '$.placeholder') IS NULL)"
 BATCH = 32
 DEFAULTS = {"model": "fast", "custom_model": None, "custom_pretrained": None, "ollama_url": "http://127.0.0.1:11434",
-            "vlm_model": "", "sound_model": "clap"}
+            "vlm_model": "", "sound_model": "clap",
+            # vision-language model server: "ollama" or "openai" (any OpenAI-compatible server)
+            "vlm_provider": "ollama", "openai_url": "http://127.0.0.1:8080/v1", "openai_key": ""}
+VLM_PROVIDERS = {"ollama": "Ollama", "openai": "OpenAI-compatible server (llama.cpp, LM Studio, vLLM, ...)"}
 
 
 class AIError(ValueError):
@@ -72,12 +75,29 @@ class AIService:
             raise AIError("Unknown model")
         if s["sound_model"] not in SOUND_MODELS and s["sound_model"] != "off":
             raise AIError("Unknown sound model")
+        if s["vlm_provider"] not in VLM_PROVIDERS:
+            raise AIError("Unknown vision model server")
+        for k in ("ollama_url", "openai_url", "openai_key", "vlm_model"):
+            s[k] = str(s.get(k) or "").strip()[:500]
         self.db.set_setting("ai", s)
         if self._embedder and self._embedder.key != self._model_key(s):
             self._embedder.unload()
             self._embedder = None
             self._matrix = None
         return s
+
+    def public_settings(self) -> dict:
+        """Settings for the app: the API key is not sent back, only whether one is set."""
+        s = self.settings()
+        s["openai_key_set"] = bool(s.get("openai_key"))
+        s["openai_key"] = ""
+        return s
+
+    def vlm_client(self):
+        s = self.settings()
+        if s["vlm_provider"] == "openai":
+            return OpenAICompatible(s["openai_url"], s["openai_key"])
+        return Ollama(s["ollama_url"])
 
     def _model_key(self, s=None) -> str:
         s = s or self.settings()
@@ -132,7 +152,8 @@ class AIService:
         images = self.db.cat.execute("SELECT COUNT(DISTINCT hash) FROM files WHERE status = 1 AND kind IN ('image', 'model', 'video') AND hash IS NOT NULL "
                                      "AND root_id IN (SELECT id FROM roots WHERE kind='library') AND " + REAL_PREVIEW).fetchone()[0]
         pending = self.db.cat.execute("SELECT COUNT(*) FROM suggestions").fetchone()[0]
-        return {"status": status(), "settings": self.settings(), "models": {k: v[2] for k, v in MODELS.items()},
+        return {"status": status(), "settings": self.public_settings(), "models": {k: v[2] for k, v in MODELS.items()},
+                "vlm_providers": VLM_PROVIDERS,
                 "model_key": key, "embedded": n, "images": images, "suggestions": pending, "job": dict(self.state),
                 "sound_models": {k: v[1] for k, v in SOUND_MODELS.items()}, "sound_search": sound_available(),
                 "sounds": nsounds, "sounds_embedded": ns}
@@ -646,8 +667,8 @@ class AIService:
         if not model:
             raise AIError("Choose a vision model (e.g. gemma3:12b) for this pool")
         if self._embedder:
-            self._embedder.unload()  # leave the GPU to Ollama
-        ol = Ollama(s["ollama_url"])
+            self._embedder.unload()  # leave the GPU to the vision model
+        ol = self.vlm_client()
         tags = [(t["name"].split("/")[-1], (t.get("ai_prompt") or "").strip()) for t in pool]
         by_leaf = {t["name"].split("/")[-1]: t["id"] for t in pool}
         n_sugg = n_cap = 0
@@ -735,4 +756,8 @@ class AIService:
             "SELECT model, text FROM captions WHERE file_id = ? ORDER BY created DESC", (file_id,))]
 
     def ollama_models(self) -> list[str]:
-        return Ollama(self.settings()["ollama_url"]).models()
+        return self.vlm_models()
+
+    def vlm_models(self) -> list[str]:
+        """Models of the chosen vision model server."""
+        return self.vlm_client().models()

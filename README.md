@@ -4,16 +4,18 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.14 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.15 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
 > **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
 > you work inside, similar images, version stacks, colour and shape filters, a timeline,
 > sprite sheets and texture atlases, **textured 3D models with lights**, a **lit preview for 2D art
 > with normal/glow/depth maps**, **print previews (CMYK inks, ink limit, proofing, PDF boxes and
-> spot colours)**, **Unity sprite import settings**, and optional local AI (search pictures *and
-> sounds* by description, find similar,
-> tag suggestions from a pool you choose) work.
+> spot colours)**, **Unity sprite import settings**, **Basis Universal KTX2 and HDR (EXR) textures**,
+> **PDF page browsing**, **source / author / licence** per file, **training-dataset export**,
+> backup reminders, and optional local AI (search pictures *and sounds* by description, find
+> similar, tag suggestions from a pool you choose, Ollama or any OpenAI-compatible vision server)
+> work.
 > See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
 
 **Author:** Daniel Sandner. See [eigensound.com](https://eigensound.com/) (sound research) and
@@ -127,8 +129,8 @@ Nothing ticked means all types. The choice is remembered.
 | Images | jpg jpeg jfif jpe png webp gif bmp tif tiff avif **heic heif** jp2 j2k jpx qoi ico icns pcx sgi rgb ppm pgm pbm pnm | full (HEIC via pi-heif, decode only) |
 | Work files | **psd**, kra, ora, **procreate**, **clip** (Clip Studio), afphoto, xcf, sai, sai2, mdp, pdn | the embedded preview the app saved; Affinity/SAI/… show a card unless Windows has a thumbnail for them |
 | Vector | **svg svgz** (resvg), **ai** (PDF-based Illustrator files), **eps** (embedded preview; Ghostscript if installed), **cdr** (embedded thumbnail), afdesign, fig, sketch, xd | rendered or embedded |
-| Documents | **pdf** (first page, pdfium), **indd** (XMP thumbnail), afpub, sla | first page / embedded |
-| Game textures | tga, dds, blp, **ktx2** | full; KTX2: uncompressed, BC1–7, ETC2/EAC and ASTC (3D add-on), Zstd/zlib supercompression - Basis Universal (ETC1S/UASTC) shows a card |
+| Documents | **pdf** (first page; the viewer pages through all of them, pdfium), **indd** (XMP thumbnail), afpub, sla | first page / embedded |
+| Game textures | tga, dds, blp, **ktx2**, **exr**, **hdr** | full; KTX2: uncompressed, BC1–7, **Basis Universal ETC1S and UASTC** (Kurator's own decoder), ETC2/EAC and ASTC (3D add-on), Zstd/zlib supercompression, newer Basis formats through the `basisu` tool if installed; OpenEXR (none/RLE/ZIP, scanline or tiled) and Radiance HDR tone-mapped |
 | Video | **mp4 m4v mov webm ogv** (play in Kurator), mkv avi wmv flv mpg mpeg m2ts mts ts 3gp mxf vob | a frame + hover scrubbing (needs ffmpeg) |
 | 3D models | **glb gltf obj fbx stl ply dae 3mf 3ds off usda usdz vox**, **usd usdc** (3D add-on), **blend** (also .blend1), ma mb max c4d ztl zpr abc 3dm skp lwo hip spp sbs sbsar | rendered by Kurator / Blender's saved thumbnail / embedded (3MF, SketchUp) / Windows |
 | Audio | wav, mp3, ogg, oga, opus, flac, m4a, aac, aif/aiff/aifc, caf, w64, rf64, wma | waveform |
@@ -136,6 +138,9 @@ Nothing ticked means all types. The choice is remembered.
 - **Licences:** everything is permissively licensed (pdfium BSD/Apache, resvg MIT, libheif via
   pi-heif LGPL as a separate library, libsndfile LGPL as a separate library). There is no GPL code.
   CorelDRAW, Affinity and InDesign files are never parsed beyond their embedded previews.
+- **Basis Universal textures:** ETC1S and UASTC need nothing extra. The newest Basis formats
+  (UASTC HDR, XUASTC) and HDR ASTC need the official `basisu` tool from the Basis Universal
+  releases on GitHub. Put it on the PATH, or set `KURATOR_BASISU` to its path.
 - **Windows thumbnails:** for formats Kurator cannot read itself, it asks Windows for the thumbnail
   that the installed application provides (e.g. Affinity, CorelDRAW), if any.
 - SVG files are shown sandboxed (no scripts), even in the viewer.
@@ -223,9 +228,12 @@ the models run on your computer. The first use of a model downloads it once from
      - *Learn from my tags*: trains a small classifier on the images you have already tagged with
        the pool's tags (a few dozen per tag are enough) and reports its accuracy. Retrain any time;
        it takes seconds. Sub-tags count for their parent.
-     - *Gemma via Ollama*: asks a local vision model such as `gemma3:12b` (`ollama pull gemma3:12b`)
-       with a fixed answer list, so it can only answer with your tags or "none of these". It can
-       also write a **caption** per image (for training datasets).
+     - *Vision-language model*: asks a local vision model such as Gemma 3 or Qwen-VL with a fixed
+       answer list, so it can only answer with your tags or "none of these". It can also write a
+       **caption** per image (for training datasets). The model runs in **Ollama**
+       (`ollama pull gemma3:12b`) or any **OpenAI-compatible server**: llama.cpp's `llama-server`
+       (with `--mmproj`), LM Studio's local server, vLLM, LocalAI, Jan. Choose it under
+       *AI → Vision model server* (address, optional API key, *Check*).
    - **Run on** the selection or the current view. In *one tag per image* mode, images that already
      have a tag from the pool are skipped.
 5. **Review.** Suggestions are not tags until you accept them. They show as hollow dots in the grid
@@ -233,6 +241,15 @@ the models run on your computer. The first use of a model downloads it once from
    press **A** to accept or **Shift+A** to reject. Rejections are remembered, so the same wrong
    suggestion doesn't come back, and they teach *Learn from my tags* what a tag is not. You can also
    accept all suggestions above a score. Accepted tags are marked ✦ and can be undone with Ctrl+Z.
+6. **Training datasets** (*AI → Training dataset → Export…*, works without the AI add-on too):
+   - the selection or the view becomes pictures with caption `.txt` files and a `metadata.jsonl`.
+     This is the layout kohya-ss, OneTrainer, ai-toolkit, SimpleTuner and diffusers read.
+   - **Captions:** the AI captions, tags (choose the tag groups), or both, with an optional
+     trigger word.
+   - **Duplicates:** identical files and near-duplicates go in once (the biggest copy).
+   - **Size and format:** optional downscaling, PNG/JPEG/WebP, transparency kept or flattened.
+   - **Split:** train/validation with a seed.
+   - `kurator_dataset.json` records every file's origin, caption, source, author and licence.
 
 Embeddings are stored in `embeddings.db` (one per image content and model; duplicates share one),
 next to the catalog.
@@ -275,7 +292,8 @@ group of the type filter.
   bar shows while a big model loads; **← Back** (top left) or Esc returns to the grid.
   - **Textures:** base colour, normal, emissive, occlusion and metal/roughness maps (glTF; OBJ
     `map_Kd`, `map_Bump`/`norm`, `map_Ke`…; FBX diffuse, normal and emissive textures, also
-    embedded ones). PNG, JPEG, WebP, TGA, DDS, TIFF, BMP and PSD textures work (KTX2 not yet). The
+    embedded ones). PNG, JPEG, WebP, TGA, DDS, TIFF, BMP, PSD, KTX2 (also Basis Universal, glTF
+    `KHR_texture_basisu`), EXR and HDR textures work. The
     geometry shows first, the textures follow.
   - **View:** *Lit*, *Base colour*, *Clay* (no textures), *Normals*, *UV checker*. Click a map in
     the list to see only that map on the model.
@@ -526,6 +544,21 @@ chip per filter (× removes it, *Clear filters* removes all but the project).
   a path). ◧ Inks then shows the *Proof* (how it prints), the plates as they'd be separated, total
   ink, and **Gamut** (green: colours the press can't reach).
 - **▭ Boxes** draws the trim (green) and bleed (red) boxes over a PDF page in the viewer.
+- **PDF pages:** the viewer pages through multi-page PDFs and Illustrator files (`[` `]` or Page
+  Up/Down, or type a page number). Zooming in renders the page again, so it stays sharp.
+
+### Source, author and licence
+
+- The side panel's **Source & licence** holds where a file came from (a URL, a shop, a book), who
+  made it, and its licence.
+  - Common licences are suggested (CC0, CC BY…, Own work, All rights reserved…), with a link to the
+    licence text.
+  - With several files selected, *Copy to the N selected* sets them all.
+- **Search:** `source:artstation`, `author:jane`, `licence:cc-by`, and `licence:none` for what still
+  needs a licence. Plain words in the search box look in these fields too.
+- The fields are stored in **XMP sidecars** (`dc:source`, `dc:creator`, `dc:rights`,
+  `xmpRights:WebStatement`), in project-export and dataset manifests, and follow files moved
+  outside Kurator.
 
 ### Game projects and code repositories
 
@@ -588,7 +621,14 @@ Sort by tag in one step. For example:
   Lightroom-style `lr:hierarchicalSubject`, digiKam `TagsList`) and its creation date. Lightroom,
   Bridge, darktable and digiKam can read them, so your tagging work is never locked into Kurator.
   You can write them on demand, or automatically whenever tags change.
-- **Images are never modified**, and sidecars created by other programs are never overwritten.
+- Source, author and licence go into the sidecar too.
+- **Images are never modified.** Sidecars created by other programs (Lightroom, darktable,
+  digiKam, Bridge) are left alone, unless you tick *Also update sidecars of other programs*:
+  - Kurator then adds its keywords to their keyword lists;
+  - their own keywords and everything else (develop settings, ratings, history) stay as they were;
+  - source, author and licence are added only where the sidecar has none;
+  - a copy of each such sidecar goes to `xmp-backup` in Kurator's data folder before its first
+    change.
 - No sidecars are written inside **Unity, Godot or Unreal projects or git repositories**: Unity would
   make `.meta` files for them and git would list them as new files. The dialog says how many were
   left out.
@@ -634,6 +674,9 @@ How runs work:
   overwrites, and it restores dates too.
 - **Coverage.** The Backup dialog shows how many library files are in no backup yet, or changed
   since their last one.
+- **When:** a set can **remind you** every day, week or month. A *Backup due* button then shows in
+  the status bar. A set can also **back up by itself** while Kurator is open, when its disk is
+  connected.
 - **Identical files are stored once.** If the same image sits in several folders, the backup holds
   one copy and the others point to it (in the manifest too); a restore puts it back in every
   folder. If one of them is edited later, it gets its own copy and the rest stay safe. The setting
@@ -744,6 +787,10 @@ kurator/
   projectdirs.py   engine projects and repositories: generated folders, sidecar rules
   unity.py         Unity .meta files: sprite import settings, sliced sprite sheets, undo
   printinfo.py     ICC conversion, CMYK inks, soft proofing, PDF print facts
+  pdfpages.py      PDF pages for the viewer (sizes, rendering at any size, page boxes)
+  basisu.py        Basis Universal ETC1S + UASTC decoder (port of the official transcoder)
+  fileinfo.py      source / author / licence per file, licence names and links, search terms
+  dataset.py       training datasets: captions, dedupe, resize, train/val split
   atlas.py         sprite sheets and packed texture atlases (+ TexturePacker JSON)
   audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms
   blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
@@ -767,13 +814,13 @@ kurator/
     render.py      numpy z-buffer rasteriser for thumbnails (textures sampled per pixel)
     pack.py        geometry, materials and maps for the 3D viewer
     meshopt.py     EXT_meshopt_compression decoder (pure Python/numpy)
-    (handlers/ktx2.py: KTX2 textures)
+    (handlers/ktx2.py: KTX2 textures; handlers/hdr.py: OpenEXR and Radiance HDR)
     native.py      Draco and binary USD decoders, run in a separate process (optional add-on)
   ai/              optional (install.bat ai)
     embed.py       SigLIP 2 / open_clip image+text embeddings, lazy load, GPU fp16, idle unload
     sound.py       LAION CLAP sound+text embeddings (transformers), 10 s windows at 48 kHz
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
-    vlm.py         Ollama client with a fixed-answer JSON schema
+    vlm.py         Ollama and OpenAI-compatible clients with a fixed-answer JSON schema
   static/          the UI: plain ES modules, no build step, no npm dependencies
 tests/             pytest: dates, indexing, API + security, tags, moves, rules, sidecars, watching
 tools/             sample library generator, indexing benchmark, browser UI checks
@@ -807,8 +854,12 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
 - 3D files are parsed by Kurator's own readers with size limits; XML-based formats with a DTD are
   refused, and a model may only pull extra files (glTF buffers, OBJ materials) from its own folder.
 - PDFs are rendered by pdfium without JavaScript; SVGs by resvg (no scripts, no external
-  resources). The AI add-on talks only to Ollama on your own computer, and downloads model weights
-  from Hugging Face on first use. The frontend has
+  resources). The AI add-on talks only to the vision model server you choose (Ollama or an
+  OpenAI-compatible server, normally on your own computer; its API key is never sent to the
+  browser), and downloads model weights from Hugging Face on first use.
+- Basis Universal, EXR and HDR files are decoded by Kurator's own Python code with size limits
+  (a fuzz test feeds it damaged files). The optional `basisu` tool runs as a separate process
+  with a time limit, on a temporary copy. The frontend has
   **zero** third-party dependencies.
 - **Staying current:** `update.bat` / `update.sh` upgrade every dependency to its newest compatible
   version and run `pip-audit`. On GitHub, CI runs the audit on every push and weekly, and Dependabot
@@ -834,25 +885,22 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
 1. ~~Core: indexer, dates, thumbnail cache, virtual grid, selection model, panel, viewer~~ ✅
 2. ~~Tags: hierarchy, hotkeys, filters, untagged view, re-link after outside moves~~ ✅
 3. ~~Moves with preview, date preservation across disks, undo; browse + pin folders~~ ✅
-4. ~~Move rules, XMP sidecars, keyword import, live folder watching, install/update scripts~~ ✅
-   Still open in this area:
-   - merging into sidecars written by other programs
-   - optionally writing the date into the file itself (ExifTool), only when you choose to
-   - saved searches; a source/licence field
+4. ~~Move rules, XMP sidecars, keyword import, live folder watching, install/update scripts~~ ✅;
+   ~~saved searches (saved views), a source/licence field, merging into other programs' sidecars~~ ✅
+   Still open: optionally writing the date into the file itself (ExifTool), only when you choose
+   to.
 5. ~~Backup to disks/folders: incremental, verified, several targets, tag-folder layout, restore~~ ✅
-6. ~~Cloud backup via rclone (Google Drive, several accounts, quota check); tag groups and projects~~ ✅
-   Next in this area: a backup reminder or schedule; export of a project's assets into a game
-   project folder.
+6. ~~Cloud backup via rclone (Google Drive, several accounts, quota check); tag groups and projects;
+   project export into game folders; backup reminders and automatic backups~~ ✅
 7. ~~File type filter; vector, PDF, HEIC, PSD and art-app previews~~ ✅
 8. ~~AI (optional): SigLIP 2 search and find similar, tag pools (zero-shot, trained on your tags,
-   Gemma via Ollama), captions, review queue~~ ✅
-   Next: dataset export (images + caption `.txt`, dedupe, train/val split); near-duplicate finder;
-   OpenAI-compatible endpoints (llama.cpp, LM Studio).
+   vision-language models), captions, review queue; near-duplicates; dataset export;
+   OpenAI-compatible servers (llama.cpp, LM Studio, vLLM)~~ ✅
 9. ~~Audio: waveforms, player, auto-play, tags, BWF/iXML, UCS, levels~~ ✅
    LUFS, BPM and key and the waveform view followed in 0.11.
-10. ~~3D: previews for glTF/FBX/OBJ/STL/3MF/VOX and more, Blender thumbnails, 3D viewer~~ ✅
-    Next: texture sets (albedo/normal/roughness grouped with their model), Draco glTF, turntable
-    on hover, Blender-rendered previews when Blender is installed.
+10. ~~3D: previews for glTF/FBX/OBJ/STL/3MF/VOX and more, Blender thumbnails, 3D viewer, texture
+    sets, Draco glTF, turntables on hover~~ ✅
+    Next: Blender-rendered previews when Blender is installed.
 11. ~~Video: frame thumbnails, hover scrubbing, recording dates, playback~~ ✅;
     ~~projects as the top filter, with automatic sources~~ ✅
 12. ~~Texture sets, project export to Unity/Godot/Unreal, saved views, exact duplicates (also stored
@@ -866,10 +914,12 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
     Godot SpriteFrames/AtlasTexture export~~ ✅
 17. ~~KTX2 textures, text-to-sound search (CLAP), Unity sprite import settings, print views (inks,
     ink limit, soft proofing, PDF boxes, spot colours, fonts)~~ ✅
-    Next: more waveform styles (in development), Basis Universal (ETC1S/UASTC) KTX2 textures,
-    multi-page PDF browsing. (PureRef's board format isn't open, so boards are best made by dragging
-    images into PureRef.)
-18. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+18. ~~Basis Universal (ETC1S/UASTC) KTX2 textures, OpenEXR and Radiance HDR, multi-page PDF
+    browsing, source/author/licence, training datasets, OpenAI-compatible vision servers, merging
+    into other programs' sidecars, backup schedule~~ ✅
+    Next: more waveform styles (in development); PIZ-compressed EXR. (PureRef's board format
+    isn't open, so boards are best made by dragging images into PureRef.)
+19. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License
 

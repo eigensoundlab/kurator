@@ -13,6 +13,12 @@ export async function openSettingsDialog(app) {
     try { await api.saveSettings({ xmp_auto: auto.checked }); app.toast(auto.checked ? 'Sidecars are now written automatically' : 'Automatic sidecars off'); }
     catch (e) { app.toast(e.message); auto.checked = !auto.checked; }
   };
+  const merge = el('input', { type: 'checkbox' });
+  merge.checked = !!st.xmp_merge;
+  merge.onchange = async () => {
+    try { await api.saveSettings({ xmp_merge: merge.checked }); app.toast(merge.checked ? 'Keywords will also go into sidecars of other programs' : 'Sidecars of other programs are left alone'); }
+    catch (e) { app.toast(e.message); merge.checked = !merge.checked; }
+  };
   const svgAll = el('input', { type: 'checkbox' });
   svgAll.checked = !!st.svg_all;
   svgAll.onchange = async () => {
@@ -60,10 +66,13 @@ export async function openSettingsDialog(app) {
       const r = await api.writeSidecars(await ids(writeScope.value), untagged.checked);
       setKids(out, el('div', { class: 'move-sum' },
         el('b', { text: `${fmtNum(r.written)} sidecar${r.written === 1 ? '' : 's'} written` }),
+        r.merged ? `, ${fmtNum(r.merged)} of other programs updated` : '',
         `, ${fmtNum(r.unchanged)} already up to date`,
         r.skipped_untagged ? el('div', { class: 'muted', text: `${fmtNum(r.skipped_untagged)} untagged files skipped (tick "also untagged" to store their dates)` }) : null,
         r.skipped_project ? el('div', { class: 'muted', text: `${fmtNum(r.skipped_project)} files are inside a Unity/Godot/Unreal project or a git repository - no sidecars added there` }) : null,
-        r.skipped_foreign.length ? el('div', { class: 'warn', text: `${fmtNum(r.skipped_foreign.length)} files already have a sidecar from another program - left untouched (e.g. ${r.skipped_foreign[0]})` }) : null,
+        r.skipped_foreign.length ? el('div', { class: 'warn', text: merge.checked
+          ? `${fmtNum(r.skipped_foreign.length)} sidecars of other programs could not be merged safely - left untouched (e.g. ${r.skipped_foreign[0]})`
+          : `${fmtNum(r.skipped_foreign.length)} files already have a sidecar from another program - left untouched (e.g. ${r.skipped_foreign[0]}); tick "also update sidecars of other programs" to add the keywords there` }) : null,
         r.errors.length ? el('div', { class: 'err', text: `${r.errors.length} errors, e.g. ${r.errors[0]}` }) : null));
     } catch (e) { setKids(out, el('div', { class: 'err', text: e.message })); }
   };
@@ -86,8 +95,9 @@ export async function openSettingsDialog(app) {
     width: 640,
     body: el('div', { class: 'form' },
       el('h3', { text: 'XMP sidecars' }),
-      el('div', { class: 'p-hint small', text: 'A small "photo.jpg.xmp" file next to each image stores its tags and creation date in the standard format read by Lightroom, Bridge, darktable and digiKam. Your images themselves are never modified, and sidecars made by other programs are never overwritten.' }),
+      el('div', { class: 'p-hint small', text: 'A small "photo.jpg.xmp" file next to each image stores its tags, creation date, source, author and licence in the standard format read by Lightroom, Bridge, darktable and digiKam. Your images themselves are never modified.' }),
       el('label', { class: 'chk' }, auto, 'Write sidecars automatically when tags change'),
+      el('label', { class: 'chk' }, merge, 'Also update sidecars of other programs: add the keywords, keep everything else (a copy is kept first)'),
       el('div', { class: 'row' },
         el('button', { class: 'btn', type: 'button', text: 'Write sidecars now', onclick: write }), writeScope,
         el('label', { class: 'chk small' }, untagged, 'also untagged (date only)')),

@@ -1,14 +1,15 @@
 // AI dialog: model + "prepare images" (embeddings), tag pools (the AI may only choose from these tags),
-// training from your own tags, Gemma via Ollama, and reviewing suggestions.
+// training from your own tags, vision models (Ollama or an OpenAI-compatible server), and reviewing suggestions.
 
 import { api } from './api.js';
+import { openDatasetDialog } from './datasetdlg.js';
 import { openDialog } from './dialog.js';
 import { el, fmtDate, fmtNum, setKids } from './util.js';
 
 const METHOD = {
   zeroshot: 'Image–text model (no examples needed)',
   trained: 'Learned from your tags (most accurate for your style)',
-  vlm: 'Vision-language model via Ollama (e.g. Gemma) - slower, can write captions',
+  vlm: 'Vision-language model (Gemma, Qwen-VL... via Ollama or llama.cpp / LM Studio) - slower, can write captions',
 };
 
 export async function openAIDialog(app) {
@@ -17,6 +18,10 @@ export async function openAIDialog(app) {
   openDialog({ title: 'AI tagging & search', width: 860, body, buttons: [{ label: 'Close' }], onClose: () => clearInterval(timer) });
   const btn = (label, onclick, cls = '') => el('button', { class: 'btn ' + cls, type: 'button', text: label, onclick });
   const err = (e) => el('div', { class: 'err', text: e.message || String(e) });
+
+  const datasetBox = () => el('div', { class: 'bset' },
+    el('div', { class: 'bset-head' }, el('b', { text: 'Training dataset' }), el('span', { class: 'muted small', text: ' · pictures + caption .txt files for LoRA / fine-tuning' })),
+    el('div', { class: 'dlg-inline-buttons' }, btn(`Export ${app.selected.size ? 'the selection' : 'this view'} as a dataset…`, () => openDatasetDialog(app))));
 
   const scopeIds = (scope) => (scope === 'selection' ? [...app.selected] : [...app.items.ids]);
   const scopeSel = () => {
@@ -38,7 +43,8 @@ export async function openAIDialog(app) {
         el('h3', { text: 'AI add-on not installed' }),
         el('div', { class: 'p-hint small', text: 'The AI features need PyTorch and open_clip (about 2–3 GB, with GPU support on NVIDIA cards). Everything runs on your computer.' }),
         el('pre', { class: 'code', text: 'Windows:      install.bat ai\nLinux/macOS:  ./install.sh ai' }),
-        el('div', { class: 'muted small', text: `Then restart Kurator. (${st.error || ''})` }));
+        el('div', { class: 'muted small', text: `Then restart Kurator. (${st.error || ''})` }),
+        datasetBox());
       return;
     }
     try { profiles = await api.aiProfiles(); } catch { /* none */ }
@@ -93,6 +99,51 @@ export async function openAIDialog(app) {
           btn('Delete', async () => { if (window.confirm(`Delete tag pool "${p.name}"? Tags and suggestions stay.`)) { await api.aiDeleteProfile(p.id); show(); } }, 'danger')));
     });
 
+    // the vision model server used by "vision-language model" pools
+    const prov = el('select', {}, Object.entries(info.vlm_providers || { ollama: 'Ollama' }).map(([k, label]) => el('option', { value: k, text: label })));
+    prov.value = s.vlm_provider || 'ollama';
+    const url = el('input', { type: 'text', spellcheck: 'false', style: { width: '250px' } });
+    const key = el('input', { type: 'password', autocomplete: 'off', style: { width: '170px' } });
+    const keyLbl = el('label', { class: 'chk' }, 'API key', key);
+    const vstat = el('span', { class: 'muted small' });
+    const paintVlm = () => {
+      const oa = prov.value === 'openai';
+      url.value = oa ? s.openai_url : s.ollama_url;
+      url.placeholder = oa ? 'http://127.0.0.1:8080/v1' : 'http://127.0.0.1:11434';
+      key.placeholder = s.openai_key_set ? 'saved - type to replace' : 'optional';
+      keyLbl.style.display = oa ? '' : 'none';
+    };
+    const checkVlm = async () => {
+      vstat.textContent = 'checking…';
+      try {
+        const r = await api.aiOllama();
+        vstat.textContent = r.ok ? `${r.models.length ? `${fmtNum(r.models.length)} models` : 'no models yet'} ✓` : r.error;
+        vstat.className = r.ok ? 'ok small' : 'err small';
+      } catch (e) { vstat.textContent = e.message; vstat.className = 'err small'; }
+    };
+    const saveVlm = async () => {
+      const patch = { vlm_provider: prov.value };
+      patch[prov.value === 'openai' ? 'openai_url' : 'ollama_url'] = url.value.trim();
+      if (key.value) patch.openai_key = key.value;
+      try {
+        const ns = await api.aiSettings(patch);
+        Object.assign(s, ns);
+        key.value = '';
+        paintVlm();
+        checkVlm();
+      } catch (e) { app.toast(e.message, 4000); }
+    };
+    prov.onchange = () => { s.vlm_provider = prov.value; paintVlm(); saveVlm(); };
+    url.onchange = saveVlm;
+    key.onchange = saveVlm;
+    paintVlm();
+    const vlmBox = el('div', { class: 'bset' },
+      el('div', { class: 'bset-head' }, el('b', { text: 'Vision model server' }), el('span', { class: 'muted small', text: ' · for tag pools that use a vision-language model, and for captions' })),
+      el('div', { class: 'row' }, el('label', { class: 'chk' }, 'Server', prov), el('label', { class: 'chk' }, 'Address', url), keyLbl,
+        btn('Check', checkVlm), vstat),
+      el('div', { class: 'p-hint small', text: 'Ollama: ollama.com, then e.g. "ollama pull gemma3:12b". OpenAI-compatible: llama.cpp (llama-server -m model.gguf --mmproj mmproj.gguf), LM Studio (Developer → Start server, port 1234), vLLM, LocalAI, Jan. These run on your computer; an internet address sends the pictures to that service.' }));
+    if (profiles.some((p) => p.method === 'vlm')) checkVlm();
+
     const minScore = el('input', { type: 'number', min: '0', max: '100', step: '5', value: '90', style: { width: '64px' } });
     const review = el('div', { class: 'bset' },
       el('div', { class: 'bset-head' }, el('b', { text: `${fmtNum(info.suggestions)} suggestions waiting` })),
@@ -107,7 +158,8 @@ export async function openAIDialog(app) {
       el('div', { class: 'p-hint small', text: 'A pool is a set of tags the AI may choose from - e.g. human / robot / creature for a characters folder. It never invents other tags.' }),
       cards.length ? cards : null,
       el('div', { class: 'dlg-inline-buttons' }, btn('+ New tag pool', () => editor(null), 'primary')),
-      info.suggestions ? review : null);
+      info.suggestions ? review : null,
+      vlmBox, datasetBox());
   }
 
   async function editor(p) {
@@ -138,13 +190,16 @@ export async function openAIDialog(app) {
     const vlm = el('select', {}, el('option', { value: '', text: 'loading…' }));
     const caps = el('input', { type: 'checkbox' });
     caps.checked = !!v.captions;
-    const vlmRow = el('div', { class: 'row' }, el('label', { class: 'chk' }, 'Ollama model', vlm), el('label', { class: 'chk' }, caps, 'also write a caption (for training datasets)'));
+    const vlmRow = el('div', { class: 'row' }, el('label', { class: 'chk' }, 'Vision model', vlm), el('label', { class: 'chk' }, caps, 'also write a caption (for training datasets)'));
     const sync = () => { vlmRow.style.display = method.value === 'vlm' ? '' : 'none'; };
     method.onchange = () => { sync(); if (method.value === 'zeroshot' && mode.value === 'multi') thr.value = '15'; };
     sync();
     api.aiOllama().then((r) => {
-      setKids(vlm, r.models.length ? r.models.map((m) => el('option', { value: m, text: m })) : el('option', { value: '', text: r.ok ? 'no models - run: ollama pull gemma3:12b' : 'Ollama not running (ollama.com)' }));
-      if (v.vlm_model) vlm.value = v.vlm_model;
+      const ol = r.provider !== 'openai';
+      const none = r.ok ? (ol ? 'no models - run: ollama pull gemma3:12b' : 'no models loaded on the server')
+        : (ol ? 'Ollama not running (ollama.com)' : 'server not answering - see "Vision model server"');
+      setKids(vlm, r.models.length ? r.models.map((m) => el('option', { value: m, text: m })) : el('option', { value: '', text: none }));
+      if (v.vlm_model && r.models.includes(v.vlm_model)) vlm.value = v.vlm_model;
     });
     const msg = el('div');
     renderPrompts();
@@ -155,7 +210,7 @@ export async function openAIDialog(app) {
       el('div', { class: 'row' }, el('label', { class: 'chk' }, 'Mode', mode), el('label', { class: 'chk' }, 'Suggest when score ≥', thr, '%')),
       el('label', { class: 'chk' }, 'Method', method),
       vlmRow,
-      el('div', { class: 'small', text: 'Descriptions help the image–text model and Gemma; sketches often need hints like "a pencil sketch of a person".' }),
+      el('div', { class: 'small', text: 'Descriptions help the image–text model and the vision models; sketches often need hints like "a pencil sketch of a person".' }),
       prompts, msg,
       el('div', { class: 'dlg-inline-buttons' }, btn('Back', show), btn(isNew ? 'Create pool' : 'Save', async () => {
         try {

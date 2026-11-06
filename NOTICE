@@ -6,3 +6,14 @@ This product is developed by Daniel Sandner
 
 Licensed under the Apache License, Version 2.0 (see LICENSE).
 Source code: https://github.com/eigensoundlab/kurator
+
+This product includes software derived from Basis Universal
+(https://github.com/BinomialLLC/basis_universal), licensed under the Apache License, Version 2.0:
+kurator/basisu.py is a Python port of the ETC1S and UASTC LDR 4x4 decoding parts of
+transcoder/basisu_transcoder.cpp (rewritten in Python and changed to unpack to plain pixels only).
+Attribution notices from the Basis Universal NOTICE file:
+
+    Basis Universal(TM) Supercompressed GPU Texture Compression Library
+    Copyright (C) 2016-2026 Binomial LLC.
+    All rights reserved except as granted under the Apache 2.0 license.
+    "Basis Universal" is a trademark of Binomial LLC.

@@ -81,17 +81,19 @@ def test_ktx2_formats():
     hdr = np.full((h, w, 4), [4.0, 1.0, 0.25, 1.0], np.float16).tobytes()
     img, facts = ktx2.decode(make_ktx2(97, w, h, hdr))
     assert facts["hdr"] and img.getpixel((0, 0))[0] > img.getpixel((0, 0))[1] > img.getpixel((0, 0))[2]
-    with pytest.raises(ktx2.KTXError, match="Basis"):
-        ktx2.decode(make_ktx2(0, w, h, b"\0" * 32, dfd_model=166))
+    # UASTC is decoded since 0.15 (see test_v15); the newest Basis formats still need the basisu tool
+    img, facts = ktx2.decode(make_ktx2(0, w, h, b"\0" * (16 * 4 * 2), dfd_model=166))
+    assert facts["texture"] == "Basis Universal UASTC" and img.size == (w, h)
     with pytest.raises(ktx2.KTXError):
         ktx2.decode(b"not a texture at all")
 
 
-def test_ktx2_indexed(tmp_path):
+def test_ktx2_indexed(tmp_path, monkeypatch):
+    monkeypatch.setenv("KURATOR_BASISU", str(tmp_path / "no-basisu"))   # also for the scan workers
     lib = tmp_path / "lib"
     lib.mkdir()
     (lib / "red.ktx2").write_bytes(make_ktx2(37, 8, 8, bytes([200, 30, 30, 255]) * 64))
-    (lib / "basis.ktx2").write_bytes(make_ktx2(0, 8, 8, b"\0" * 64, dfd_model=166))
+    (lib / "basis.ktx2").write_bytes(make_ktx2(0, 8, 8, b"\0" * 64, dfd_model=169))   # XUASTC LDR
     db, sc, ids, c = _index(tmp_path, lib)
     red = c.get(f"/api/items/{ids['red.ktx2']}").json()
     assert red["status"] == 1 and red["width"] == 8 and red["meta"]["texture"] == "R8G8B8A8"

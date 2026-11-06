@@ -116,6 +116,13 @@ export const api = {
   aiJob: () => req('GET', '/api/ai/job'),
   aiCancel: () => req('POST', '/api/ai/cancel', {}),
   aiOllama: () => req('GET', '/api/ai/ollama'),
+  datasetOptions: () => req('GET', '/api/dataset/options'),
+  infoOptions: () => req('GET', '/api/info/options'),
+  setInfo: (body) => req('POST', '/api/info', body),
+  datasetPlan: (body) => req('POST', '/api/dataset/plan', body),
+  datasetRun: (body) => req('POST', '/api/dataset/run', body),
+  datasetJob: () => req('GET', '/api/dataset/job'),
+  datasetCancel: () => req('POST', '/api/dataset/cancel'),
   tagPrompt: (id, prompt) => req('PUT', `/api/tags/${id}/prompt`, { prompt }),
 };
 

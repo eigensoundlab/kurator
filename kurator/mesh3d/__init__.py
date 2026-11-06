@@ -39,13 +39,25 @@ class TexRef:
         from PIL import Image
         try:
             if self.data is not None:
-                img = Image.open(io.BytesIO(self.data))
+                head = self.data[:12]
             elif self.path is not None:
                 if os.path.getsize(self.path) > 512 * 1024 * 1024:
                     return None
-                img = Image.open(self.path)
+                with open(self.path, "rb") as f:
+                    head = f.read(12)
             else:
                 return None
+            special = _special_texture(head)
+            if special:
+                data = self.data
+                if data is None:
+                    with open(self.path, "rb") as f:
+                        data = f.read()
+                img = special(data, max_side)
+            elif self.data is not None:
+                img = Image.open(io.BytesIO(self.data))
+            else:
+                img = Image.open(self.path)
             if max_side:
                 img.draft("RGB", (max_side, max_side))
                 img.load()
@@ -54,6 +66,22 @@ class TexRef:
             return img
         except Exception:
             return None
+
+
+def _special_texture(head: bytes):
+    """A reader for texture files Pillow doesn't open: KTX2 (incl. Basis Universal), EXR, Radiance HDR."""
+    if head.startswith(b"\xabKTX 20\xbb"):
+        def ktx(data, max_side):
+            from ..handlers import ktx2
+            return ktx2.decode(data, max_side)[0]
+        return ktx
+    if head.startswith(b"\x76\x2f\x31\x01") or head.startswith(b"#?"):
+        def hdr_pic(data, max_side):
+            from ..handlers import hdr
+            loaded = hdr.load(data, "t.exr" if data[:1] == b"\x76" else "t.hdr", max_side)
+            return None if loaded.meta.get("placeholder") else loaded.image
+        return hdr_pic
+    return None
 
 
 @dataclass
