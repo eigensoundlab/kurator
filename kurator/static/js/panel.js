@@ -2,6 +2,7 @@
 
 import { api, originalUrl, thumbUrl } from './api.js';
 import { AUDIO, el, extOf, setKids, fmtBytes, fmtDate, fmtDuration, fmtNum, prefs, SOURCE_LABEL, VIEWABLE } from './util.js';
+import { PH_PAPER, phCached, phDoc, phEnabled, phOnDoc, phOnSetting, phSummary } from './playhead.js';
 import { openUnityDialog } from './unitydlg.js';
 import { WaveView } from './waveview.js';
 
@@ -34,6 +35,9 @@ export class Panel {
     this.ctrl = null;
     this.timer = 0;
     this.shownId = null;
+    // Playhead section: refresh when an analysis of the shown sound arrives (e.g. from the waveform view)
+    phOnDoc((e) => { if (this.phShown && e.detail.id === this.phShown.id) this.phShown.paint(e.detail.doc); });
+    phOnSetting(() => { if (this.shownIndex != null && this.shownId != null) this.show(this.shownIndex); });
   }
 
   /** Called whenever focus changes; fetch is debounced so arrow-key browsing stays smooth. */
@@ -160,6 +164,8 @@ export class Panel {
         d.status === 2 ? el('tr', {}, el('th', { text: 'Error' }), el('td', { class: 'err', text: d.error || 'cannot read' })) : null,
         d.status === 0 ? el('tr', {}, el('th', { text: 'Status' }), el('td', { text: 'waiting for indexing' })) : null),
     ];
+    this.phShown = null;
+    if (d.kind === 'audio' && phEnabled()) parts.push(this.phSection(d));
     parts.push(this.infoBox(d));
     if (m.generation) {
       const g = m.generation;
@@ -214,6 +220,40 @@ export class Panel {
     setKids(this.body, ...parts);
     this.loadRelated(d);
     this.renderTags();
+  }
+
+  /** Playhead analysis of a sound (optional): what it found, or a button to analyse. Opening the panel never
+   *  starts an analysis by itself. */
+  phSection(d) {
+    const id = d.id;
+    const duration = d.meta?.duration || 0;
+    const box = el('div', { class: 'p-ph' }, el('div', { class: 'muted small', text: '…' }));
+    const about = () => el('a', { href: PH_PAPER, target: '_blank', rel: 'noopener noreferrer', text: 'About Playhead analysis' });
+    const paint = (doc) => {
+      if (this.shownId !== id) return;
+      if (!doc) {
+        setKids(box,
+          el('div', { class: 'dlg-inline-buttons' }, el('button', { class: 'btn small', text: 'Analyse with Playhead', onclick: analyse })),
+          el('div', { class: 'muted small' }, 'Events and their types, decay and material, time arrow; tempo and sections for music. Runs in this browser (a few seconds per minute of sound). ', about()));
+        return;
+      }
+      const rows = phSummary(doc, duration);
+      setKids(box,
+        rows.length ? el('table', { class: 'kv' }, rows.map(([k, v, t]) => el('tr', {}, el('th', { text: k, title: t || '' }), el('td', { text: v })))) : null,
+        el('div', { class: 'muted small' }, `Playhead ${doc.generator?.version || ''} · ${doc.profile || ''} profile · `, about()));
+    };
+    const analyse = () => {
+      const line = el('div', { class: 'small', text: 'Playhead analysis…' });
+      setKids(box, line);
+      phDoc(id, { owner: this, duration, onProgress: (p) => {
+        line.textContent = p < 0 ? 'Playhead analysis: reading the sound…' : `Playhead analysis ${Math.round(p * 100)}%…`;
+      } }).then(paint).catch((e) => {
+        if (this.shownId === id && !e.replaced) setKids(box, el('div', { class: 'err small', text: `Playhead analysis failed: ${e.message}` }));
+      });
+    };
+    this.phShown = { id, paint };
+    phCached(id).then(paint).catch(() => paint(null));
+    return section('Playhead', box, true);
   }
 
   /** Where the file came from, who made it, the licence - editable; can be copied to the selection. */

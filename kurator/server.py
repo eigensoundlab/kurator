@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import mimetypes
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -12,9 +15,10 @@ from contextlib import asynccontextmanager
 from importlib import resources
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import __version__, assets, backup, dates, fileops, projects, rclone, rules, tags, xmp
@@ -33,6 +37,19 @@ from .tags import TagError
 from .handlers import handler_for, supported_extensions, supported_types
 from .processing import THUMB_SIZES, process_file
 from .scanner import Scanner
+
+mimetypes.add_type("text/javascript", ".js")    # module scripts need this type; the Windows registry
+mimetypes.add_type("text/javascript", ".mjs")   # can map .js to something else
+
+
+class _GZip(GZipMiddleware):
+    """Gzip, except decoded samples: float audio hardly compresses and can be large."""
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].endswith("/samples"):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
 
 ITEM_COLS = "id, hash, color, date_ts, name, width, height, date_source, alpha, status, frames, tver, stack_id"
 SORTS = {
@@ -181,7 +198,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     rc = rclone.shared(db, os.path.join(db.data_dir, "logs"))
     app = FastAPI(title="Kurator", version=__version__, docs_url=None, redoc_url=None, openapi_url=None,
                   lifespan=lifespan)
-    app.add_middleware(GZipMiddleware, minimum_size=2048, compresslevel=5)
+    app.add_middleware(_GZip, minimum_size=2048, compresslevel=5)
 
     allowed_hosts = {f"{h}:{port}" for h in LOOPBACK} | LOOPBACK
     allowed_origins = {f"http://{h}:{port}" for h in LOOPBACK}
@@ -1078,6 +1095,91 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         except Exception as e:
             raise HTTPException(422, f"can't read this sound: {e}") from None
         return Response(png, media_type="image/png", headers={"Cache-Control": "private, no-cache"})
+
+    # -- sound: decoded samples and stored documents for Playhead analysis (in the browser) ---
+    @app.get("/api/audio/{item_id}/samples")
+    def audio_samples(item_id: int, rate: int = Query(0, ge=0, le=192000), mono: int = Query(0, ge=0, le=1),
+                      max_seconds: float = Query(600, gt=0, le=3600)):
+        """Little-endian float32 samples, interleaved (decoded by Kurator, so every format it reads works)."""
+        from . import audio_analysis
+        row = _sound(item_id)
+        try:
+            info, chunks = audio_analysis.samples(row[0], rate, bool(mono), max_seconds)
+        except Exception as e:
+            raise HTTPException(422, f"can't read this sound: {e}") from None
+        sr = info["samplerate"]
+        headers = {"X-Samplerate": str(sr), "X-Channels": str(info["channels"]), "X-Frames": str(info["frames"]),
+                   "X-Truncated": "1" if info["truncated"] else "0", "Cache-Control": "private, no-store",
+                   "Content-Length": str(info["frames"] * info["channels"] * 4)}
+
+        def body():
+            sent, need = 0, info["frames"] * info["channels"] * 4
+            for c in chunks:
+                b = c.tobytes()[: need - sent]
+                sent += len(b)
+                yield b
+                if sent >= need:
+                    return
+            if sent < need:                    # the file was shorter than its header said: pad with silence
+                yield bytes(need - sent)
+        return StreamingResponse(body(), media_type="application/octet-stream", headers=headers)
+
+    ph_dir = os.path.join(db.data_dir, "cache", "playhead")
+    PH_MAX = 8 * 1024 * 1024
+
+    def _ph_file(row, v: str) -> str:
+        if not re.fullmatch(r"[0-9A-Za-z.+\-]{1,32}", v or ""):
+            raise HTTPException(400, "bad Playhead version")
+        key = hashlib.sha1(f"{row[0]}\n{row[3]}\n{v}".encode("utf-8", "surrogatepass")).hexdigest()
+        return os.path.join(ph_dir, key + ".json")
+
+    @app.get("/api/audio/{item_id}/playhead")
+    def playhead_get(item_id: int, v: str = ""):
+        """A stored Playhead document for this file as it is now and this Playhead version (404: none)."""
+        f = _ph_file(_sound(item_id), v)
+        try:
+            with open(f, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            raise HTTPException(404, "no Playhead analysis yet") from None
+        return Response(data, media_type="application/json", headers={"Cache-Control": "private, no-store"})
+
+    @app.put("/api/audio/{item_id}/playhead")
+    async def playhead_put(item_id: int, request: Request, v: str = ""):
+        row = await run_in_threadpool(_sound, item_id)
+        f = _ph_file(row, v)
+        if int(request.headers.get("content-length") or 0) > PH_MAX:
+            raise HTTPException(413, "Playhead document too big")
+        body = bytearray()
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > PH_MAX:
+                raise HTTPException(413, "Playhead document too big")
+        try:
+            doc = json.loads(body)
+        except ValueError:
+            raise HTTPException(400, "not JSON") from None
+        if not (isinstance(doc, dict) and doc.get("schema") == "playhead-analysis" and doc.get("schemaVersion") == 1):
+            raise HTTPException(400, "not a Playhead analysis (schema playhead-analysis, version 1)")
+        gen = doc.get("generator")
+        if not isinstance(gen, dict) or gen.get("version") != v:
+            raise HTTPException(400, "the document's Playhead version doesn't match")
+
+        def save():
+            os.makedirs(ph_dir, exist_ok=True)
+            tmp = f + ".part"
+            with open(tmp, "wb") as fh:
+                fh.write(body)
+            os.replace(tmp, f)
+            files = [e for e in os.scandir(ph_dir) if e.name.endswith(".json")]
+            if len(files) > 3000:                  # keep the store bounded: drop the oldest tenth
+                for e in sorted(files, key=lambda e: e.stat().st_mtime)[: len(files) // 10]:
+                    try:
+                        os.remove(e.path)
+                    except OSError:
+                        pass
+        await run_in_threadpool(save)
+        return _json({"ok": True, "bytes": len(body)})
 
     # -- version stacks --------------------------------------------------------------------
     @app.post("/api/stacks")

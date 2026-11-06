@@ -4,7 +4,7 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.15 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> Status: **v0.16 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
 > moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
 > (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
 > **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
@@ -13,7 +13,7 @@ and metadata**.
 > with normal/glow/depth maps**, **print previews (CMYK inks, ink limit, proofing, PDF boxes and
 > spot colours)**, **Unity sprite import settings**, **Basis Universal KTX2 and HDR (EXR) textures**,
 > **PDF page browsing**, **source / author / licence** per file, **training-dataset export**,
-> backup reminders, and optional local AI (search pictures *and sounds* by description, find
+> backup reminders, an optional **Playhead analysis** view of sounds, and optional local AI (search pictures *and sounds* by description, find
 > similar, tag suggestions from a pool you choose, Ollama or any OpenAI-compatible vision server)
 > work.
 > See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
@@ -181,7 +181,47 @@ corner switches between styles:
 | Stereo lanes | each channel in its own lane |
 | Spectrogram | frequencies over time (log scale up to 10 kHz) |
 
-More styles will follow; the choice is remembered.
+| Playhead analysis | optional, see below |
+
+The choice is remembered.
+
+**Playhead analysis (optional, experimental).** [Playhead](https://github.com/eigensoundlab/playhead)
+is an analysis library by the same author. It describes a sound with more than a waveform:
+- curves for loudness, activity, arousal, harshness, tension and spectral surprise;
+- sound events with Schaeffer-style types (impulse, iterative, sustained; tonal or noisy);
+- beats, downbeats and sections for music;
+- descriptors borrowed from other fields: impulsiveness (spectral kurtosis), time arrow,
+  burstiness, and decay and material class.
+
+The method is described in Sandner, D. (2026), *Playhead Beyond the Waveform: Cross-Field
+Descriptors for Sound Design* [Preprint], Zenodo,
+[doi:10.5281/zenodo.24008128](https://doi.org/10.5281/zenodo.24008128).
+
+- **Switch it on** in ⚙ Settings → Sounds → *Playhead analysis (experimental)*. It is off by
+  default. While it is off, Kurator behaves as before.
+- **View:** *Playhead analysis* in the waveform's style menu. The sound is analysed in the browser
+  (a module worker, so the page stays responsive). Expect about half a second for a short effect
+  and 3–4 s per minute of music.
+  - Sounds over two minutes are analysed at 22.05 kHz mono; only the first 10 minutes are
+    analysed.
+  - Kurator decodes the sound, so every format it reads works (also AIFF, WMA and others the
+    browser can't open).
+  - Results are kept in the data folder, keyed by the file and the Playhead version, so a new
+    Playhead build analyses again.
+- **Look ▾** next to the style menu chooses how Playhead draws the analysis: its ready-made looks
+  (*Sound character* and *Hits and surprise* for effects, *Structure* and *Rhythm* for music…).
+  Looks a sound can't use are greyed out. *Custom…* takes a look code such as
+  `wave,sections,lane:structureNovelty~signed,lane:localPulse,ticks:downbeats`.
+  - The legend beside the strip comes from Playhead.
+  - *Tell us if this helps* opens a short form in the Playhead repository with the look filled in.
+    Nothing is sent from Kurator.
+- **Side panel → Playhead:**
+  - effects: events and their types, decay and material, time arrow, burstiness;
+  - music: tempo, the section letters (e.g. `ABACA`), loudness range.
+  - *Analyse with Playhead* when there is no analysis yet. Opening the panel never starts one.
+- Kurator draws only through Playhead's own `drawStrip()`, so a new Playhead build changes the look
+  by replacing one file (`kurator/static/js/vendor/playhead-core.mjs`, see the README there).
+  The usual waveform styles stay the default.
 
 **Loudness, tempo and key:** every sound gets its integrated **loudness (LUFS, ITU-R BS.1770 /
 EBU R128)** and its loudest moment. Sounds of 8 seconds and longer also get an estimated **tempo
@@ -822,6 +862,9 @@ kurator/
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
     vlm.py         Ollama and OpenAI-compatible clients with a fixed-answer JSON schema
   static/          the UI: plain ES modules, no build step, no npm dependencies
+    js/playhead.js         optional Playhead analysis: documents, worker queue, theme, panel rows
+    js/playhead-worker.js  the analysis in a module worker
+    js/vendor/             playhead-core.mjs (Playhead 0.2.0, unchanged; checksum in its README)
 tests/             pytest: dates, indexing, API + security, tags, moves, rules, sidecars, watching
 tools/             sample library generator, indexing benchmark, browser UI checks
 install / update / kurator  (.bat for Windows, .sh for Linux/macOS)
@@ -857,6 +900,11 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
   resources). The AI add-on talks only to the vision model server you choose (Ollama or an
   OpenAI-compatible server, normally on your own computer; its API key is never sent to the
   browser), and downloads model weights from Hugging Face on first use.
+- **Playhead analysis** (optional, off by default) runs in the browser. The Playhead library is a
+  vendored, unchanged file with a recorded checksum, loaded only when the feature is on. Kurator
+  sends it decoded samples from its own server and stores the results (checked against the
+  `playhead-analysis` schema, at most 8 MB each) in its data folder. Nothing leaves your computer.
+  The *Tell us if this helps* link only opens a GitHub form in your browser.
 - Basis Universal, EXR and HDR files are decoded by Kurator's own Python code with size limits
   (a fuzz test feeds it damaged files). The optional `basisu` tool runs as a separate process
   with a time limit, on a temporary copy. The frontend has
@@ -917,9 +965,14 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
 18. ~~Basis Universal (ETC1S/UASTC) KTX2 textures, OpenEXR and Radiance HDR, multi-page PDF
     browsing, source/author/licence, training datasets, OpenAI-compatible vision servers, merging
     into other programs' sidecars, backup schedule~~ ✅
-    Next: more waveform styles (in development); PIZ-compressed EXR. (PureRef's board format
+    Next: PIZ-compressed EXR.
+19. ~~Playhead analysis of sounds (optional): a Playhead view with looks, a Playhead section in the
+    side panel, analyses kept per file and Playhead version~~ ✅
+    Next: library-wide analysis with the `playhead` command-line tool (sorting and filtering by
+    descriptors), Playhead mini-strips as grid thumbnails once a look for small sizes wins, and a
+    small study of whether they help people find sounds. (PureRef's board format
     isn't open, so boards are best made by dragging images into PureRef.)
-19. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+20. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License
 

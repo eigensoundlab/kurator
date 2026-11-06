@@ -17,3 +17,8 @@ Attribution notices from the Basis Universal NOTICE file:
     Copyright (C) 2016-2026 Binomial LLC.
     All rights reserved except as granted under the Apache 2.0 license.
     "Basis Universal" is a trademark of Binomial LLC.
+
+This product includes Playhead (https://github.com/eigensoundlab/playhead), Copyright 2026
+Daniel Sandner, licensed under the Apache License, Version 2.0: kurator/static/js/vendor/
+playhead-core.mjs is the unchanged Playhead 0.2.0 library build (see the README.md in that folder).
+Playhead's own NOTICE file is kurator/static/js/vendor/PLAYHEAD-NOTICE.

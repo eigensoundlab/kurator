@@ -461,6 +461,29 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .wavecanvas { width: 100%; height: 100%; display: block; cursor: text; }
 .wavemode { position: absolute; right: 6px; top: 6px; font-size: 11px; padding: 1px 4px; background: #000a; color: #ddd; border: 1px solid #fff2; border-radius: 4px; opacity: .55; }
 .waveview:hover .wavemode, .waveview.big .wavemode { opacity: 1; }
+/* style menu, and with Playhead analysis its Look menu and look-code field, top right */
+.wave-tools { position: absolute; right: 6px; top: 6px; display: flex; gap: 4px; align-items: center; z-index: 2; }
+.wave-tools .wavemode { position: static; }
+.waveview.big .wave-tools { top: 26px; }
+.ph-look, .ph-code { display: none; font-size: 11px; padding: 1px 4px; background: #000a; color: #ddd; border: 1px solid #fff2; border-radius: 4px; opacity: .55; }
+.ph-look { max-width: 180px; }
+.ph-code { width: 300px; max-width: 45vw; font-family: ui-monospace, monospace; }
+.ph-code.bad { border-color: #e8a33d; }
+.waveview.ph-mode .ph-look, .waveview.ph-mode .ph-code.show { display: inline-block; }
+.waveview:hover .ph-look, .waveview.big .ph-look, .waveview .ph-code.show { opacity: 1; }
+.waveview.big .wavemode, .waveview.big .ph-look, .waveview.big .ph-code { font-size: 12px; }
+/* Playhead's legend (from drawStrip) and the feedback link: top right under the menus in the viewer
+   (the ruler's time labels stay readable), bottom left in the panel */
+.ph-info { display: none; position: absolute; z-index: 2; gap: 6px; align-items: center; pointer-events: none; max-width: calc(100% - 12px); }
+.waveview.ph-mode .ph-info { display: flex; }
+.waveview.big .ph-info { top: 52px; right: 6px; max-width: 70%; }
+.waveview:not(.big) .ph-info { left: 4px; bottom: 3px; }
+.ph-legend { font-size: 10.5px; color: #c8cede; background: #14161bdd; padding: 1px 6px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ph-legend:empty { display: none; }
+.ph-fb { display: none; pointer-events: auto; flex: none; font-size: 10.5px; color: #9fb7ff; background: #14161bdd; padding: 1px 6px; border-radius: 3px; text-decoration: none; }
+.ph-fb:hover { text-decoration: underline; }
+.ph-fb.show { display: inline; }
+.waveview:not(.big):not(:hover) .ph-fb { display: none; }
 .p-preview-box.sound { cursor: default; }
 .p-preview-box.sound .p-preview { visibility: hidden; }
 .waveview.big { inset: 70px 40px 70px 40px; border-radius: 8px; overflow: hidden; box-shadow: 0 6px 30px #0008; }

@@ -1,6 +1,7 @@
 // Settings: XMP sidecars (write tags + dates next to your files), keyword import, info.
 
 import { api } from './api.js';
+import { PH_HOME, PH_PAPER, phEnabled, phSetEnabled } from './playhead.js';
 import { openDialog } from './dialog.js';
 import { el, fmtNum, setKids } from './util.js';
 
@@ -18,6 +19,13 @@ export async function openSettingsDialog(app) {
   merge.onchange = async () => {
     try { await api.saveSettings({ xmp_merge: merge.checked }); app.toast(merge.checked ? 'Keywords will also go into sidecars of other programs' : 'Sidecars of other programs are left alone'); }
     catch (e) { app.toast(e.message); merge.checked = !merge.checked; }
+  };
+  // Playhead analysis: a setting of this browser (the analysis runs here, not on the server)
+  const ph = el('input', { type: 'checkbox' });
+  ph.checked = phEnabled();
+  ph.onchange = () => {
+    phSetEnabled(ph.checked);
+    app.toast(ph.checked ? 'Playhead analysis is on: choose it in the waveform\'s style menu' : 'Playhead analysis is off');
   };
   const svgAll = el('input', { type: 'checkbox' });
   svgAll.checked = !!st.svg_all;
@@ -105,6 +113,12 @@ export async function openSettingsDialog(app) {
       el('div', { class: 'p-hint small', text: 'Turns keywords already stored with your files into tags: embedded XMP (Photoshop, Lightroom…), Windows Explorer tags, and .xmp sidecars. "Creatures|Dragons" becomes Creatures/Dragons.' }),
       el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Import keywords', onclick: doImport }), importScope),
       out,
+      el('h3', { text: 'Sounds' }),
+      el('label', { class: 'chk' }, ph, 'Playhead analysis (experimental)'),
+      el('div', { class: 'p-hint small' },
+        'Adds "Playhead analysis" to the waveform\'s style menu: curves for loudness, activity, harshness and tension, sound events and their types, beats and sections for music, with a Look menu to compare ways of drawing them. A Playhead section in the side panel lists events, decay and material, time arrow, tempo and sections. It runs in this browser; results are kept for next time. ',
+        el('a', { href: PH_HOME, target: '_blank', rel: 'noopener noreferrer', text: 'Playhead' }), ' · ',
+        el('a', { href: PH_PAPER, target: '_blank', rel: 'noopener noreferrer', text: 'About Playhead analysis (paper)' })),
       el('h3', { text: 'Previews' }),
       el('label', { class: 'chk' }, svgAll, 'SVG: show all objects, also those outside the page'),
       el('div', { class: 'p-hint small', text: 'Inkscape and Illustrator drawings often keep parts beside the page. With this on, previews and the viewer grow the page to take them in. Drawings whose page has no size always show everything.' }),

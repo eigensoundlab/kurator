@@ -2,6 +2,17 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## 0.16.0 – Playhead analysis of sounds (optional)
+- **Playhead analysis** ([Playhead](https://github.com/eigensoundlab/playhead) 0.2.0, off by
+  default; ⚙ Settings → Sounds): a new waveform style that shows Playhead's curves, events,
+  beats and sections, analysed in the browser. A **Look** menu chooses among Playhead's looks or a
+  pasted look code. The legend comes from Playhead, and a feedback link carries the look.
+- **Side panel → Playhead:** events and their types, decay and material, time arrow, burstiness;
+  tempo, section letters and loudness range for music.
+- Kurator decodes the samples (`/api/audio/{id}/samples`), so every format it reads can be
+  analysed. Results are stored per file and Playhead version (`/api/audio/{id}/playhead`).
+- The usual waveform styles stay the default; Kurator draws only through `Playhead.drawStrip()`.
+
 ## 0.15.0 – Basis Universal textures, HDR pictures, PDF pages, datasets, licences
 - **Basis Universal KTX2** (ETC1S and UASTC, also inside glTF via `KHR_texture_basisu`) decoded by
   Kurator itself - a Python port of the official transcoder, checked pixel for pixel against it.

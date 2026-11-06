@@ -11,3 +11,5 @@
 *.exr binary
 *.hdr binary
 *.pdf binary
+# vendored files stay byte-for-byte as built (their checksum is recorded)
+kurator/static/js/vendor/*.mjs -text

@@ -1,0 +1,16 @@
+Playhead
+Copyright 2026 Daniel Sandner (eigensoundlab)
+
+This product includes software developed by Daniel Sandner
+(https://github.com/eigensoundlab/playhead).
+
+No third-party code is bundled. The analysis implements published
+standards and methods from their descriptions; with thanks to:
+
+- ITU-R BS.1770 K-weighting filter coefficients, as given in the
+  libebur128 reference implementation (MIT licence).
+- ISO 532-1 loudness, DIN 45692 sharpness, and Aures / Daniel & Weber
+  roughness weightings, cross-checked against MoSQITo (Apache-2.0).
+
+The IBM Plex fonts are loaded from Google Fonts at runtime and are
+licensed under the SIL Open Font License 1.1.

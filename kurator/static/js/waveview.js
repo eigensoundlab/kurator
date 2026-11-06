@@ -6,11 +6,18 @@
 //   Loudness dB  amplitude on a decibel scale: quiet tails and noise floors become visible
 //   Channels     every channel in its own lane (stereo balance, phase problems, dead channels)
 //   Spectrogram  frequencies over time (log scale, 30 Hz – Nyquist): hum, hiss, pitch, transients
+//   Playhead analysis   (optional, ⚙ Settings) curves, events, sections drawn by Playhead itself
+//                       (playhead.js); the Look menu chooses how. Not the playback cursor, which
+//                       this file also calls the playhead (heads()).
 
 import { api } from './api.js';
+import { phDoc, phEnabled, phFeedbackUrl, phLib, phLibNow, phLookPref, phOnSetting, phSetLookPref, phTheme } from './playhead.js';
 import { el, fmtDuration, prefs } from './util.js';
 
 export const WAVE_MODES = [['peaks', 'Peak + RMS'], ['minmax', 'Min / max'], ['db', 'Loudness (dB)'], ['stereo', 'Channels'], ['spectrogram', 'Spectrogram']];
+const PH_MODE = ['playhead', 'Playhead analysis'];
+/** The styles on offer: Playhead analysis only while it is switched on. */
+export const waveModes = () => (phEnabled() ? [...WAVE_MODES, PH_MODE] : WAVE_MODES);
 const LONG = 30;   // seconds: long sounds are orange, short ones blue (as in the thumbnails)
 const PAL = {
   blue: { outline: '#4662a8', body: '#8cb0ff', line: '#7aa2ff' },
@@ -31,23 +38,54 @@ export class WaveView {
     this.bins = bins;
     this.canvas = el('canvas', { class: 'wavecanvas' });
     this.mode = prefs.get('wave.mode', 'peaks');
-    this.modeSel = el('select', { class: 'wavemode', title: 'How to draw the sound' }, WAVE_MODES.map(([k, t]) => el('option', { value: k, text: t })));
-    this.modeSel.value = this.mode;
+    if (this.mode === 'playhead' && !phEnabled()) this.mode = 'peaks';
+    this.modeSel = el('select', { class: 'wavemode', title: 'How to draw the sound' });
+    this.fillModes();
     this.modeSel.onchange = () => this.setMode(this.modeSel.value);
-    this.modeSel.addEventListener('pointerdown', (e) => e.stopPropagation());
+    // Playhead analysis: the Look menu, a field for a look code, the legend Playhead returns, feedback
+    this.phLookSel = el('select', { class: 'ph-look', title: 'Look: how Playhead draws the analysis' });
+    this.phLookSel.onchange = () => this.chooseLook(this.phLookSel.value);
+    this.phCode = el('input', { class: 'ph-code', type: 'text', spellcheck: 'false', placeholder: 'look code, e.g. wave,lane:activity,ticks:events',
+      title: 'A look code (Playhead docs: Looks). Enter to use it, Esc to go back.' });
+    this.phCode.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') this.useCode(this.phCode.value);
+      if (e.key === 'Escape') { this.phCode.classList.remove('bad'); this.paintLooks(); }
+    });
+    this.phFb = el('a', { class: 'ph-fb', target: '_blank', rel: 'noopener noreferrer', text: 'Tell us if this helps',
+      title: 'Opens a short form in the Playhead repository with this look filled in (no data is sent from Kurator)' });
+    this.phLegend = el('div', { class: 'ph-legend' });
+    this.tools = el('div', { class: 'wave-tools' }, this.phLookSel, this.phCode, this.modeSel);
+    for (const x of [this.tools, this.phFb, this.phLegend]) {
+      x.addEventListener('pointerdown', (e) => e.stopPropagation());
+      x.addEventListener('dblclick', (e) => e.stopPropagation());
+      x.addEventListener('wheel', (e) => e.stopPropagation());
+    }
     this.selBar = el('div', { class: 'wave-selbar' });
-    this.root = el('div', { class: 'waveview' + (ruler ? ' big' : '') }, this.canvas, this.modeSel, this.selBar);
+    this.root = el('div', { class: 'waveview' + (ruler ? ' big' : '') }, this.canvas, this.tools, el('div', { class: 'ph-info' }, this.phLegend, this.phFb), this.selBar);
+    phOnSetting(() => {   // Playhead switched on or off in Settings
+      this.fillModes();
+      if (this.mode === 'playhead' && !phEnabled()) this.setMode('peaks');
+    });
     this.sel = null;          // selected region {a, b} in seconds (big view: drag to select)
     this.loopSel = prefs.get('wave.loop', false);
     this.id = null; this.data = null; this.spec = null; this.t0 = 0; this.t1 = 1; this.hoverX = null;
+    this.phd = null; this.phP = null; this.phErr = null; this.phCache = null; this.phSeq = 0;
     this.bind();
+    this.root.classList.toggle('ph-mode', this.mode === 'playhead');
     new ResizeObserver(() => this.draw()).observe(this.canvas);
+  }
+
+  fillModes() {
+    this.modeSel.replaceChildren(...waveModes().map(([k, t]) => el('option', { value: k, text: t })));
+    this.modeSel.value = this.mode;
   }
 
   async load(id, duration) {
     this.id = id;
     this.duration = duration || 0;
     this.data = null; this.spec = null; this.t0 = 0; this.t1 = 1;
+    this.phd = null; this.phP = null; this.phErr = null; this.phCache = null;
     this.setSel(null);
     this.draw();
     try {
@@ -57,8 +95,79 @@ export class WaveView {
       this.duration = d.duration || this.duration;
     } catch (e) { this.error = e.message; }
     if (this.mode === 'spectrogram') this.loadSpec();
+    if (this.mode === 'playhead') this.loadPh();
     this.draw();
     this.loop();
+  }
+
+  /** The Playhead document of this sound (analysed in a worker when there is none yet). */
+  loadPh() {
+    const id = this.id;
+    if (id == null || !phEnabled() || this.phd || this.phLoading === id) return;
+    this.phLoading = id;
+    this.phErr = null;
+    this.phP = null;
+    phLib().then(() => this.paintLooks()).catch(() => {});
+    phDoc(id, { owner: this, duration: this.duration, onProgress: (p) => { if (this.id === id) { this.phP = p; this.draw(); } } })
+      .then((doc) => {
+        if (this.id !== id) return;
+        this.phd = doc;
+        this.phSeq++;
+        this.phCache = null;
+        this.paintLooks();
+        this.draw();
+      })
+      .catch((e) => { if (this.id === id && !e.replaced) { this.phErr = e.message; this.draw(); } })
+      .finally(() => { if (this.phLoading === id) this.phLoading = null; });
+  }
+
+  /** The Look menu: Playhead's ready-made looks (those that don't fit this sound greyed out), and a custom code. */
+  paintLooks() {
+    const P = phLibNow();
+    if (!P) return;
+    const cur = phLookPref();
+    const doc = this.phd;
+    const opts = Object.entries(P.looks).map(([k, L]) => {
+      const fits = !doc || k === 'auto' || P.lookFits(doc, k);
+      return el('option', { value: k, text: L.name + (fits ? '' : ' (not for this sound)'), title: L.desc, disabled: !fits && k !== cur });
+    });
+    opts.push(el('option', { value: 'custom', text: 'Custom…', title: 'Type or paste a look code' }));
+    this.phLookSel.replaceChildren(...opts);
+    const custom = !P.looks[cur];
+    this.phLookSel.value = custom ? 'custom' : cur;
+    this.phCode.classList.toggle('show', custom);
+    if (custom && document.activeElement !== this.phCode) this.phCode.value = cur;
+  }
+
+  chooseLook(v) {
+    if (v === 'custom') {
+      const P = phLibNow();
+      const cur = phLookPref();
+      this.phCode.classList.add('show');
+      this.phCode.value = P?.looks[cur] ? (this.phCache?.r?.code || P.looks[cur].code || '') : cur;
+      this.phCode.focus();
+      this.phCode.select();
+      return;
+    }
+    phSetLookPref(v);
+    this.phCode.classList.remove('show');
+    this.phCache = null;
+    this.draw();
+  }
+
+  /** A pasted look code: used when Playhead can read it (Playhead.parseLook). */
+  useCode(code) {
+    const P = phLibNow();
+    code = String(code || '').trim();
+    const layers = P && code ? P.parseLook(code) : null;
+    const ok = Array.isArray(layers) ? layers.length > 0 : !!(P && P.looks[code]);
+    this.phCode.classList.toggle('bad', !ok);
+    if (!ok) { this.phCode.title = 'Playhead can\'t read this look code'; return; }
+    this.phCode.title = '';
+    phSetLookPref(code);
+    this.phCache = null;
+    this.paintLooks();
+    this.draw();
   }
 
   loadSpec() {
@@ -69,10 +178,13 @@ export class WaveView {
   }
 
   setMode(m) {
+    if (m === 'playhead' && !phEnabled()) m = 'peaks';
     this.mode = m;
     prefs.set('wave.mode', m);
     this.modeSel.value = m;
+    this.root.classList.toggle('ph-mode', m === 'playhead');
     if (m === 'spectrogram' && !this.spec && this.id != null) this.loadSpec();
+    if (m === 'playhead') this.loadPh();
     this.draw();
   }
 
@@ -217,7 +329,9 @@ export class WaveView {
     const top = this.ruler ? Math.round(20 * dpr) : 0;
     const pal = this.duration >= LONG ? PAL.orange : PAL.blue;
     const d = this.data;
-    if (this.mode === 'spectrogram') {
+    if (this.mode === 'playhead') {
+      this.drawPh(g, W, H, top, dpr, pal);
+    } else if (this.mode === 'spectrogram') {
       if (this.spec) {
         const iw = this.spec.naturalWidth;
         g.imageSmoothingEnabled = true;
@@ -231,6 +345,62 @@ export class WaveView {
     }
     if (this.ruler && this.duration) this.timeRuler(g, W, top, dpr);
     this.heads(g, W, H, top, dpr, pal);
+  }
+
+  /** The Playhead strip below the ruler: drawn by Playhead.drawStrip() at the view's zoom, kept as a picture
+   *  between frames (playback redraws 60 times a second; the strip only changes with zoom, size or look). */
+  drawPh(g, W, H, top, dpr, pal) {
+    const P = phLibNow();
+    const doc = this.phd;
+    if (!doc || !P || !this.duration) {
+      const p = this.phP;
+      this.paintLegend(null);
+      this.note(g, W, H, this.phErr ? `Playhead analysis failed: ${this.phErr}`
+        : p == null ? 'Playhead analysis…' : p < 0 ? 'Playhead analysis: reading the sound…' : `Playhead analysis ${Math.round(p * 100)}%…`);
+      return;
+    }
+    const Hs = H - top;
+    const from = this.t0 * this.duration, to = this.t1 * this.duration;
+    const look = phLookPref();
+    const key = [W, Hs, dpr, from, to, look, pal.body, this.phSeq].join('|');
+    if (this.phCache?.key !== key) {
+      const c = this.phCache?.canvas || document.createElement('canvas');
+      c.width = W; c.height = Hs;
+      const cg = c.getContext('2d');
+      cg.setTransform(1, 0, 0, 1, 0, 0);
+      cg.clearRect(0, 0, W, Hs);
+      // only the analysed part: a long sound is analysed over its first 10 minutes
+      const end = Math.min(to, doc.source?.duration || to);
+      let r = null, w = 0, err = null;
+      if (end > from) {
+        w = Math.round(W * (end - from) / (to - from));
+        cg.scale(dpr, dpr);   // Playhead's text and line sizes are in CSS pixels
+        try {
+          r = P.drawStrip(cg, doc, { width: w / dpr, height: Hs / dpr, from, to: end, theme: phTheme(pal), look: look === 'auto' ? undefined : look });
+        } catch (e) { err = e.message; }
+      }
+      this.phCache = { key, canvas: c, r, w, err };
+    }
+    const pc = this.phCache;
+    g.drawImage(pc.canvas, 0, top);
+    if (pc.w < W) {   // after the analysed part
+      g.fillStyle = '#ffffff08';
+      g.fillRect(pc.w, top, W - pc.w, Hs);
+      g.fillStyle = '#8890a0';
+      g.font = `${11 * dpr}px system-ui`;
+      g.fillText('not analysed (after the first 10 minutes)', pc.w + 8 * dpr, top + Hs / 2);
+    }
+    if (pc.err) this.note(g, W, H, `Playhead can't draw this look: ${pc.err}`);
+    this.paintLegend(pc.r);
+  }
+
+  /** The legend comes from Playhead (drawStrip's return value); the feedback link carries the look code. */
+  paintLegend(r) {
+    const text = r?.legend || '';
+    if (this.phLegend.textContent !== text) { this.phLegend.textContent = text; this.phLegend.title = text; }
+    const href = phFeedbackUrl(r?.code || phLookPref());
+    if (this.phFb.getAttribute('href') !== href) this.phFb.setAttribute('href', href);
+    this.phFb.classList.toggle('show', !!r);
   }
 
   note(g, W, H, text) {

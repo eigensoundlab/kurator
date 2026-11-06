@@ -112,6 +112,62 @@ def mono(path: str, rate: int = 11025, seconds: float | None = None) -> tuple[np
     return x.astype(np.float32), int(sr / k)
 
 
+MAX_SAMPLES = 64_000_000     # one samples request: 600 s of 48 kHz stereo is 57.6 million
+
+
+def samples(path: str, rate: int = 0, mono: bool = False, max_seconds: float = MAX_ANALYSE_SECONDS):
+    """Decoded samples for analysis in the browser (Playhead): (info, iterator of float32 blocks).
+
+    info: samplerate (after decimation), channels (1 or 2), frames (expected, or None when the
+    length is only known after decoding), truncated (cut at max_seconds).
+    `rate`: decimate by the integer factor nearest samplerate / rate with a box filter, as mono()
+    does (0: the file's own rate). `mono`: the channels averaged; otherwise at most 2 channels.
+    Blocks are frames x channels, little-endian float32, interleaved when written out."""
+    it = blocks(path)
+    sr, ch, frames = next(it)
+    k = max(1, int(round(sr / rate))) if rate and rate > 0 else 1
+    out_ch = 1 if mono or ch == 1 else 2
+    limit = int(max(0.0, max_seconds) * sr) if max_seconds else None
+    cap = MAX_SAMPLES * k // out_ch                      # input frames that give at most MAX_SAMPLES samples
+    limit = cap if limit is None else min(limit, cap)
+    known = frames is not None and frames > 0
+    if not known:                                        # streamed (ffmpeg): decode first to know the length
+        parts, got = [], 0
+        for b in it:
+            parts.append(b)
+            got += len(b)
+            if got >= limit + 1:
+                break
+        data = np.concatenate(parts) if parts else np.zeros((0, ch), np.float32)
+        truncated = len(data) > limit
+        frames = min(len(data), limit)
+        it = iter([data[:frames]])
+    else:
+        truncated = frames > limit
+        frames = min(frames, limit)
+    info = {"samplerate": sr / k if sr % k else sr // k, "channels": out_ch, "frames": frames // k,
+            "truncated": bool(truncated), "source_samplerate": sr, "source_channels": ch}
+
+    def gen():
+        carry = None
+        got = 0
+        for b in it:
+            if got >= frames:
+                break
+            if got + len(b) > frames:
+                b = b[: frames - got]
+            got += len(b)
+            x = b.mean(axis=1, keepdims=True) if out_ch == 1 else (b[:, :2] if ch >= 2 else b)
+            if carry is not None:
+                x = np.concatenate([carry, x])
+            n = len(x) // k * k
+            carry = x[n:] if n < len(x) else None
+            if n:
+                y = x[:n].reshape(-1, k, out_ch).mean(axis=1) if k > 1 else x[:n]
+                yield np.ascontiguousarray(y, dtype="<f4")
+    return info, gen()
+
+
 # ---------------------------------------------------------------- loudness (BS.1770)
 def _biquad_power(b, a, w):
     z = np.exp(-1j * w)
