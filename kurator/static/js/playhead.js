@@ -296,6 +296,14 @@ async function samples(id, duration) {
 export const phLookPref = () => prefs.get('playhead.look', 'auto');
 export const phSetLookPref = (v) => prefs.set('playhead.look', v || 'auto');
 
+/** Does a look fold time into rows (Playhead's bar raster, a row per bar)? The waveform view keeps time left to right
+ *  (its cursor, selection, zoom and rows follow that), so such a look is offered only for the grid thumbnails. */
+export const phFoldsTime = (P, look) => {
+  const layers = P && look && look !== 'auto' ? P.parseLook(look) : null;
+  return Array.isArray(layers) && layers.some((l) => l.type === 'raster');
+};
+export const PH_FOLDS_NOTE = 'The bar raster folds time into a row per bar; this view keeps time left to right, so it is offered for the grid thumbnails only (⚙ Settings → Sounds)';
+
 /** Where to tell the Playhead authors whether a look helps (an issue form; no server, no tracking). */
 export const phFeedbackUrl = (code) =>
   `${PH_HOME}/issues/new?template=look-feedback.yml&look=${encodeURIComponent(code || 'auto')}&app=kurator`;

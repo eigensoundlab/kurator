@@ -3,8 +3,10 @@
 Library from tools/make_v16_samples.py. Checks: no Playhead entry while it is off; switching it on in
 Settings; a short sound and a long one (sections) in the viewer in "Playhead analysis"; the canvas is
 not blank; the wheel zoom redraws the strip; playback moves the cursor over it; looks (Automatic,
-Structure, a pasted code) change the legend and the feedback link; the side panel section; switching
-it off falls back to Peak + RMS; no console errors.
+Structure, a pasted code) change the legend and the feedback link; the views of rhythm and form
+(Playhead 0.3.0: tempogram, repetition, modulation, curve rhythms) draw in the viewer, the bar raster is
+offered for grid thumbnails only and its code is refused in the viewer, and draws as a grid thumbnail;
+the side panel section; switching it off falls back to Peak + RMS; no console errors.
 
     python tools/ui_check_v16.py PORT OUT_DIR
 """
@@ -159,14 +161,39 @@ with sync_playwright() as p:
     page.select_option(".viewer .ph-look", "structure"); page.wait_for_timeout(600)
     print("structure legend:", page.inner_text(".viewer .ph-legend"))
     page.screenshot(path=f"{OUT}/8_viewer_music_structure.png")
+    # the views of rhythm and form (Playhead 0.3.0) in place of the waveform
+    for k, look in enumerate(("tempogram", "repetition", "modulation", "rhythms")):
+        page.select_option(".viewer .ph-look", look); page.wait_for_timeout(700)
+        print(f"view {look}:", page.inner_text(".viewer .ph-legend")[:90], "| canvas (mean, spread):", strip_stats())
+        page.screenshot(path=f"{OUT}/8{'abcd'[k]}_viewer_music_{look}.png")
+    # the bar raster folds time into rows: offered for the grid thumbnails only; its code is refused here
+    print("raster option:", page.eval_on_selector(".viewer .ph-look", "s => { const o = [...s.options].find(o => o.value === 'raster'); return o && [o.text, o.disabled]; }"))
+    page.select_option(".viewer .ph-look", "custom"); page.wait_for_timeout(200)
+    page.fill(".viewer .ph-code", "raster:onsetStrength,sections"); page.press(".viewer .ph-code", "Enter"); page.wait_for_timeout(300)
+    print("raster code refused:", page.evaluate("document.querySelector('.viewer .ph-code').classList.contains('bad')"),
+          "| look kept:", page.evaluate("localStorage.getItem('kurator.playhead.look')"))
+    page.locator(".viewer .ph-code").blur()
+    page.select_option(".viewer .ph-look", "structure"); page.wait_for_timeout(300)
     page.keyboard.press("Escape"); page.wait_for_timeout(400)
     cell("sections_120bpm.wav").click(); page.wait_for_timeout(1500)
     print("music panel rows:", page.locator("#panel .p-ph tr").all_inner_texts())
     page.screenshot(path=f"{OUT}/9_panel_music.png")
 
     # stored: a new page gets the document from Kurator's store, without analysing again
-    stored = page.evaluate(f"fetch('/api/audio/' + {K}.items.ids[0] + '/playhead?v=0.2.0').then(r => r.status)")
-    print("stored on the server:", stored)
+    version = page.evaluate(f"{K}.viewer.wave.phd ? {K}.viewer.wave.phd.generator.version : ''")
+    stored = page.evaluate(f"fetch('/api/audio/' + {K}.items.ids[0] + '/playhead?v={version}').then(r => r.status)")
+    print("stored on the server (Playhead " + version + "):", stored)
+
+    # the bar raster as grid thumbnails (Settings → Sounds): analysed sounds show a raster strip
+    page.click("button[title^='Settings']")
+    page.wait_for_timeout(800)
+    page.locator(".dlg label:has-text('Playhead strips as thumbnails') input").check()
+    page.wait_for_timeout(300)
+    page.locator(".dlg select[title^='How Playhead draws the strips']").select_option("raster")
+    page.wait_for_timeout(300)
+    page.keyboard.press("Escape"); page.wait_for_timeout(1500)
+    print("grid strips:", page.locator(".cell.ph-strip").count(), "| grid look:", page.evaluate("JSON.parse(localStorage.getItem('kurator.playhead.grid') || '{}').look"))
+    page.screenshot(path=f"{OUT}/9b_grid_raster.png")
 
     # --- switch it off: the style falls back to Peak + RMS
     page.click("button[title^='Settings']")

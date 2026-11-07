@@ -16,7 +16,7 @@
 // whole-sound overview holds, the part on screen is read again, finer (waveform and spectrogram).
 
 import { api } from './api.js';
-import { phDoc, phEnabled, phFeedbackUrl, phLib, phLibNow, phLookPref, phOnSetting, phSetLookPref, phTheme } from './playhead.js';
+import { PH_FOLDS_NOTE, phDoc, phEnabled, phFeedbackUrl, phFoldsTime, phLib, phLibNow, phLookPref, phOnSetting, phSetLookPref, phTheme } from './playhead.js';
 import { el, fmtDuration, prefs } from './util.js';
 
 export const WAVE_MODES = [['peaks', 'Peak + RMS'], ['minmax', 'Min / max'], ['db', 'Loudness (dB)'], ['stereo', 'Channels'], ['spectrogram', 'Spectrogram']];
@@ -158,13 +158,15 @@ export class WaveView {
       .finally(() => { if (this.phLoading === id) this.phLoading = null; });
   }
 
-  /** The Look menu: Playhead's ready-made looks (those that don't fit this sound greyed out), and a custom code. */
+  /** The Look menu: Playhead's ready-made looks (those that don't fit this sound greyed out, and those that fold time
+   *  into rows, which this view can't follow), and a custom code. */
   paintLooks() {
     const P = phLibNow();
     if (!P) return;
     const cur = phLookPref();
     const doc = this.phd;
     const opts = Object.entries(P.looks).map(([k, L]) => {
+      if (phFoldsTime(P, k)) return el('option', { value: k, text: L.name + ' (grid thumbnails only)', title: PH_FOLDS_NOTE, disabled: k !== cur });
       const fits = !doc || k === 'auto' || P.lookFits(doc, k);
       return el('option', { value: k, text: L.name + (fits ? '' : ' (not for this sound)'), title: L.desc, disabled: !fits && k !== cur });
     });
@@ -197,8 +199,10 @@ export class WaveView {
     code = String(code || '').trim();
     const layers = P && code ? P.parseLook(code) : null;
     const ok = Array.isArray(layers) ? layers.length > 0 : !!(P && P.looks[code]);
-    this.phCode.classList.toggle('bad', !ok);
+    const folds = ok && phFoldsTime(P, code);
+    this.phCode.classList.toggle('bad', !ok || folds);
     if (!ok) { this.phCode.title = 'Playhead can\'t read this look code'; return; }
+    if (folds) { this.phCode.title = PH_FOLDS_NOTE; return; }
     this.phCode.title = '';
     phSetLookPref(code);
     this.paintLooks();
@@ -529,6 +533,7 @@ export class WaveView {
       return;
     }
     const look = phLookPref();
+    if (phFoldsTime(P, look)) { this.note(g, W, H, 'The bar raster is for grid thumbnails only (⚙ Settings → Sounds)'); return; }
     const theme = phTheme(pal);
     const done = Math.min(D, doc.source?.duration || D);   // a long sound is analysed over its first 10 minutes
     let err = null;

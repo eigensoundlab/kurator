@@ -2,6 +2,14 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## Unreleased
+- **Playhead 0.3.0** (the vendored library, unchanged; checksum in its README). New in the Look
+  menu: *Tempogram* and *Repetition* for music, *Modulation spectrogram* and *Curve rhythms* for any
+  sound, drawn in place of the waveform. The *Bar raster* (a row per bar) folds time into rows, so
+  it is offered for the grid thumbnails only, and its look code is refused in the viewer with that
+  reason. Sounds are analysed again with the new version when shown (stored analyses are kept per
+  version).
+
 ## 0.17.0 – Rows for long sounds, Playhead across the library
 - **Rows for long sounds:** a *Rows* menu sets a row height (viewer and side panel); a long sound
   wraps onto rows of equal, round time spans, each with its own ruler. Click, select (also across

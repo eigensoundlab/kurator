@@ -231,6 +231,10 @@ Descriptors for Sound Design* [Preprint], Zenodo,
   (*Sound character* and *Hits and surprise* for effects, *Structure* and *Rhythm* for music…).
   Looks a sound can't use are greyed out. *Custom…* takes a look code such as
   `wave,sections,lane:structureNovelty~signed,lane:localPulse,ticks:downbeats`.
+  - Views of rhythm and form (Playhead 0.3.0) in place of the waveform: *Tempogram* and
+    *Repetition* for music, *Modulation spectrogram* and *Curve rhythms* for any sound.
+  - The *Bar raster* (a row per bar, top to bottom) folds time into rows, which the viewer's
+    cursor, selection and rows can't follow, so it is offered for the grid thumbnails only.
   - The legend beside the strip comes from Playhead.
   - *Tell us if this helps* opens a short form in the Playhead repository with the look filled in.
     Nothing is sent from Kurator.
@@ -253,8 +257,8 @@ Descriptors for Sound Design* [Preprint], Zenodo,
   tooltips give the exact rule.
 - **Sort by** *Harshness*, *Impulsiveness*, *Ring time*, *Burstiness* or *Loudness range* (sounds
   without a value go last; ring time only where Playhead trusts its decay estimate).
-- **Playhead strips as thumbnails** (⚙ Settings → Sounds, with a look of your choice): analysed
-  sounds show a small Playhead strip in the grid instead of the waveform.
+- **Playhead strips as thumbnails** (⚙ Settings → Sounds, with a look of your choice, the bar raster
+  included): analysed sounds show a small Playhead strip in the grid instead of the waveform.
 - Kurator draws only through Playhead's own `drawStrip()`, so a new Playhead build changes the look
   by replacing one file (`kurator/static/js/vendor/playhead-core.mjs`, see the README there).
   The usual waveform styles stay the default.
@@ -903,7 +907,7 @@ kurator/
     js/playhead-worker.js  the analysis in a module worker
     js/phlibdlg.js         "Analyse sounds with Playhead" (command line or browser)
     js/phmarkers.js        markers for REAPER / Audacity from a Playhead analysis
-    js/vendor/             playhead-core.mjs (Playhead 0.2.0, unchanged; checksum in its README)
+    js/vendor/             playhead-core.mjs (Playhead 0.3.0, unchanged; checksum in its README)
 tests/             pytest: dates, indexing, API + security, tags, moves, rules, sidecars, watching
 tools/             sample library generator, indexing benchmark, browser UI checks
 install / update / kurator  (.bat for Windows, .sh for Linux/macOS)
