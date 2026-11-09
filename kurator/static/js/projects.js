@@ -9,6 +9,7 @@
 
 import { api } from './api.js';
 import { openDialog } from './dialog.js';
+import { destField } from './folderpick.js';
 import { el, fmtBytes, fmtNum, prefs, setKids } from './util.js';
 
 export class Projects {
@@ -191,7 +192,7 @@ export class Projects {
       title: `Export "${p.name}"`, width: 720,
       body: el('div', { class: 'projdlg' },
         el('div', { class: 'p-hint small', text: 'Copies the project\'s files into a game project, sorted by type. Models get the materials and textures they reference, at the same relative paths, so they import with their textures. Run it again later: only new or changed files are copied. Nothing in your library is moved or changed.' }),
-        el('label', {}, 'Destination folder', dest),
+        el('label', {}, 'Destination folder', destField(app, dest, { title: 'Export into…' })),
         el('label', {}, 'Layout', preset),
         el('label', { class: 'chk' }, bySubj, 'Subfolders by subject (e.g. Sprites/Creatures/Dragons)'),
         el('label', { class: 'chk' }, comps, 'Bring the textures and materials that models use'),

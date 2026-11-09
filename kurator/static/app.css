@@ -618,3 +618,45 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 #grid.fit-cover .cell .ph-thumb { top: 0; height: 100%; }
 .cell.ph-strip .ph-thumb { display: block; }
 .cell.ph-strip img { visibility: hidden; }
+
+/* destination fields and the folder picker */
+.destfield { display: flex; gap: 6px; align-items: center; }
+.destfield input[type=text] { flex: 1; min-width: 0; }
+.destfield .btn { flex: none; }
+.fp-wrap { display: grid; grid-template-columns: 230px 1fr; gap: 10px; margin: 8px 0; }
+.fp-side, .fp-list { height: 330px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 0; }
+.fp-head { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px 2px; }
+.fp-side .node .nm, .fp-list .node .nm { overflow: hidden; text-overflow: ellipsis; }
+.fp-wrap .row { margin-top: 6px; }
+
+/* Files ▾ menu */
+.popmenu { position: fixed; z-index: 80; min-width: 260px; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 30px #0008; padding: 4px; }
+.popmenu .pm-row kbd { font-size: 11px; }
+
+/* quick destinations */
+.send-list { display: flex; flex-direction: column; gap: 4px; }
+.send-row { display: flex; align-items: center; gap: 10px; background: var(--bg3); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 10px; color: var(--fg); cursor: pointer; text-align: left; }
+.send-row:hover { border-color: var(--accent2); }
+.send-row .grow { flex: none; min-width: 110px; font-weight: 600; }
+.send-row .fit { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-act { font-size: 11px; border-radius: 4px; padding: 1px 6px; background: #1f4630; color: var(--ok); }
+.send-act.move { background: #4a3d1a; color: var(--warn); }
+.slot-grid { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.slot-row { display: flex; align-items: center; gap: 8px; }
+.slot-row .destfield { flex: 1; }
+
+/* delivery options, duplicates */
+details.delivery { border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; margin: 8px 0; }
+details.delivery summary { cursor: pointer; color: var(--fg); font-size: 13px; padding: 4px 0; }
+.move-list.dupes { max-height: 320px; }
+.dgroup { padding: 3px 0; border-bottom: 1px solid var(--line); }
+.dgroup:last-child { border-bottom: 0; }
+.dgroup .mv.keep .to { color: var(--fg); }
+.dgroup .mv .from { max-width: none; }
+.fp-path { display: flex; gap: 6px; align-items: center; }
+.fp-path input[type=text] { flex: 1; width: auto; }
+details.delivery label.chk { white-space: normal; }
+.btn.primary.danger { background: #a3412c; border-color: #a3412c; color: #fff; }
+.btn.primary.danger:hover { background: #b84a33; }

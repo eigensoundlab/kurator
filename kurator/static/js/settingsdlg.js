@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { PH_HOME, PH_PAPER, phEnabled, phGridPref, phLib, phSetEnabled, phSetGridPref } from './playhead.js';
 import { openDialog } from './dialog.js';
 import { openPhLibraryDialog } from './phlibdlg.js';
-import { el, fmtNum, setKids } from './util.js';
+import { el, fmtBytes, fmtNum, setKids } from './util.js';
 
 export async function openSettingsDialog(app) {
   let st;
@@ -68,6 +68,34 @@ export async function openSettingsDialog(app) {
   }).catch(() => {});
   proofSel.onchange = () => { proofPath.value = proofSel.value; saveProof(proofSel.value); };
   proofPath.onchange = () => saveProof(proofPath.value.trim());
+  // Delete: the system trash (default) or Kurator's own trash folder
+  const delMode = el('select', {}, el('option', { value: 'system', text: 'Recycle Bin / Trash of the system' }),
+    el('option', { value: 'kurator', text: "Kurator's trash folder (on the same disk)" }));
+  delMode.value = st.delete_mode || 'system';
+  const days = el('input', { type: 'number', min: '0', max: '3650', value: String(st.trash_days ?? 30), style: { width: '70px' } });
+  const trashInfo = el('span', { class: 'muted small' });
+  const emptyBtn = el('button', { class: 'btn', type: 'button', text: 'Empty now' });
+  const daysRow = el('div', { class: 'row' }, el('label', { class: 'chk' }, 'Empty after', days, 'days (0: never)'), emptyBtn, trashInfo);
+  const paintTrash = async () => {
+    daysRow.style.display = delMode.value === 'kurator' ? '' : 'none';
+    try {
+      const t = await api.trash();
+      trashInfo.textContent = t.files ? `${fmtNum(t.files)} files, ${fmtBytes(t.bytes)} kept` : 'empty';
+      emptyBtn.disabled = !t.files;
+    } catch { trashInfo.textContent = ''; }
+  };
+  delMode.onchange = async () => {
+    try { await api.saveSettings({ delete_mode: delMode.value }); app.toast(delMode.value === 'kurator' ? "Deleted files go to Kurator's trash folder" : 'Deleted files go to the Recycle Bin / Trash'); }
+    catch (e) { app.toast(e.message); }
+    paintTrash();
+  };
+  days.onchange = async () => { try { await api.saveSettings({ trash_days: +days.value || 0 }); } catch (e) { app.toast(e.message); } };
+  emptyBtn.onclick = async () => {
+    if (!window.confirm("Delete the files in Kurator's trash folder for good? They can't be brought back afterwards.")) return;
+    try { const r = await api.emptyTrash(); app.toast(`${fmtNum(r.removed)} files deleted for good`); } catch (e) { app.toast(e.message); }
+    paintTrash();
+  };
+  paintTrash();
   const untagged = el('input', { type: 'checkbox' });
   const out = el('div', { class: 'move-preview' });
 
@@ -132,6 +160,11 @@ export async function openSettingsDialog(app) {
       el('div', { class: 'p-hint small', text: 'Turns keywords already stored with your files into tags: embedded XMP (Photoshop, Lightroom…), Windows Explorer tags, and .xmp sidecars. "Creatures|Dragons" becomes Creatures/Dragons.' }),
       el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Import keywords', onclick: doImport }), importScope),
       out,
+      el('h3', { text: 'Delete' }),
+      el('label', {}, 'Deleted files (Del, Clean up duplicates) go to', delMode),
+      st.system_trash === false ? el('div', { class: 'warn small', text: 'The system trash needs the Send2Trash package: run update.bat / update.sh once.' }) : null,
+      el('div', { class: 'p-hint small', text: "Either way Ctrl+Z brings files back, with their tags. From the system trash you can also restore files yourself - Kurator gives them their tags back. Kurator's trash folder is its data folder when that is on the same disk, else a hidden .kurator-trash folder at the top of the disk: deleting is instant and keeps everything until it is emptied." }),
+      daysRow,
       el('h3', { text: 'Sounds' }),
       el('label', { class: 'chk' }, ph, 'Playhead analysis (experimental)'),
       el('div', { class: 'p-hint small' },

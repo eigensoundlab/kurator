@@ -17,6 +17,29 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
 - **Hotkeys per project** (*Edit…* on a project): while it is open, keys 1–9 apply the project's
   own tag set; keys left on *global* keep their tag. Catalog schema 12.
 - Number keys work without Shift on layouts that type letters there (Czech, Slovak…).
+- **Choosing folders:** *Browse…* next to every destination field (click through drives and folders,
+  new folder), and one list of recent destinations for all of them, kept in the catalog (pin, forget).
+- **Quick destinations (D, then 1–9):** numbered folders that copy or move the selection at once;
+  global, and per project in their place. *Files ▾ → Quick destinations…* (or E in the menu) edits them.
+- **Rename (F2):** a pattern with `{name}` `{n}` `{date}` `{tag}` `{project}` `{folder}` `{w}` `{h}`…,
+  find / replace (also regular expressions), case; live preview; names can be swapped or renumbered
+  in place; sidecars follow; Ctrl+Z.
+- **Delete (Del):** to the system's Recycle Bin / Trash (default; Send2Trash) or to Kurator's trash
+  folder on the same disk (⚙ Settings → Delete, emptied after N days). Ctrl+Z brings files back with
+  their catalog entries and tags, from either. Files restored from the system trash by hand get their
+  tags back. On Windows, drives without a Recycle Bin (network, USB) use Kurator's trash folder.
+- **Clean up duplicates** (path bar of the Duplicates view): keep the copy with the most tags, the
+  oldest / newest, the shortest path, the one in a folder or in the open project; the kept copy gets
+  the others' tags; Ctrl+Z.
+- **Copies for delivery** (Copy to… → For delivery): remove private details (GPS, serial numbers,
+  owner, maker notes, EXIF thumbnail, XMP / IPTC history, PNG text with AI prompts and ComfyUI
+  workflows), write the author and licence in, or make one zip - JPEG, PNG and WebP without
+  re-encoding.
+- **Per-project settings:** Move / Copy, Resample, Join / sheet, Rename and Clean-up remember their
+  settings and folders per project.
+- **Files ▾** in the status bar: Rename, Copy, Send to, Quick destinations, Resample, Delete, Clean
+  up duplicates.
+- New dependency: Send2Trash (BSD-3) - run update.bat / update.sh once.
 - **Tests:** the KTX2 zstd test runs on Python 3.14 (built-in `compression.zstd`), and the CMYK
   profile test no longer assumes the test profile is listed first (macOS has its own).
 - **Playhead 0.3.0** (the vendored library, unchanged; checksum in its README). New in the Look

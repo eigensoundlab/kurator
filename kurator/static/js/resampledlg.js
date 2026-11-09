@@ -3,7 +3,8 @@
 
 import { api } from './api.js';
 import { openDialog } from './dialog.js';
-import { el, fmtNum, prefs, setKids } from './util.js';
+import { destField } from './folderpick.js';
+import { el, fmtNum, projPrefs, setKids } from './util.js';
 
 const MODES = [['long', 'Longest side'], ['percent', 'Percent'], ['width', 'Width'], ['height', 'Height'], ['fit', 'Fit inside'], ['exact', 'Exact size (may stretch)']];
 const FILTERS = [['lanczos', 'Lanczos (sharp)'], ['bicubic', 'Bicubic'], ['bilinear', 'Bilinear'], ['box', 'Area average (smooth reduction)'], ['nearest', 'Nearest neighbour (pixel art)']];
@@ -18,7 +19,8 @@ const PRESETS = [
 export function openResampleDialog(app) {
   const ids = app.selected.size ? app.items.ids.filter((id) => app.selected.has(id)) : app.tagTargets();
   if (!ids.length) { app.toast('Select some pictures first'); return; }
-  const P = prefs.get('resample', {});
+  const pp = projPrefs(app);
+  const P = pp.get('resample', {});
   const sel = (opts, v) => { const s = el('select', {}, opts.map(([k, t]) => el('option', { value: k, text: t }))); s.value = v; return s; };
   const num = (v, min, max, w = '90px') => el('input', { type: 'number', min: String(min), max: String(max), value: v ?? '', style: { width: w } });
   const chk = (v) => { const c = el('input', { type: 'checkbox' }); c.checked = !!v; return c; };
@@ -34,6 +36,8 @@ export function openResampleDialog(app) {
   const qualityBox = el('label', { class: 'chk' }, 'Quality', quality, el('small', { class: 'muted', text: 'JPEG / WebP (WebP 100 = lossless)' }));
   const where = sel(WHERE, P.where || 'beside');
   const folder = el('input', { type: 'text', spellcheck: 'false', value: P.where === 'folder' ? (P.folder || '') : (P.subfolder || 'resampled') });
+  const folderBox = destField(app, folder, { title: 'Save the resampled copies in…' });
+  const listId = folder.getAttribute('list');
   const suffix = el('input', { type: 'text', spellcheck: 'false', value: P.suffix ?? '_{w}x{h}', style: { width: '140px' } });
   const keepDate = chk(P.keep_date !== false);
   const keepTags = chk(P.keep_tags !== false);
@@ -47,7 +51,9 @@ export function openResampleDialog(app) {
     const two = m === 'fit' || m === 'exact';
     value2.style.display = by.style.display = two ? '' : 'none';
     qualityBox.style.display = format.value === 'jpg' || format.value === 'webp' || format.value === 'keep' ? '' : 'none';
-    folder.style.display = where.value === 'beside' ? 'none' : '';
+    folderBox.style.display = where.value === 'beside' ? 'none' : '';
+    folderBox.querySelector('button').style.display = where.value === 'folder' ? '' : 'none';
+    if (where.value === 'folder') folder.setAttribute('list', listId); else folder.removeAttribute('list');
     folder.placeholder = where.value === 'folder' ? 'Folder, e.g. D:\\Delivery\\Web' : 'Subfolder name, e.g. resampled';
   };
   const body = () => ({ ids, mode: mode.value, value: +value.value, value2: +value2.value || null, enlarge: enlarge.checked,
@@ -55,7 +61,7 @@ export function openResampleDialog(app) {
     folder: where.value === 'beside' ? '' : folder.value.trim(), suffix: suffix.value, keep_date: keepDate.checked, keep_tags: keepTags.checked });
   const remember = () => {
     const b = body();
-    prefs.set('resample', { mode: b.mode, value: b.value, value2: b.value2, filter: b.filter, enlarge: b.enlarge, format: b.format,
+    pp.set('resample', { mode: b.mode, value: b.value, value2: b.value2, filter: b.filter, enlarge: b.enlarge, format: b.format,
       quality: b.quality, where: b.where, suffix: b.suffix, keep_date: b.keep_date, keep_tags: b.keep_tags,
       folder: b.where === 'folder' ? b.folder : P.folder, subfolder: b.where === 'subfolder' ? b.folder : P.subfolder });
   };
@@ -112,7 +118,7 @@ export function openResampleDialog(app) {
 
   for (const x of [mode, value, value2, filter, enlarge, format, where, folder, suffix, keepTags]) x.addEventListener('input', invalidate);
   where.addEventListener('change', () => {   // the folder field holds a subfolder name or a path: remember both
-    folder.value = where.value === 'folder' ? (prefs.get('resample', {}).folder || app.query.folder || '') : (prefs.get('resample', {}).subfolder || 'resampled');
+    folder.value = where.value === 'folder' ? (pp.get('resample', {}).folder || app.query.folder || '') : (pp.get('resample', {}).subfolder || 'resampled');
     invalidate();
   });
   const presets = el('div', { class: 'chip-list' }, PRESETS.map(([label, p]) => el('button', { class: 'chip', type: 'button', text: label, onclick: () => {
@@ -130,7 +136,7 @@ export function openResampleDialog(app) {
       el('label', { class: 'chk' }, enlarge, 'Also enlarge smaller pictures (otherwise they are left out)'),
       el('div', { class: 'row' }, el('label', {}, 'Filter', filter), el('label', {}, 'Format', format)),
       qualityBox,
-      el('div', { class: 'row bottom' }, el('label', {}, 'Save', where), folder),
+      el('div', { class: 'row bottom' }, el('label', {}, 'Save', where), folderBox),
       el('div', { class: 'row' }, el('label', {}, 'Name ending', suffix), el('small', { class: 'muted', text: '{w} {h} = new size, {pct} = percent · e.g. hero.png → hero_512x256.png' })),
       el('label', { class: 'chk' }, keepDate, 'Keep the original\'s date (EXIF and file time), so the copy sorts next to it'),
       el('label', { class: 'chk' }, keepTags, 'Copies in the library get the original\'s tags, source, author and licence'),

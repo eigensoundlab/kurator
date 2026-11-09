@@ -18,7 +18,10 @@ export function openDialog({ title, body, buttons = [], width = 520, onClose }) 
     onClose?.();
   };
   const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    if (e.key !== 'Escape') return;
+    const all = document.querySelectorAll('.dlg-wrap');
+    if (all[all.length - 1] !== wrap) return;      // a dialog opened from this one (folder picker) closes first
+    e.preventDefault(); e.stopImmediatePropagation(); close();
   };
   for (const b of buttons) {
     const n = el('button', { class: 'btn' + (b.primary ? ' primary' : '') + (b.danger ? ' danger' : ''), type: 'button', text: b.label,

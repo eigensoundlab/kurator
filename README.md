@@ -451,6 +451,10 @@ narrows the project down. Click the project again, or × in the path bar, to lea
   open, keys 1–9 apply the project's tags instead of the global ones (e.g. *1 Characters, 2 Props,
   3 Backgrounds* for a game, *1 Sketch, 2 Final* for a book); keys left on *global* keep their usual
   tag. The tag bar and the sidebar show the keys that apply now.
+- **Its own settings:** with a project open, the Move / Copy, Resample, Join / sheet, Rename and
+  Clean-up dialogs remember their settings and folders for that project (e.g. its delivery folder,
+  its texture size), and its [quick destinations](#quick-destinations-d-then-19) replace the global
+  ones.
 - **Things it includes automatically** (*Edit…* on the project), kept up to date as you work:
   - **tags**: everything tagged *Creatures*, including *Creatures/Dragons*, now and later;
   - **folders**: everything in `D:\Game A\Concepts`, including new files;
@@ -497,6 +501,11 @@ back to *In project* → tag and sort.
   under a name in the sidebar (*Saved views*), e.g. "Game A – creatures without status".
 - **Duplicates** (in the sidebar when there are any) lists files whose exact content exists in more
   than one place, next to each other. The side panel shows *Also in* with the other locations.
+  **Clean up…** in the path bar keeps one copy of each: the one with the most tags, the oldest or
+  newest, the shortest path, the one inside a folder you choose, or the one in the open project. The
+  others go to the trash ([Deleting files](#deleting-files-del)), the kept copy can get their tags,
+  and Ctrl+Z brings everything back. Only files in the view (or the selection) are removed; the copy
+  that stays may be elsewhere, and the preview says so.
 - **Similar images** (sidebar) groups pictures that look nearly the same: resized, re-saved as JPEG,
   slightly edited, exported twice. Groups are shown one after the other, every other group with an
   orange frame; choose *nearly identical*, *very similar* or *similar* in the path bar. It works inside
@@ -724,6 +733,65 @@ The same dialog as *Move*, for copies; the originals stay where they are.
   author and licence** (switch that off in the dialog) and its previews (same content: nothing to
   index again).
 - **Ctrl+Z** deletes the copies again, but only those still exactly as copied.
+- **For delivery** (in the dialog), for sending work to a client, a shop or a print service:
+  - **Remove private details:** the GPS location, camera and lens serial numbers, the camera owner,
+    maker notes, the EXIF thumbnail (it can show the uncropped original), XMP and IPTC (editing
+    history, document ids), comments, and PNG text chunks - **AI generation parameters and ComfyUI
+    workflows** live there. Colour profile, orientation, resolution, dates and camera model stay.
+  - **Write the author and licence** from *Source & licence* into the files (XMP; EXIF Artist and
+    Copyright; PNG Author / Copyright), with the licence's link.
+  - **As one zip archive** with a name you give, instead of loose files (pictures are stored, not
+    compressed again). Ctrl+Z deletes the zip.
+  - JPEG, PNG and WebP are changed in their metadata only: the picture data is copied byte for byte,
+    then decoded once to make sure it is intact. Other files are copied as they are; sidecars stay
+    home.
+
+### Choosing folders
+
+Every destination field (Move, Copy, Resample, Join / sheets, Export, Datasets, sound regions,
+quick destinations) has **Browse…**: click through drives and folders, make a **new folder**, or
+pick one of the **recent destinations** (shared by all of them, kept in the catalog) or a pinned
+folder. ☆ in the list pins a folder (also in the sidebar), × forgets it. Typing a path still works,
+with the same folders suggested.
+
+### Quick destinations (D, then 1–9)
+
+Folders with a number that copy or move the selection at once, without a dialog:
+
+- **D** opens *Send to…* with the numbered folders; press the number. **E** there (or *Files ▾ →
+  Quick destinations…*) edits them: a folder, *Copy* or *Move*, and a name, e.g. *1 Delivery (copy)*,
+  *2 Rejects (move)*, *3 References (copy)*.
+- **Global**, and **per project**: a project's own destinations replace the global ones with the same
+  number while it is open (like its [hotkeys](#projects-work-inside-one)).
+- Copies follow the rules of *Copy to…* (any folder, tags kept in the library), moves those of *Move
+  to…* (inside the library). Ctrl+Z undoes them.
+
+### Renaming files (F2)
+
+- A **name pattern** with parts: `{name}` (the current name), `{n}` (a counter: start, step, digits,
+  or `{n:3}`), `{date}` (`2024-05-31`, or `{date:%Y%m%d}`), `{year}` `{month}` `{day}` `{time}`, `{tag}`
+  and `{tags}` (subject tags), `{project}`, `{folder}`, `{w}` `{h}`, `{author}`. Ready-made patterns:
+  *Date first*, *Folder + number*, *Tag + number*…
+- **Find / replace** (also with regular expressions) and **case** (lower, UPPER, Title).
+- The counter follows the order of the grid; files stay in their folders and keep their extension.
+  Names can be **swapped or renumbered in place** (renamed in two steps). Clashes get ` (2)` and are
+  shown in the live preview.
+- Sidecars follow (XMP, Unity `.meta`, Godot `.import`), the catalog entry stays (tags, dates,
+  stacks), and **Ctrl+Z** renames everything back.
+
+### Deleting files (Del)
+
+- **Del** (or *Files ▾ → Delete…*) asks once, then deletes the selection with its sidecars, to:
+  - **the system's Recycle Bin / Trash** (default). Restore files there and Kurator gives them their
+    tags back (parked by content hash). On Windows, network shares and USB sticks have no Recycle
+    Bin, so files from there go to Kurator's trash folder instead (the message says so).
+  - or **Kurator's trash folder** (⚙ Settings → Delete): Kurator's data folder when it is on the same
+    disk, otherwise a hidden `.kurator-trash` folder at the top of that disk. Deleting is a rename
+    (instant, everything kept), emptied after N days (30 by default) or with *Empty now*.
+- **Ctrl+Z** brings files back either way - from the Recycle Bin (Windows), the desktop trash (Linux)
+  or the Trash (macOS, found by name, size and time) - with their catalog entries, tags, source /
+  author / licence and stacks, without indexing them again. Kurator never deletes anything for good
+  except when you empty its trash folder.
 
 ### Move rules (Shift+M or "Rules…")
 
@@ -855,6 +923,8 @@ by filter"*.
 | 1 … 9 · T | tag hotkeys (a project can have its own) · tag with any name |
 | 0 or Q | the last tag used, again |
 | M · Shift+M · K | move selection to a folder · move rules · copy selection to any folder |
+| D, then 1…9 | send the selection to a quick destination (copy or move) |
+| F2 · Del | rename (pattern, counter, find / replace) · delete to the trash (undoable) |
 | J · I | join / contact sheet / sprite sheet / atlas · resampled copies |
 | B | backup |
 | O | open in the default application |
@@ -905,7 +975,10 @@ kurator/
   dates.py         date resolution and its trust order
   db.py            catalog.db (files, roots, tags, operations) + thumbs.db (blob cache), WAL, migrations
   tags.py          tag hierarchy, hotkeys, apply/toggle
-  fileops.py       safe moves and copies + undo, Windows creation time, folder listing, reveal
+  fileops.py       safe moves, copies, renames + undo, Windows creation time, folder listing, reveal
+  trash.py         delete to the system trash or Kurator's trash folder, restore (undo)
+  dupes.py         keep one copy of each duplicate
+  delivery.py      copies for delivery: metadata cleaned / credited without re-encoding
   rules.py         move rules: tag -> destination template
   projects.py      projects with automatic sources (tags, folders, other projects)
   assets.py        texture sets, model companions, project export to game folders
@@ -980,7 +1053,7 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
 - Only files in the catalog can be served. Size limits protect against decompression bombs (Pillow,
   400 MP) and zip bombs (`.kra`).
 - **Dependencies:** FastAPI, Starlette, Uvicorn, Pillow (13.0+), h11, watchdog, numpy, pypdfium2,
-  resvg-py, pi-heif, soundfile, tinytag and zstandard (plus PyTorch and open_clip for the AI add-on), at their
+  resvg-py, pi-heif, soundfile, tinytag, zstandard and Send2Trash (plus PyTorch and open_clip for the AI add-on), at their
   newest versions as of November 2026; `pip-audit` reports no known vulnerabilities.
 - Blender (optional) converts .blend files with `--factory-startup --disable-autoexec`: no add-ons,
   scripts or drivers from the file run.

@@ -2,14 +2,16 @@
 
 import { api } from './api.js';
 import { openDialog } from './dialog.js';
-import { debounce, el, fmtNum, prefs, setKids } from './util.js';
+import { destField } from './folderpick.js';
+import { debounce, el, fmtNum, prefs, projPrefs, setKids } from './util.js';
 
 export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
   if (!['join', 'contact', 'atlas'].includes(tab)) tab = 'join';
   const ids = app.selected.size ? app.items.ids.filter((id) => app.selected.has(id)) : [...app.items.ids];   // in grid order
   if (!ids.length) { app.toast('Select some images first'); return; }
   const firstDir = app.panel.detail?.dir || app.query.folder || '';
-  const P = prefs.get('sheets', {});
+  const pp = projPrefs(app);   // each project remembers its own sheet settings and folder
+  const P = pp.get('sheets', {});
   const field = (label, input, hint) => el('label', { class: 'sf' }, el('span', { text: label }), input, hint ? el('small', { class: 'muted', text: hint }) : null);
   const sel = (opts, v) => { const s = el('select', {}, opts.map(([k, t]) => el('option', { value: k, text: t }))); s.value = v; return s; };
   const num = (v, min = 0, max = 100000, ph = '') => el('input', { type: 'number', min: String(min), max: String(max), value: v ?? '', placeholder: ph, style: { width: '90px' } });
@@ -107,7 +109,7 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
       : tab === 'join'
       ? { layout: o.layout, columns: o.columns, size: o.size, gap: o.gap, target_width: o.target_width, target_height: o.target_height, background: o.background, transparent: o.transparent, jformat: o.format }
       : { page: o.page, landscape: o.landscape, dpi: o.dpi, width: o.width, height: o.height, ccolumns: o.columns, caption: o.caption, title: o.title, cbackground: o.background, page_numbers: o.page_numbers, cformat: o.format };
-    prefs.set('sheets', { ...prefs.get('sheets', {}), ...keep, dest: dest.value.trim() });
+    pp.set('sheets', { ...pp.get('sheets', {}), ...keep, dest: dest.value.trim() });
   };
 
   let ctrl = null;
@@ -149,7 +151,7 @@ export function openSheetsDialog(app, tab = prefs.get('sheets.tab', 'join')) {
   const d = openDialog({
     title: `Join, contact sheet, sprites - ${fmtNum(ids.length)} ${app.selected.size ? 'selected' : 'images in view'}`, width: 980,
     body: el('div', { class: 'sheetdlg' },
-      el('div', { class: 'sheetcol' }, tabs, body, field('Save into', dest), field('Name', name), msg),
+      el('div', { class: 'sheetcol' }, tabs, body, field('Save into', destField(app, dest, { title: 'Save into…' })), field('Name', name), msg),
       el('div', { class: 'sheetcol prevcol' }, prevImg, info)),
     buttons: [{ label: 'Close' }, { label: 'Save', primary: true, onClick: async () => {
       remember();

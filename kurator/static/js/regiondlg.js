@@ -2,6 +2,7 @@
 
 import { api } from './api.js';
 import { openDialog } from './dialog.js';
+import { destField } from './folderpick.js';
 import { el, prefs, setKids } from './util.js';
 
 const FORMATS = [['same', 'Same as the original'], ['wav24', 'WAV 24-bit'], ['wav16', 'WAV 16-bit'], ['wav32f', 'WAV 32-bit float'],
@@ -26,7 +27,7 @@ export async function openRegionDialog(app, id, sel) {
   const msg = el('div');
   const d = openDialog({
     title: `Save region ${(sel.b - sel.a).toFixed(2)} s of ${item.name}`, width: 560,
-    body: el('div', { class: 'sheetcol' }, field('Name', name), field('Save into', dest), field('Format', fmt),
+    body: el('div', { class: 'sheetcol' }, field('Name', name), field('Save into', destField(app, dest, { title: 'Save the region into…' })), field('Format', fmt),
       el('div', { class: 'row' }, field('Fade in (ms)', fin), field('Fade out (ms)', fout)),
       field('Level', norm), el('div', { class: 'p-hint small', text: 'Short fades avoid clicks at the cut. The original file is not changed.' }), msg),
     buttons: [{ label: 'Close' }, { label: 'Save', primary: true, onClick: async () => {

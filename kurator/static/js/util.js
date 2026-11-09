@@ -81,3 +81,12 @@ export function digitKey(e) {
   const m = /^(?:Digit|Numpad)([0-9])$/.exec(e.code || '');
   return m && e.key.length === 1 && e.key.charCodeAt(0) > 127 ? +m[1] : null;
 }
+
+/** Dialog settings remembered per project: inside a project its own, else the last ones used anywhere. */
+export function projPrefs(app) {
+  const p = app.projects?.active;
+  return {
+    get: (k, d) => (p ? prefs.get(`${k}@${p}`, prefs.get(k, d)) : prefs.get(k, d)),
+    set: (k, v) => { prefs.set(k, v); if (p) prefs.set(`${k}@${p}`, v); },
+  };
+}

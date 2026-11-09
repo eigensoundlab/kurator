@@ -35,6 +35,7 @@ dependencies = [
     "soundfile>=0.14.0",   # audio decoding (BSD-3, libsndfile LGPL - dynamically loaded)
     "tinytag>=2.3.2",      # audio tags (MIT)
     "zstandard>=0.25; python_version < '3.14'",   # compressed .blend files (BSD); built into Python 3.14+
+    "Send2Trash>=1.8.3",   # delete to the Recycle Bin / Trash (BSD-3)
 ]
 
 [project.optional-dependencies]

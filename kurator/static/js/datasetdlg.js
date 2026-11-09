@@ -3,6 +3,7 @@
 
 import { api } from './api.js';
 import { openDialog } from './dialog.js';
+import { destField } from './folderpick.js';
 import { el, fmtNum, prefs, setKids } from './util.js';
 
 export async function openDatasetDialog(app) {
@@ -69,7 +70,7 @@ export async function openDatasetDialog(app) {
     title: `Training dataset from ${fmtNum(ids.length)} ${nSel ? 'selected' : 'shown'} items`, width: 760,
     body: el('div', { class: 'projdlg dsdlg' },
       el('div', { class: 'p-hint small', text: 'Pictures with a caption .txt next to each, plus metadata.jsonl - the layout kohya-ss, OneTrainer, ai-toolkit and diffusers read. Identical files go in once; near-duplicates too (the biggest is kept). Your library is not changed.' }),
-      el('label', {}, 'Save into', dest),
+      el('label', {}, 'Save into', destField(app, dest, { title: 'Save the dataset into…' })),
       el('div', { class: 'row' }, inline('Dataset folder', folder), inline('Trigger word first', trigger)),
       el('div', { class: 'row' }, inline('Captions', captions), el('span', { class: 'small muted', text: 'tags from:' }), facets),
       el('div', { class: 'row' }, inline('Longest side', maxSide), inline('Format', format), inline('Names', names)),

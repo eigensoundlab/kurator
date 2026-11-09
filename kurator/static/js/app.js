@@ -13,12 +13,15 @@ import { openBackupDialog } from './backupdlg.js';
 import { Grid } from './grid.js';
 import { LookFilter } from './lookfilter.js';
 import { Timeline } from './timeline.js';
+import { openDupesDialog } from './dupesdlg.js';
 import { openCopyDialog, openMoveDialog } from './movedlg.js';
 import { Panel } from './panel.js';
 import { phEnabled, phGridPref, phOnBatch, phOnSetting } from './playhead.js';
 import { Projects } from './projects.js';
+import { openRenameDialog } from './renamedlg.js';
 import { openResampleDialog } from './resampledlg.js';
 import { openRulesDialog } from './rulesdlg.js';
+import { openSendMenu, openSlotEditor } from './senddlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
 import { openSheetsDialog } from './sheetsdlg.js';
 import { Sidebar } from './sidebar.js';
@@ -555,10 +558,79 @@ class App {
   onCopied(r) {
     const extra = r.failed.length ? ` · ${r.failed.length} failed` : '';
     const where = r.indexed === r.copied ? '' : r.indexed ? ` (${fmtNum(r.indexed)} in the library)` : ' (outside the library)';
-    this.toast(`Copied ${fmtNum(r.copied)} file${r.copied === 1 ? '' : 's'}${where}${extra} · Ctrl+Z to undo`, 3500);
+    if (r.zip) this.toast(`Zipped ${fmtNum(r.copied)} file${r.copied === 1 ? '' : 's'} into ${r.zip.split(/[\\/]/).pop()}${extra} · Ctrl+Z deletes it`, 4000);
+    else this.toast(`Copied ${fmtNum(r.copied)} file${r.copied === 1 ? '' : 's'}${r.cleaned ? ` (${fmtNum(r.cleaned)} for delivery)` : ''}${where}${extra} · Ctrl+Z to undo`, 3500);
     if (r.failed.length) console.warn('Copy failures', r.failed);
     if (r.op_id) this.pushHistory({ kind: 'copy', opId: r.op_id, count: r.copied });
     if (r.indexed) { this.reload(); this.refreshState(); this.tags.refreshSoon(); }
+  }
+
+  renameDialog() { openRenameDialog(this); }
+
+  onRenamed(r) {
+    this.toast(`Renamed ${fmtNum(r.renamed)} file${r.renamed === 1 ? '' : 's'}${r.failed.length ? ` · ${r.failed.length} failed` : ''} · Ctrl+Z to undo`, 3500);
+    if (r.failed.length) console.warn('Rename failures', r.failed);
+    if (r.op_id) this.pushHistory({ kind: 'rename', opId: r.op_id, count: r.renamed });
+    this.reload();
+  }
+
+  /** Delete (Del): to the system trash or Kurator's trash folder (⚙ Settings → Delete), after asking. */
+  async deleteDialog(ids = this.tagTargets()) {
+    if (!ids.length) { this.toast('Select files to delete first'); return; }
+    let tr = { mode: 'system', days: 30 };
+    try { tr = await api.trash(); } catch { /* the server says it when deleting */ }
+    const where = tr.mode === 'kurator'
+      ? `Kurator's trash folder${tr.days ? ` (kept ${tr.days} days)` : ''}` : 'the Recycle Bin / Trash';
+    openDialog({
+      title: `Delete ${fmtNum(ids.length)} file${ids.length === 1 ? '' : 's'}?`, width: 460,
+      body: el('div', { class: 'form' },
+        el('div', { text: `They go to ${where}, with their sidecars. Ctrl+Z brings them back${tr.mode === 'kurator' ? '' : ' (or restore them there - their tags come back by themselves)'}.` }),
+        el('div', { class: 'p-hint small', text: 'Where deleted files go: ⚙ Settings → Delete.' })),
+      buttons: [{ label: 'Cancel' }, { label: 'Delete', primary: true, danger: true, onClick: async (close) => {
+        close();
+        try { this.onDeleted(await api.deleteFiles(ids)); } catch (e) { this.toast(e.message, 5000); }
+      } }],
+    });
+  }
+
+  onDeleted(r, note = '') {
+    const where = r.mode === 'kurator' ? "Kurator's trash" : 'the trash';
+    const held = r.held_instead ? ` (${fmtNum(r.held_instead)} to Kurator's trash folder: that drive has no Recycle Bin)` : '';
+    this.toast(`Deleted ${fmtNum(r.deleted)} file${r.deleted === 1 ? '' : 's'} to ${where}${held}${note}${r.failed.length ? ` · ${r.failed.length} failed: ${r.failed[0].error}` : ''} · Ctrl+Z to undo`, 4500);
+    if (r.op_id) this.pushHistory({ kind: 'delete', opId: r.op_id, count: r.deleted });
+    if (r.ids?.length && [...r.ids].some((id) => this.selected.has(id))) {
+      const s = new Set(this.selected);
+      for (const id of r.ids) s.delete(id);
+      this.selected = s;
+      this.onSelectionChanged();
+    }
+    this.reload();
+    this.refreshState();
+    this.tags.refreshSoon();
+  }
+
+  /** The Files ▾ menu in the status bar. */
+  filesMenu(anchor) {
+    const items = [
+      ['Rename…', 'F2', () => this.renameDialog()],
+      ['Copy to…', 'K', () => this.copyDialog()],
+      ['Send to a quick destination…', 'D', () => openSendMenu(this)],
+      ['Quick destinations…', '', () => openSlotEditor(this)],
+      ['Resample…', 'I', () => this.resampleDialog()],
+      ['Delete…', 'Del', () => this.deleteDialog()],
+      ['Clean up duplicates…', '', () => (this.query.dupes ? openDupesDialog(this) : (this.setDupes(true), this.toast('These are the duplicates: Files ▾ → Clean up duplicates… again to remove copies'))) ],
+    ];
+    const menu = el('div', { class: 'popmenu' }, items.map(([label, key, fn]) => el('button', { type: 'button', class: 'pm-row', onclick: () => { close(); fn(); } },
+      el('span', { class: 'grow', text: label }), key ? el('kbd', { text: key }) : null)));
+    const close = () => { menu.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', esc, true); };
+    const outside = (e) => { if (!menu.contains(e.target) && e.target !== anchor) close(); };
+    const esc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    document.body.append(menu);
+    const r = anchor.getBoundingClientRect();
+    menu.style.left = `${Math.max(4, Math.min(r.left, innerWidth - menu.offsetWidth - 4))}px`;
+    menu.style.top = `${r.top - menu.offsetHeight - 4}px`;
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', esc, true);
   }
 
   onResampled(r) {
@@ -637,6 +709,22 @@ class App {
       this.future = [];
       this.reload();
       this.refreshState();
+    } else if (e.kind === 'rename') {
+      try {
+        const r = await api.undoOp(e.opId);
+        this.toast(`Renamed ${fmtNum(r.renamed)} file${r.renamed === 1 ? '' : 's'} back${r.failed.length ? ` · ${r.failed.length} failed` : ''}`);
+      } catch (err) { this.toast(err.message); return; }
+      this.future = [];
+      this.reload();
+    } else if (e.kind === 'delete') {
+      try {
+        const r = await api.undoOp(e.opId);
+        this.toast(`Brought back ${fmtNum(r.restored)} file${r.restored === 1 ? '' : 's'}${r.failed.length ? ` · ${r.failed.length} not: ${r.failed[0].error}` : ''}`, r.failed.length ? 6000 : 3000);
+      } catch (err) { this.toast(err.message); return; }
+      this.future = [];
+      this.reload();
+      this.refreshState();
+      this.tags.refreshSoon();
     } else if (e.kind === 'copy') {
       try {
         const r = await api.undoOp(e.opId);
@@ -993,6 +1081,9 @@ class App {
       else if ((k === 'j' || k === 'J') && !ctrl) openSheetsDialog(this);
       else if ((k === 'm' || k === 'M') && !ctrl) this.moveDialog();
       else if ((k === 'k' || k === 'K') && !ctrl) this.copyDialog();
+      else if ((k === 'd' || k === 'D') && !ctrl && !e.altKey) openSendMenu(this);
+      else if (k === 'F2') this.renameDialog();
+      else if (k === 'Delete' && !ctrl) this.deleteDialog();
       else if ((k === 'i' || k === 'I') && !ctrl && !e.altKey) this.resampleDialog();
       else if ((k === 'r' || k === 'R') && !ctrl) { this.reload(); this.toast('Refreshed'); }
       else if (k === 'Backspace' || (e.altKey && k === 'ArrowUp')) { const p = this.query.folder && this.parentOf(this.query.folder); if (p) this.openPath(p); }
@@ -1113,6 +1204,7 @@ class App {
       el('button', { class: 'btn small', text: 'Join / sheet…', title: 'Join the selected images into one, make a contact sheet, a sprite sheet or a texture atlas (J)', onclick: () => openSheetsDialog(this) }),
       el('button', { class: 'btn small', text: 'Resample…', title: 'Make resized copies of the selected pictures: smaller (or larger) versions next to the originals or in a folder (I)', onclick: () => this.resampleDialog() }),
       el('button', { class: 'btn small', text: 'Rules…', title: 'Move files into folders by tag (Shift+M)', onclick: () => openRulesDialog(this) }),
+      el('button', { class: 'btn small', text: 'Files ▾', title: 'Rename (F2), send to a quick destination (D), delete (Del), clean up duplicates', onclick: (e) => this.filesMenu(e.currentTarget) }),
       el('button', { class: 'btn small', text: 'Copy to…', title: 'Copy the selected files to any folder - the originals stay (K)', onclick: () => this.copyDialog() }),
       el('button', { class: 'btn small primary', text: 'Move to…', title: 'Move the selected files to a folder (M)', onclick: () => this.moveDialog() }));
     this.toastEl = el('div', { class: 'toast' });
@@ -1229,7 +1321,10 @@ class App {
     }
     if (q.stack) filters.push(el('span', { class: 'chip small' }, el('span', { text: `▤ Versions of ${this.stackName || 'stack'}` }),
       el('span', { class: 'x', text: '×', onclick: () => { this.query.stack = ''; this.onFilterChanged(); } })));
-    if (q.dupes) filters.push(el('span', { class: 'chip small' }, el('span', { text: '⧉ Duplicates' }), el('span', { class: 'x', text: '×', onclick: () => this.setDupes(false) })));
+    if (q.dupes) {
+      filters.push(el('span', { class: 'chip small' }, el('span', { text: '⧉ Duplicates' }), el('span', { class: 'x', text: '×', onclick: () => this.setDupes(false) })),
+        el('button', { class: 'btn small', text: 'Clean up…', title: 'Keep one copy of each file, move the others to the trash (Ctrl+Z undoes)', onclick: () => openDupesDialog(this) }));
+    }
     if (q.untagged) filters.push(el('span', { class: 'chip small' }, el('span', { text: 'Untagged' }), el('span', { class: 'x', text: '×', onclick: () => this.setUntagged(false) })));
     if (q.missing) {
       const f = this.tags.facets.find((x) => x.key === q.missing);
@@ -1288,7 +1383,7 @@ class App {
       ['+ · −', 'With a project open: add the selection · take it out'],
       ['Export… (path bar)', 'Copy the open project into a Unity / Godot / Unreal folder, models with their textures'],
       ['☆ Save view', 'Remember the current filters under a name (sidebar: Saved views)'],
-      ['Duplicates (sidebar)', 'Files whose exact content is in more than one place'],
+      ['Duplicates (sidebar)', 'Files whose exact content is in more than one place · Clean up… keeps one of each'],
       ['Similar images (sidebar)', 'Groups of pictures that look nearly the same'],
       ['Look ▾ (top bar)', 'Filter by colour, shape, transparency, size; sounds by tempo, key and length (with Playhead also by character: hit or swell, bursty, metal-like, long ring…)'],
       ['Timeline (right edge)', 'When sorted by date: drag along it to jump through years and months'],
@@ -1300,7 +1395,11 @@ class App {
       ['Click a tag', 'Everything with it (in the whole library, or in the open project)'],
       ['Ctrl+click · Alt+click', 'Narrow the current view (e.g. a tag in this folder) · hide items with it'],
       ['M', 'Move selection to a folder (with preview, keeps dates, undoable)'],
-      ['K', 'Copy selection to any folder (keeps dates; in the library the copies keep their tags; undoable)'],
+      ['K', 'Copy selection to any folder (keeps dates; in the library the copies keep their tags; for delivery: private details out, author and licence in, zip; undoable)'],
+      ['D, then 1 … 9', 'Send the selection to a quick destination (copy or move; global or per project; E in the menu edits them)'],
+      ['F2', 'Rename: a pattern with {date} {tag} {n}…, find / replace, case; sidecars follow; undoable'],
+      ['Del', 'Delete to the Recycle Bin / Trash, or Kurator\'s trash folder (⚙ Settings → Delete); Ctrl+Z brings files back'],
+      ['Browse… (destination fields)', 'Click through folders, make a new one, or pick a recent destination'],
       ['B', 'Backup (sets, plan with free space, restore)'],
       ['AI', ''],
       ['?text in the search box', 'Search by description, e.g. ?robot with a sword'],

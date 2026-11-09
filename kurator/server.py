@@ -112,6 +112,9 @@ class MoveIn(BaseModel):
 
 class CopyIn(MoveIn):
     keep_tags: bool = True             # copies inside the library get the original's tags, source, author, licence
+    clean: bool = False                # for delivery: GPS, serials, history, AI parameters... out (delivery.py)
+    credit: bool = False               # for delivery: author and licence written into the files
+    zip: str | None = None             # for delivery: one zip archive of this name instead of loose files
 
 
 class IdIn(BaseModel):
@@ -147,6 +150,8 @@ class RestoreIn(BaseModel):
 
 
 class SettingsIn(BaseModel):
+    delete_mode: str | None = None     # 'system' (Recycle Bin / Trash) | 'kurator' (Kurator's trash folder)
+    trash_days: int | None = None      # Kurator's trash folder: empty after N days (0: never)
     xmp_auto: bool | None = None
     xmp_merge: bool | None = None
     svg_all: bool | None = None
@@ -188,6 +193,14 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @asynccontextmanager
     async def lifespan(_app):
         sched = backup.Scheduler(db, jobs).start()      # automatic backups that are due
+
+        def trash_cleanup():
+            from . import trash
+            try:
+                trash.auto_empty(db)                     # Kurator's trash folder: batches older than N days
+            except Exception:  # noqa: BLE001 - try again next start
+                pass
+        threading.Thread(target=trash_cleanup, name="kurator-trash", daemon=True).start()
         if not db.get_setting("ph_backfill") and os.path.isdir(ph_dir):   # Playhead documents stored by 0.16
             def ph_backfill():
                 try:
@@ -729,13 +742,22 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     # -- settings, sidecars, rules -----------------------------------------
     @app.get("/api/settings")
     def get_settings():
+        from . import trash
         return _json({"xmp_auto": db.get_setting("xmp_auto", False), "xmp_merge": db.get_setting("xmp_merge", False),
+                      "delete_mode": trash.mode(db), "trash_days": trash.keep_days(db), "system_trash": trash.system_available(),
                       "svg_all": db.get_setting("svg_all", False), "data_dir": db.data_dir,
                       "proof_profile": db.get_setting("proof_profile", None),
                       "rclone_path": db.get_setting("rclone_path", None)})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
+        if body.delete_mode is not None:
+            from . import trash
+            if body.delete_mode not in trash.MODES:
+                raise HTTPException(400, "Delete to 'system' or 'kurator'")
+            db.set_setting("delete_mode", body.delete_mode)
+        if body.trash_days is not None:
+            db.set_setting("trash_days", max(0, min(int(body.trash_days), 3650)))
         if body.xmp_auto is not None:
             db.set_setting("xmp_auto", body.xmp_auto)
         if body.xmp_merge is not None:
@@ -930,7 +952,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.post("/api/export/run")
     def export_run(body: dict):
-        return _json(exporter.start(_export_plan(body)))
+        out = exporter.start(_export_plan(body))
+        fileops.remember_folder(db, str(body.get("dest") or ""))
+        return _json(out)
 
     @app.get("/api/export/job")
     def export_job():
@@ -967,9 +991,11 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.post("/api/dataset/run")
     def dataset_run(body: dict):
         try:
-            return _json(dataset_job.start(_dataset_plan(body)))
+            out = dataset_job.start(_dataset_plan(body))
         except dataset_mod.DatasetError as e:
             raise HTTPException(409, str(e)) from None
+        fileops.remember_folder(db, str(body.get("dest") or ""))
+        return _json(out)
 
     @app.get("/api/dataset/job")
     def dataset_status():
@@ -1001,6 +1027,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                             "X-Size": f"{pages[0].width}x{pages[0].height}", "Cache-Control": "no-store"})
         files = sheets.save_pages(pages, str(body.get("dest") or ""), str(body.get("name") or ""), str(body.get("format") or "pdf"),
                                   max(72, min(_num(body.get("dpi")) or 150, 600)))
+        fileops.remember_folder(db, str(body.get("dest") or ""))
         return _json({"files": files, "pages": len(pages)})
 
     @app.post("/api/sheets/join")
@@ -1014,6 +1041,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             return Response(sheets.preview_png(img), media_type="image/png",
                             headers={"X-Size": f"{img.width}x{img.height}", "Cache-Control": "no-store"})
         path = sheets.save_image(img, str(body.get("dest") or ""), str(body.get("name") or ""), str(body.get("format") or "png"))
+        fileops.remember_folder(db, str(body.get("dest") or ""))
         return _json({"files": [path], "width": img.width, "height": img.height})
 
     @app.post("/api/sheets/atlas")
@@ -1044,6 +1072,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         files = atlas.save(img, sprites, mode, str(body.get("dest") or ""), str(body.get("name") or ""),
                            godot=bool(body.get("godot")), fps=fps, unity=None if unity_opt == "auto" else bool(unity_opt),
                            ppu=ppu, pixel_art=bool(body.get("pixel_art")))
+        fileops.remember_folder(db, str(body.get("dest") or ""))
         return _json({"files": files, **stats})
 
     # -- resampled copies --------------------------------------------------------------
@@ -1080,10 +1109,13 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         except (TypeError, ValueError):
             quality = 90
         try:
-            return _json(resampler.start(p, str(body.get("filter") or "lanczos"), quality,
-                                         body.get("keep_date", True) is not False, body.get("keep_tags", True) is not False))
+            out = resampler.start(p, str(body.get("filter") or "lanczos"), quality,
+                                  body.get("keep_date", True) is not False, body.get("keep_tags", True) is not False)
         except resample_mod.ResampleError as e:
             raise HTTPException(409, str(e)) from None
+        if body.get("where") == "folder":
+            fileops.remember_folder(db, str(body.get("folder") or ""))
+        return _json(out)
 
     @app.get("/api/resample/job")
     def resample_job():
@@ -1425,6 +1457,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         plan = fileops.plan_move(db, body.ids, body.dest, body.by_year, body.date_prefix)
         res = fileops.execute_moves(db, scanner, plan["moves"], plan["root_id"])
         res["skipped"] = plan["skipped"]
+        fileops.remember_folder(db, plan["dest"])
         return _json(res)
 
     # -- copying -------------------------------------------------------------
@@ -1438,11 +1471,118 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.post("/api/copy")
     def copy(body: CopyIn):
         plan = fileops.plan_copy(db, body.ids, body.dest, body.by_year, body.date_prefix)
-        res = fileops.execute_copies(db, scanner, plan["copies"], body.keep_tags)
+        if body.zip is not None:
+            if not plan["copies"]:
+                raise HTTPException(400, "Nothing to copy")
+            res = fileops.copy_to_zip(db, scanner, plan["copies"], plan["dest"], body.zip, body.clean, body.credit)
+        else:
+            res = fileops.execute_copies(db, scanner, plan["copies"], body.keep_tags, body.clean, body.credit)
         res["skipped"] = plan["skipped"]
         if body.keep_tags:
             _auto_sidecars(res["new_ids"])
+        fileops.remember_folder(db, plan["dest"])
         return _json(res)
+
+    # -- renaming ------------------------------------------------------------
+    def _rename_plan(body: dict) -> dict:
+        try:
+            return fileops.plan_rename(
+                db, [int(i) for i in body.get("ids") or []], str(body.get("template") or ""), int(body.get("start") or 1),
+                int(body.get("step") or 1), int(body.get("pad") or 0), str(body.get("find") or ""), str(body.get("replace") or ""),
+                bool(body.get("regex")), str(body.get("case") or "keep"))
+        except (TypeError, ValueError) as e:
+            if isinstance(e, OpError):
+                raise
+            raise HTTPException(400, "Start, step and padding must be numbers") from None
+
+    @app.post("/api/rename/plan")
+    def rename_plan(body: dict):
+        p = _rename_plan(body)
+        p["renames"] = p["renames"][:500]
+        return _json(p)
+
+    @app.post("/api/rename")
+    def rename(body: dict):
+        p = _rename_plan(body)
+        res = fileops.execute_renames(db, scanner, p["renames"])
+        res["skipped"] = p["skipped"]
+        _auto_sidecars([d["id"] for d in p["renames"]])
+        return _json(res)
+
+    # -- deleting (system trash or Kurator's trash folder) and duplicates -------------
+    from . import dupes as dupes_mod, trash as trash_mod
+
+    @app.post("/api/delete")
+    def delete_files(body: dict):
+        ids = [int(i) for i in body.get("ids") or []]
+        if not ids:
+            raise HTTPException(400, "Select files to delete first")
+        return _json(trash_mod.delete_files(db, scanner, ids, body.get("mode")))
+
+    @app.get("/api/trash")
+    def trash_state():
+        return _json({"mode": trash_mod.mode(db), "days": trash_mod.keep_days(db), "system": trash_mod.system_available(),
+                      **trash_mod.holding_info(db)})
+
+    @app.post("/api/trash/empty")
+    def trash_empty():
+        return _json(trash_mod.empty_holding(db))
+
+    def _dupes_plan(body: dict) -> dict:
+        return dupes_mod.plan(db, [int(i) for i in body.get("ids") or []], str(body.get("keep") or "tags"),
+                              body.get("folder"), body.get("project") or None)
+
+    @app.post("/api/duplicates/plan")
+    def dupes_plan(body: dict):
+        p = _dupes_plan(body)
+        p["groups"] = p["groups"][:300]
+        return _json(p)
+
+    @app.post("/api/duplicates/clean")
+    def dupes_clean(body: dict):
+        return _json(dupes_mod.clean(db, scanner, _dupes_plan(body), body.get("merge_tags", True) is not False))
+
+    # -- destination folders: recent ones, new folder, quick destinations (D) ----------
+    @app.get("/api/folders/recent")
+    def recent_folders():
+        return _json({"recent": fileops.recent_folders(db), "pins": db.get_setting("pins", [])})
+
+    @app.post("/api/folders/recent/forget")
+    def forget_recent(body: dict):
+        return _json({"recent": fileops.forget_folder(db, str(body.get("path") or ""))})
+
+    @app.post("/api/fs/mkdir")
+    def fs_mkdir(body: dict):
+        return _json({"path": fileops.make_folder(str(body.get("parent") or ""), str(body.get("name") or ""))})
+
+    @app.get("/api/send-slots")
+    def get_send_slots():
+        return _json(db.get_setting("send_slots", {}) or {})
+
+    @app.put("/api/send-slots")
+    def put_send_slots(body: dict):
+        """{"scope": "global" or a project id, "slots": {"1": {"path", "action": "copy"|"move", "label"}, ...}}"""
+        scope = str(body.get("scope") or "global")
+        if scope != "global" and not (scope.isdigit() and projects.is_project(db, int(scope))):
+            raise HTTPException(400, "Slots are global or belong to a project")
+        clean = {}
+        for k, v in (body.get("slots") or {}).items():
+            if str(k) not in {str(i) for i in range(1, 10)}:
+                raise HTTPException(400, "Slots are numbered 1-9")
+            if not v or not str(v.get("path") or "").strip():
+                continue
+            action = v.get("action") or "copy"
+            if action not in ("copy", "move"):
+                raise HTTPException(400, "A slot copies or moves")
+            clean[str(k)] = {"path": os.path.normpath(os.path.abspath(os.path.expanduser(str(v["path"]).strip().strip('"')))),
+                             "action": action, "label": str(v.get("label") or "").strip()[:40]}
+        allslots = db.get_setting("send_slots", {}) or {}
+        if clean:
+            allslots[scope] = clean
+        else:
+            allslots.pop(scope, None)
+        db.set_setting("send_slots", allslots)
+        return _json(allslots)
 
     # -- backups -------------------------------------------------------------
     @app.get("/api/backups")
