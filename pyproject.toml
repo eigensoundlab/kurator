@@ -40,7 +40,7 @@ dependencies = [
 
 [project.optional-dependencies]
 audit = ["pip-audit>=2.10"]
-ai = ["torch>=2.6", "torchvision>=0.21", "open-clip-torch>=3.3", "transformers>=5.0"]   # optional AI features (install.bat ai): images + sounds (CLAP)
+ai = ["torch>=2.15.0", "torchvision>=0.21", "open-clip-torch>=3.3", "transformers>=5.0"]   # optional AI features (install.bat ai): images + sounds (CLAP)
 3d = ["DracoPy>=2.2", "usd-core>=26.11", "texture2ddecoder>=1.0.6"]   # optional: Draco-compressed glTF, binary USD (install.bat 3d)
 dev = ["pytest>=8", "httpx2>=2.16", "pip-audit>=2.10"]
 ui-tests = ["playwright>=1.50"]
