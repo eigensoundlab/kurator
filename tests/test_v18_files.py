@@ -115,6 +115,19 @@ def test_rename_case_only(env):
     assert res["renamed"] == 1 and "SHOT1.png" in os.listdir(lib / "a") and "shot1.png" not in os.listdir(lib / "a")
 
 
+def test_rename_plan_on_a_case_insensitive_disk(env):
+    """On Windows and macOS "SHOT2.png" and "shot2.png" are one file. Imitated with a hard link: the
+    other name points to the file being renamed, so it is free; an unrelated file is not."""
+    c, db, sc, lib, _ = env
+    ids = by_name(c)
+    os.link(lib / "a" / "shot2.png", lib / "a" / "SHOT2.png")
+    p = c.post("/api/rename/plan", json={"ids": [ids["a/shot2.png"]], "template": "{name}", "case": "upper"}, headers=H).json()
+    assert os.path.basename(p["renames"][0]["to"]) == "SHOT2.png" and not p["renames"][0]["clash"]
+    (lib / "a" / "SHOT0.png").write_bytes(b"another file")
+    p = c.post("/api/rename/plan", json={"ids": [ids["a/shot0.png"]], "template": "{name}", "case": "upper"}, headers=H).json()
+    assert os.path.basename(p["renames"][0]["to"]) == "SHOT0 (2).png" and p["renames"][0]["clash"]
+
+
 # ---------------------------------------------------------------- delete
 def test_delete_to_kurators_trash_and_undo(env):
     c, db, sc, lib, tmp = env

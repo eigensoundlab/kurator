@@ -762,6 +762,15 @@ def render_name(template: str, row: dict, n: int, pad: int, tagmap: dict, info: 
     return _TOKEN.sub(tok, template)
 
 
+def _file_id(path: str) -> tuple[int, int] | None:
+    """Which file a path points to (device, inode / file index); None when unknown."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino) if st.st_ino else None   # (some network / FAT drives report no index)
+
+
 def plan_rename(db: Database, ids: list[int], template: str = "{name}", start: int = 1, step: int = 1, pad: int = 0,
                 find: str = "", replace: str = "", regex: bool = False, case: str = "keep") -> dict:
     """New names for files in their own folders: [{'id', 'from', 'to', 'clash'}]. ids in the order
@@ -813,14 +822,23 @@ def plan_rename(db: Database, ids: list[int], template: str = "{name}", start: i
             skipped.append({"id": fid, "from": r["path"], "reason": "name unchanged"})
             continue
         wanted.append((fid, r["path"], new))
+    # Names the batch frees can be used again. On a case-insensitive disk (Windows, macOS) "SHOT1.png"
+    # *is* "shot1.png": ask the file system which file a name points to, not just compare names.
     freed = {os.path.normcase(src) for _, src, _ in wanted}
+    freed_files = {f for f in (_file_id(src) for _, src, _ in wanted) if f}
+
+    def occupied(cand: str) -> bool:
+        if not os.path.lexists(cand) or os.path.normcase(cand) in freed:
+            return False
+        f = _file_id(cand)
+        return f is None or f not in freed_files
+
     taken: set[str] = set()
     out = []
     for fid, src, new in wanted:
         stem, ext = os.path.splitext(new)
         cand, n = new, 2
-        while (os.path.normcase(cand) in taken
-               or (os.path.lexists(cand) and os.path.normcase(cand) not in freed and os.path.normcase(cand) != os.path.normcase(src))):
+        while os.path.normcase(cand) in taken or occupied(cand):
             cand = f"{stem} ({n}){ext}"
             n += 1
         taken.add(os.path.normcase(cand))
