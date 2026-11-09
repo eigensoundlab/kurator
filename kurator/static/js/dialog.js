@@ -38,3 +38,18 @@ export function openDialog({ title, body, buttons = [], width = 520, onClose }) 
   setTimeout(() => box.querySelector('input,select,textarea,button.primary')?.focus(), 0);
   return { close, box, buttons: btnEls };
 }
+
+/** A yes/no question in the page (window.confirm does nothing in the macOS desktop app). Resolves true
+ * for yes. The message may hold line breaks; the first paragraph is shown in bold. */
+export function ask(message, { ok = 'OK', danger = false, title = 'Kurator' } = {}) {
+  return new Promise((resolve) => {
+    let answer = false;
+    const [head, ...rest] = String(message).split('\n\n');
+    openDialog({
+      title, width: 460,
+      body: el('div', { class: 'ask' }, el('div', { class: 'ask-head', text: head }), rest.length ? el('div', { class: 'p-hint small ask-more', text: rest.join('\n\n') }) : null),
+      buttons: [{ label: 'Cancel' }, { label: ok, primary: !danger, danger, onClick: (close) => { answer = true; close(); } }],
+      onClose: () => resolve(answer),
+    });
+  });
+}

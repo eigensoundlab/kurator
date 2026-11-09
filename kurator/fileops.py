@@ -1013,3 +1013,73 @@ def receive_file(db: Database, scanner, tmp: str, dest: str, name: str, mtime_ms
         new_id = add_derived_file(db, dst, rid, None, False) if rid is not None else None
     return {"id": new_id, "src_id": None, "from": None, "to": dst, "size": st.st_size, "mtime_ns": st.st_mtime_ns,
             "sidecars": [], "own_xmp": not os.path.lexists(dst + ".xmp")}
+
+
+def classify_dropped(db: Database, paths: list[str]) -> dict:
+    """Files and folders dropped onto the desktop app, which - unlike a web page - knows where they are.
+
+    files: [{path, name, size, mtime (ms), ids}] - ids: the catalog files they are (by path; files in a
+    library folder not indexed yet get their row now; elsewhere a copy with the same name, size and
+    time counts, as for a browser drop). folders: [{path, in_library}]. skipped: [{path, error}]."""
+    files, folders, skipped = [], [], []
+    cache: dict = {}
+    for raw in paths[:20000]:
+        p = os.path.normpath(os.path.abspath(os.path.expanduser(str(raw))))
+        if os.path.isdir(p):
+            folders.append({"path": p, "in_library": db.root_for(p, "library") is not None})
+            continue
+        if not os.path.isfile(p):
+            skipped.append({"path": p, "error": "not found"})
+            continue
+        if handler_for(os.path.splitext(p)[1].lower()) is None:
+            skipped.append({"path": p, "error": "not a kind of file Kurator shows"})
+            continue
+        st = os.stat(p)
+        files.append({"path": p, "name": os.path.basename(p), "size": st.st_size, "mtime": st.st_mtime_ns / 1e6, "ids": []})
+    rest = []
+    for f in files:
+        row = db.cat.execute("SELECT id FROM files WHERE path = ?", (f["path"],)).fetchone()
+        if row is None and os.name == "nt":
+            row = db.cat.execute("SELECT id FROM files WHERE path = ? COLLATE NOCASE", (f["path"],)).fetchone()
+        if row:
+            f["ids"] = [row[0]]
+            continue
+        rid = indexed_root(db, os.path.dirname(f["path"]), cache)
+        if rid is not None:   # in the library, just not seen yet (the watcher is a moment behind)
+            f["ids"] = [add_derived_file(db, f["path"], rid, None, False)]
+            f["new"] = True
+        else:
+            rest.append(f)
+    for f, ids in zip(rest, match_dropped(db, rest)):
+        f["ids"] = ids
+    return {"files": files, "folders": folders, "skipped": skipped,
+            "indexing": any(f.get("new") for f in files)}
+
+
+def copy_dropped(db: Database, scanner, src: str, dest: str) -> dict:
+    """One dropped file copied (not moved) into `dest`, like receive_file but read from its own path."""
+    import uuid
+    src = os.path.normpath(os.path.abspath(src))
+    if not os.path.isfile(src):
+        raise OpError(f"{os.path.basename(src)}: not found")
+    st = os.stat(src)
+    tmp = os.path.join(dest, f".kurator-drop-{uuid.uuid4().hex}.part")
+    try:
+        shutil.copyfile(src, tmp)
+        return receive_file(db, scanner, tmp, dest, os.path.basename(src), st.st_mtime_ns / 1e6)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def reveal_folder(path: str) -> None:
+    """Open a folder in Explorer / Finder / the file manager."""
+    path = os.path.normpath(os.path.abspath(path))
+    if not os.path.isdir(path):
+        raise OpError("That folder is missing on disk")
+    if os.name == "nt":
+        subprocess.Popen(["explorer", path])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])

@@ -61,6 +61,11 @@ def handler_for(ext: str) -> Handler | None:
     return _REGISTRY.get(ext.lower())
 
 
+def extension_kinds() -> dict[str, str]:
+    """{".png": "image", ".wav": "audio", ...}"""
+    return {e: h.kind for e, h in _REGISTRY.items()}
+
+
 def supported_extensions() -> list[str]:
     return sorted(_REGISTRY)
 

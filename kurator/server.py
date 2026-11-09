@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import __version__, assets, backup, dates, fileops, playhead_index, projects, rclone, rules, tags, xmp
+from . import __version__, apps, assets, backup, dates, fileops, playhead_index, projects, rclone, rules, tags, xmp
 from . import similar as similar_mod
 from .sheets import SheetError
 from . import stacks as stacks_mod
@@ -33,7 +33,7 @@ from .ai.embed import AIUnavailable
 from .ai.vlm import VLMError
 from .ai.service import AIError
 from .tags import TagError
-from .handlers import handler_for, supported_extensions, supported_types
+from .handlers import extension_kinds, handler_for, supported_extensions, supported_types
 from .processing import THUMB_SIZES, process_file
 from .scanner import Scanner
 
@@ -254,7 +254,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         resp.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+            "script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; frame-ancestors 'none'",
         )
         return resp
 
@@ -265,6 +265,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.exception_handler(OpError)
+    @app.exception_handler(apps.AppError)
     @app.exception_handler(TagError)
     @app.exception_handler(RuleError)
     @app.exception_handler(BackupError)
@@ -1573,13 +1574,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     async def drop_file(request: Request, batch: str, dest: str, name: str, mtime: float = 0):
         """The bytes of one dropped file (the request body), saved into `dest`."""
         import uuid
-        folder = os.path.normpath(os.path.abspath(os.path.expanduser(dest.strip().strip('"'))))
-        if not dest.strip():
-            raise HTTPException(400, "Choose a folder for the new files")
-        try:
-            os.makedirs(folder, exist_ok=True)
-        except OSError as e:
-            raise HTTPException(400, f"Can't use {folder}: {e.strerror or e}") from None
+        folder = _drop_folder(dest)
         tmp = os.path.join(folder, f".kurator-drop-{uuid.uuid4().hex}.part")
         try:
             with open(tmp, "wb") as f:
@@ -1589,11 +1584,40 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
+        _batch_add(batch, folder, entry)
+        return _json({"id": entry["id"], "path": entry["to"]})
+
+    def _batch_add(batch: str, folder: str, entry: dict) -> None:
         with drops_lock:
             for k in [k for k, v in drops.items() if time.time() - v["ts"] > 86400]:   # never finished
                 drops.pop(k, None)
             b = drops.setdefault(batch[:64], {"entries": [], "dest": folder, "ts": time.time()})
             b["entries"].append(entry)
+
+    def _drop_folder(dest: str) -> str:
+        folder = os.path.normpath(os.path.abspath(os.path.expanduser(dest.strip().strip('"'))))
+        if not dest.strip():
+            raise HTTPException(400, "Choose a folder for the new files")
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            raise HTTPException(400, f"Can't use {folder}: {e.strerror or e}") from None
+        return folder
+
+    @app.post("/api/drop/paths")
+    def drop_paths(body: dict):
+        """The desktop app's drops come with their paths: {paths} -> {files, folders, skipped}."""
+        r = fileops.classify_dropped(db, [str(p) for p in (body.get("paths") or [])])
+        if r["indexing"]:
+            scanner.request_process()
+        return _json(r)
+
+    @app.post("/api/drop/copy")
+    def drop_copy(body: dict):
+        """One dropped file (by path) copied into `dest`; finish the batch with /api/drop/done."""
+        folder = _drop_folder(str(body.get("dest") or ""))
+        entry = fileops.copy_dropped(db, scanner, str(body.get("path") or ""), folder)
+        _batch_add(str(body.get("batch") or ""), folder, entry)
         return _json({"id": entry["id"], "path": entry["to"]})
 
     @app.post("/api/drop/done")
@@ -1814,6 +1838,45 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             raise HTTPException(404)
         fileops.reveal(row[0])
         return _json({"ok": True})
+
+    @app.post("/api/reveal-folder")
+    def reveal_folder(body: dict):
+        fileops.reveal_folder(str(body.get("path") or ""))
+        return _json({"ok": True})
+
+    @app.post("/api/paths")
+    def file_paths(body: dict):
+        """{ids} -> {paths}: for Copy path and for dragging files out of the desktop app."""
+        ids = [int(i) for i in (body.get("ids") or [])][:5000]
+        found: dict[int, str] = {}
+        for i in range(0, len(ids), 900):
+            chunk = ids[i:i + 900]
+            q = ",".join("?" * len(chunk))
+            found.update(db.cat.execute(f"SELECT id, path FROM files WHERE id IN ({q})", chunk).fetchall())
+        return _json({"paths": [found[i] for i in ids if i in found]})
+
+    @app.get("/api/apps")
+    def list_apps():
+        """Programs for Open with: found ones and those added in Settings."""
+        return _json({"apps": apps.list_apps(db), "kinds": list(apps.KINDS), "ext_kind": extension_kinds()})
+
+    @app.put("/api/apps")
+    def save_apps(body: dict):
+        """{custom: [{name, path, kinds}], hidden: [ids of found programs not to offer]}"""
+        return _json({"apps": apps.save(db, list(body.get("custom") or []), [str(h) for h in body.get("hidden") or []])})
+
+    @app.post("/api/open-with")
+    def open_with(body: dict):
+        """{app: id from /api/apps, ids: [catalog ids]}"""
+        ids = [int(i) for i in (body.get("ids") or [])][:apps.MAX_FILES]
+        paths = []
+        for i in ids:
+            row = db.cat.execute("SELECT path FROM files WHERE id = ?", (i,)).fetchone()
+            if row and os.path.exists(row[0]):
+                paths.append(row[0])
+        if not paths:
+            raise HTTPException(400, "The files are missing on disk")
+        return _json({"app": apps.open_with(db, str(body.get("app") or ""), paths), "files": len(paths)})
 
     # -- thumbnails / originals --------------------------------------------
     def _generate(item_id: int, path: str, size: int, need_full: bool) -> dict:

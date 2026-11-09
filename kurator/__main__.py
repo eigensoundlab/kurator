@@ -33,6 +33,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--no-scan", action="store_true", help="don't rescan library folders on start")
     ap.add_argument("--no-watch", action="store_true", help="don't watch folders for changes (use Rescan instead)")
     ap.add_argument("--no-ai", action="store_true", help="switch off the AI features")
+    ap.add_argument("--quit-on-stdin-close", action="store_true",
+                    help="quit when standard input closes (the desktop app starts Kurator this way)")
     args = ap.parse_args(argv)
 
     import uvicorn
@@ -96,6 +98,8 @@ def main(argv: list[str] | None = None) -> None:
     config = uvicorn.Config(app, host="127.0.0.1", port=args.port, log_level="warning", access_log=False,
                             timeout_graceful_shutdown=2)
     server = uvicorn.Server(config)
+    if args.quit_on_stdin_close:
+        threading.Thread(target=_quit_on_stdin_close, args=(server,), daemon=True).start()
 
     async def serve():
         loop = asyncio.get_running_loop()
@@ -120,6 +124,19 @@ def main(argv: list[str] | None = None) -> None:
         pass
     finally:
         _quit(scanner, watcher, ai)
+
+
+def _quit_on_stdin_close(server) -> None:
+    """The desktop app holds our standard input open while its window is open: when it closes the
+    pipe (or exits, or crashes), quit like Ctrl+C."""
+    if sys.stdin is None:   # started without a standard input at all: nothing to wait for
+        return
+    try:
+        while sys.stdin.buffer.read(4096):
+            pass
+    except (OSError, ValueError, AttributeError):
+        pass
+    server.should_exit = True
 
 
 def _quit(scanner, watcher, ai) -> None:

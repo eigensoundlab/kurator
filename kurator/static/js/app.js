@@ -14,6 +14,7 @@ import { Grid } from './grid.js';
 import { LookFilter } from './lookfilter.js';
 import { Timeline } from './timeline.js';
 import { openDupesDialog } from './dupesdlg.js';
+import { installContextMenu } from './ctxmenu.js';
 import { installDrop } from './dropfiles.js';
 import { openCopyDialog, openMoveDialog } from './movedlg.js';
 import { Panel } from './panel.js';
@@ -25,6 +26,7 @@ import { openRulesDialog } from './rulesdlg.js';
 import { openSendMenu, openSlotEditor } from './senddlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
 import { openSheetsDialog } from './sheetsdlg.js';
+import { dragOut, inShell } from './shell.js';
 import { Sidebar } from './sidebar.js';
 import { Tags } from './tags.js';
 import { TypeFilter } from './typefilter.js';
@@ -101,6 +103,7 @@ class App {
     this.bindGridPointer();
     this.bindKeys();
     installDrop(this);   // files dropped from Explorer / Finder
+    installContextMenu(this);   // right-click: thumbnails, folders, tags, the grid
     this.tags.refresh();
     this.projects.refresh();
     this.refreshState().then(async () => {
@@ -954,6 +957,15 @@ class App {
           st.ghost = el('div', { class: 'dragghost' });
           document.body.append(st.ghost);
           document.body.classList.add('dragging-items');
+          // in the desktop app the files can leave the window: into Photoshop, Blender, a folder...
+          // (not on Linux yet: there the drop arrives without the files)
+          if (inShell() && !/Linux/.test(navigator.userAgent)) st.paths = api.paths([...this.selected]).then((r) => r.paths, () => []);
+        }
+        if (st.dragging && st.paths && (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1)) {
+          const s = st;
+          st = null;
+          dragOutside(s, e);
+          return;
         }
         if (st.dragging) this.dragOver(st, e);
         return;
@@ -967,6 +979,15 @@ class App {
         if (!raf) raf = requestAnimationFrame(autoScroll);
       }
     });
+    const dragOutside = async (s, e) => {
+      try { scroller.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+      s.ghost?.remove();
+      s.target?.classList.remove('droptarget');
+      document.body.classList.remove('dragging-items');
+      const paths = await s.paths;
+      if (!paths.length) return;
+      try { await dragOut(paths, this.dragIcon(paths.length)); } catch (er) { this.toast(`Could not drag the files out: ${er.message || er}`, 4000); }
+    };
     const end = () => {
       if (!st) return;
       const s = st;
@@ -1002,6 +1023,37 @@ class App {
       e.preventDefault();
       this.setSize(this.grid.size * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
     }, { passive: false });
+  }
+
+  /** The picture under the pointer while files are dragged out of the desktop app: a PNG data URL. */
+  dragIcon(n) {
+    const c = el('canvas', { width: 112, height: 112 });
+    const g = c.getContext('2d');
+    const fi = this.focusIndex;
+    const i = fi >= 0 && this.selected.has(this.items.ids[fi]) ? fi : this.items.ids.findIndex((id) => this.selected.has(id));
+    const img = i >= 0 ? this.grid.layer.querySelector(`[data-i="${i}"] img`) : null;
+    if (img?.complete && img.naturalWidth) {
+      const k = Math.min(96 / img.naturalWidth, 96 / img.naturalHeight);
+      const w = img.naturalWidth * k, h = img.naturalHeight * k;
+      g.drawImage(img, (112 - w) / 2, (112 - h) / 2, w, h);
+    } else {
+      g.fillStyle = '#556'; g.fillRect(24, 16, 64, 80);
+    }
+    if (n > 1) {
+      const t = fmtNum(n);
+      g.font = 'bold 15px system-ui, sans-serif';
+      const w = Math.max(26, g.measureText(t).width + 14);
+      g.fillStyle = '#7aa2ff'; g.beginPath(); if (g.roundRect) g.roundRect(112 - w - 2, 2, w, 24, 12); else g.rect(112 - w - 2, 2, w, 24); g.fill();
+      g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(t, 112 - 2 - w / 2, 14);
+    }
+    try { return c.toDataURL('image/png'); } catch { return el('canvas', { width: 1, height: 1 }).toDataURL('image/png'); }
+  }
+
+  /** The grid item under a point of the window (-1: none). */
+  indexAtClient(x, y) {
+    const r = this.grid.el.getBoundingClientRect();
+    if (x < r.left || y < r.top || x >= r.left + this.grid.el.clientWidth || y >= r.bottom) return -1;
+    return this.grid.indexAt(x - r.left + this.grid.el.scrollLeft, y - r.top + this.grid.el.scrollTop);
   }
 
   dragOver(st, e) {
@@ -1298,7 +1350,7 @@ class App {
       const cs = this.crumbs(q.folder);
       cs.forEach((c, i) => {
         if (i) left.push(el('span', { class: 'sep', text: '›' }));
-        left.push(el('button', { class: 'crumb' + (i === cs.length - 1 ? ' last' : ''), text: c.name, title: c.path, onclick: () => this.openPath(c.path) }));
+        left.push(el('button', { class: 'crumb' + (i === cs.length - 1 ? ' last' : ''), text: c.name, title: c.path, 'data-folder': c.path, onclick: () => this.openPath(c.path) }));
       });
     } else if (!this.projects.active) {
       left.push(el('span', { class: 'crumb last', text: 'All library items' }));

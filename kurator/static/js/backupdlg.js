@@ -1,7 +1,7 @@
 // Backups: sets (what / how / where), plan preview with free space per target, progress, restore.
 
 import { api } from './api.js';
-import { openDialog } from './dialog.js';
+import { ask, openDialog } from './dialog.js';
 import { el, fmtBytes, fmtDate, fmtNum, setKids } from './util.js';
 
 const LAYOUT_PRESETS = ['{tagpath}', '{tagpath}/{year}', '{project}/{tagpath}', '{tag}', '{tag}/{year}'];
@@ -44,7 +44,7 @@ export async function openBackupDialog(app) {
         el('div', { class: 'muted small' }, s.last_run ? `Last backup ${fmtDate(s.last_run)}${lr ? ` - ${fmtNum(lr.copied)} copied, ${fmtNum(lr.relocated || 0)} moved${lr.failed ? `, ${lr.failed} failed` : ''}${lr.cancelled ? ' (cancelled)' : ''}` : ''}` : 'Never run'),
         footer(btn('Back up now', () => showPlan(s), 'primary'), btn('Restore…', () => showRestore(s)), btn('Edit', () => showEditor(s)),
           btn('Delete', async () => {
-            if (!window.confirm(`Delete backup set "${s.name}"?\n\nOnly the set is forgotten - files already copied to the targets stay where they are.`)) return;
+            if (!(await ask(`Delete backup set "${s.name}"?\n\nOnly the set is forgotten - files already copied to the targets stay where they are.`, { ok: 'Delete', danger: true }))) return;
             try { await api.deleteBackup(s.id); } catch (e) { app.toast(e.message); }
             showList();
           }, 'danger')));

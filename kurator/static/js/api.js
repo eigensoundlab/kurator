@@ -108,6 +108,13 @@ export const api = {
     return r.json();
   },
   dropDone: (batch) => req('POST', '/api/drop/done', { batch }),
+  dropPaths: (paths) => req('POST', '/api/drop/paths', { paths }),
+  dropCopy: (batch, dest, path) => req('POST', '/api/drop/copy', { batch, dest, path }),
+  paths: (ids) => req('POST', '/api/paths', { ids }),
+  revealFolder: (path) => req('POST', '/api/reveal-folder', { path }),
+  apps: () => req('GET', '/api/apps'),
+  saveApps: (custom, hidden) => req('PUT', '/api/apps', { custom, hidden }),
+  openWith: (app, ids) => req('POST', '/api/open-with', { app, ids }),
   sendSlots: () => req('GET', '/api/send-slots'),
   setSendSlots: (scope, slots) => req('PUT', '/api/send-slots', { scope, slots }),
   undoOp: (id) => req('POST', `/api/operations/${id}/undo`, {}),

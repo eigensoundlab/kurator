@@ -1,6 +1,7 @@
 // Left sidebar: Pinned folders, Library tree, Tags, and a file-system browser for any folder.
 
 import { api } from './api.js';
+import { ask } from './dialog.js';
 import { pickFolder } from './folderpick.js';
 import { el, fmtNum, prefs } from './util.js';
 
@@ -139,7 +140,7 @@ export class Sidebar {
     const cur = this.app.query.folder;
     const rows = this.pins.map((p) => {
       const name = p.split(/[\\/]/).filter(Boolean).pop() || p;
-      return el('div', { class: 'node' + (cur === p ? ' active' : ''), title: p, onclick: () => this.app.openPath(p) },
+      return el('div', { class: 'node' + (cur === p ? ' active' : ''), title: p, 'data-folder': p, onclick: () => this.app.openPath(p) },
         el('span', { class: 'tw', text: '★' }), el('span', { class: 'nm', text: name }),
         el('span', { class: 'rm', title: 'Unpin', text: '×', onclick: (e) => { e.stopPropagation(); this.togglePin(p); } }));
     });
@@ -181,7 +182,7 @@ export class Sidebar {
       const isRoot = n.parent == null;
       const row = el('div', {
         class: 'node' + (current === n.path ? ' active' : '') + (isRoot ? ' rootnode' : ''),
-        style: { paddingLeft: `${6 + depth * 14}px` }, title: n.path,
+        style: { paddingLeft: `${6 + depth * 14}px` }, title: n.path, 'data-folder': n.path,
         onclick: () => this.app.setFolder(n.path),
       },
       el('span', { class: 'tw' + (kids.length ? '' : ' none'), text: kids.length ? (open ? '▾' : '▸') : '', onclick: (e) => { e.stopPropagation(); this.toggle(n, open); } }),
@@ -234,7 +235,7 @@ export class Sidebar {
   async removeRoot(path) {
     const r = this.roots.find((x) => x.path === path);
     if (!r) return;
-    if (!window.confirm(`Remove "${path}" from the library?\n\nOnly the catalog entry is removed - your files stay on disk. Tags are remembered and come back if you add the folder again.`)) return;
+    if (!(await ask(`Remove "${path}" from the library?\n\nOnly the catalog entry is removed - your files stay on disk. Tags are remembered and come back if you add the folder again.`, { ok: 'Remove' }))) return;
     await api.removeRoot(r.id);
     if (this.app.query.folder && (this.app.query.folder + '').startsWith(path)) this.app.setFolder(null);
     this.app.refreshState();
@@ -264,7 +265,7 @@ export class Sidebar {
     const build = (n, depth, label) => {
       const open = this.fsOpen.has(n.path);
       const kids = this.fsChildren.get(n.path);
-      rows.push(el('div', { class: 'node' + (cur === n.path ? ' active' : ''), style: { paddingLeft: `${6 + depth * 14}px` }, title: n.path,
+      rows.push(el('div', { class: 'node' + (cur === n.path ? ' active' : ''), style: { paddingLeft: `${6 + depth * 14}px` }, title: n.path, 'data-folder': n.path,
         onclick: () => this.app.openPath(n.path) },
       el('span', { class: 'tw' + (kids && !kids.length ? ' none' : ''), text: kids && !kids.length ? '' : (open ? '▾' : '▸'), onclick: (e) => { e.stopPropagation(); this.toggleFs(n.path); } }),
       el('span', { class: 'nm' + (n.drive ? ' drive' : ''), text: label || n.name }),

@@ -3,7 +3,7 @@
 
 import { api } from './api.js';
 import { openDatasetDialog } from './datasetdlg.js';
-import { openDialog } from './dialog.js';
+import { ask, openDialog } from './dialog.js';
 import { el, fmtDate, fmtNum, setKids } from './util.js';
 
 const METHOD = {
@@ -96,7 +96,7 @@ export async function openAIDialog(app) {
             try { await api.aiRun(p.id, ids); progress(); } catch (e) { app.toast(e.message, 4000); }
           }, 'primary'),
           btn('Edit', () => editor(p)),
-          btn('Delete', async () => { if (window.confirm(`Delete tag pool "${p.name}"? Tags and suggestions stay.`)) { await api.aiDeleteProfile(p.id); show(); } }, 'danger')));
+          btn('Delete', async () => { if (await ask(`Delete tag pool "${p.name}"?\n\nTags and suggestions stay.`, { ok: 'Delete', danger: true })) { await api.aiDeleteProfile(p.id); show(); } }, 'danger')));
     });
 
     // the vision model server used by "vision-language model" pools
@@ -152,7 +152,7 @@ export async function openAIDialog(app) {
         btn('Review them', () => { app.setSuggestedFilter(true); document.querySelector('.dlg-wrap')?.remove(); document.body.classList.remove('modal-open'); }, 'primary'),
         el('span', { class: 'small muted', text: 'Accept all with score ≥' }), minScore, el('span', { class: 'small muted', text: '%' }),
         btn('Accept', async () => { const r = await api.aiAccept({ min_score: +minScore.value / 100 }); app.onAIAccepted(r); show(); }),
-        btn('Reject all', async () => { if (window.confirm('Reject all waiting suggestions?')) { await api.aiReject({}); app.reload(); show(); } }, 'danger')));
+        btn('Reject all', async () => { if (await ask('Reject all waiting suggestions?', { ok: 'Reject all', danger: true })) { await api.aiReject({}); app.reload(); show(); } }, 'danger')));
 
     setKids(body, head, el('h3', { text: 'Tag pools' }),
       el('div', { class: 'p-hint small', text: 'A pool is a set of tags the AI may choose from - e.g. human / robot / creature for a characters folder. It never invents other tags.' }),

@@ -1,8 +1,9 @@
 // Settings: XMP sidecars (write tags + dates next to your files), keyword import, info.
 
 import { api } from './api.js';
+import { openAppsDialog } from './appsdlg.js';
 import { PH_HOME, PH_PAPER, phEnabled, phGridPref, phLib, phSetEnabled, phSetGridPref } from './playhead.js';
-import { openDialog } from './dialog.js';
+import { ask, openDialog } from './dialog.js';
 import { openPhLibraryDialog } from './phlibdlg.js';
 import { el, fmtBytes, fmtNum, prefs, setKids } from './util.js';
 
@@ -91,7 +92,7 @@ export async function openSettingsDialog(app) {
   };
   days.onchange = async () => { try { await api.saveSettings({ trash_days: +days.value || 0 }); } catch (e) { app.toast(e.message); } };
   emptyBtn.onclick = async () => {
-    if (!window.confirm("Delete the files in Kurator's trash folder for good? They can't be brought back afterwards.")) return;
+    if (!(await ask("Delete the files in Kurator's trash folder for good?\n\nThey can't be brought back afterwards.", { ok: 'Delete for good', danger: true }))) return;
     try { const r = await api.emptyTrash(); app.toast(`${fmtNum(r.removed)} files deleted for good`); } catch (e) { app.toast(e.message); }
     paintTrash();
   };
@@ -168,6 +169,9 @@ export async function openSettingsDialog(app) {
       st.system_trash === false ? el('div', { class: 'warn small', text: 'The system trash needs the Send2Trash package: run update.bat / update.sh once.' }) : null,
       el('div', { class: 'p-hint small', text: "Either way Ctrl+Z brings files back, with their tags. From the system trash you can also restore files yourself - Kurator gives them their tags back. Kurator's trash folder is its data folder when that is on the same disk, else a hidden .kurator-trash folder at the top of the disk: deleting is instant and keeps everything until it is emptied." }),
       daysRow,
+      el('h3', { text: 'Open with' }),
+      el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Programs…', onclick: () => openAppsDialog(app) }),
+        el('span', { class: 'p-hint small', text: 'Right-click a thumbnail → Open with: Krita, Photoshop, Blender, Audacity… found on this computer, and any you add.' })),
       el('h3', { text: 'Dropping files' }),
       el('label', { class: 'chk' }, dropAsk, 'Ask before adding files dropped from Explorer / Finder'),
       el('div', { class: 'p-hint small', text: 'Files already in the library get the tag or project they are dropped onto; new ones are copied into a folder (remembered per project). Without asking, the last folder and the tags of the drop are used.' }),

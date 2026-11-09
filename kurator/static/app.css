@@ -667,3 +667,17 @@ details.delivery label.chk { white-space: normal; }
 .drop-overlay.show { display: flex; }
 .drop-box { background: var(--bg2); border: 1px solid var(--accent2); border-radius: 8px; padding: 10px 16px; font-size: 14px; box-shadow: 0 10px 30px #0008; }
 .drop-part { margin: 10px 0; }
+
+/* right-click menu */
+.ctxmenu { min-width: 220px; max-width: 360px; }
+.ctxmenu .pm-row { padding: 5px 10px; }
+.ctxmenu .pm-row:disabled { color: var(--muted); cursor: default; background: none; }
+.ctxmenu .pm-row:focus-visible { outline: none; background: var(--bg3); }
+.ctxmenu .pm-row .grow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctxmenu .pm-arrow { color: var(--muted); margin-left: 6px; }
+.ask-head { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-more { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; }
+.apps-found { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 4px 12px; }
+.apps-own { display: flex; flex-direction: column; gap: 6px; }
+.apps-row input[type="text"]:first-child { width: 150px; flex: none; }
+.apps-row .grow { flex: 1; min-width: 0; }

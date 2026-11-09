@@ -2,7 +2,7 @@
 // quick-tag (T) and edit dialogs.
 
 import { api } from './api.js';
-import { openDialog } from './dialog.js';
+import { ask, openDialog } from './dialog.js';
 import { debounce, el, fmtNum, prefs, setKids } from './util.js';
 
 const DEFAULT_FACETS = [
@@ -235,7 +235,7 @@ export class Tags {
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(d.close); } });
     const buttons = [{ label: 'Cancel' }, { label: isNew ? 'Create' : 'Save', primary: true, onClick: save }];
     if (!isNew) buttons.unshift({ label: 'Delete tag', danger: true, left: true, onClick: async (close) => {
-      if (!window.confirm(`Delete tag "${tag.name}"${this.list.some((x) => x.name.toLowerCase().startsWith(tag.name.toLowerCase() + '/')) ? ' and its sub-tags' : ''}?\n\nIt is removed from ${fmtNum(tag.count)} item(s). Files are not touched.`)) return;
+      if (!(await ask(`Delete tag "${tag.name}"${this.list.some((x) => x.name.toLowerCase().startsWith(tag.name.toLowerCase() + '/')) ? ' and its sub-tags' : ''}?\n\nIt is removed from ${fmtNum(tag.count)} item(s). Files are not touched.`, { ok: 'Delete', danger: true }))) return;
       try { await api.deleteTag(tag.id); } catch (e) { this.app.toast(e.message); return; }
       close();
       if ((this.app.query.tag || '').split(',').includes(String(tag.id))) this.app.clearFilters();
