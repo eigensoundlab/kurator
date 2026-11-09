@@ -1143,7 +1143,11 @@ pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests 
     Next: a small study, with consent, of whether the strips and filters help people find sounds;
     curves as REAPER envelopes. (PureRef's board format isn't open, so boards are best made by
     dragging images into PureRef.)
-20. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+20. ~~File tools: copy (also for delivery: private details out, credit in, zip), resampled copies,
+    batch rename, delete to the system trash or Kurator's trash folder with undo, duplicate
+    clean-up, quick destinations, a folder picker with recent destinations, the last tag on 0 / Q,
+    hotkeys and settings per project~~ ✅ 0.18
+21. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
 
 ## License
 

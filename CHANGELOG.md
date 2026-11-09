@@ -2,56 +2,45 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
-## Unreleased
+## 0.18.0 – Copy, resample, rename, delete: file tools, quick destinations, delivery
 - **Copy to… (K):** the Move dialog for copies, to any folder (also outside the library). Dates
-  kept, every copy verified, never overwrites, XMP sidecars along (not Unity `.meta` / Godot
-  `.import`: a copy needs its own GUID). In the library the copies appear at once with the
+  kept, every copy verified, never overwrites; XMP sidecars come along, Unity `.meta` / Godot
+  `.import` don't (a copy needs its own GUID). In the library the copies appear at once with the
   original's tags, source, author and licence. Ctrl+Z deletes the copies that are unchanged.
-- **Resample… (I):** resized copies of the selected pictures - longest side, percent, width,
-  height, fit, exact size; Lanczos, bicubic, bilinear, area average or nearest neighbour (pixel
-  art); as the original or PNG / JPEG / WebP; next to the originals, in a subfolder or in one
-  folder; colour profile, EXIF date, file time and animation kept; tags carried over; background
-  job with progress; Ctrl+Z deletes them.
-- **The last tag on 0 and Q:** repeats the last tag you used (hotkey, tag bar, T, drag); first chip
-  in the tag bar. Q also in the viewer (0 fits there).
-- **Hotkeys per project** (*Edit…* on a project): while it is open, keys 1–9 apply the project's
-  own tag set; keys left on *global* keep their tag. Catalog schema 12.
-- Number keys work without Shift on layouts that type letters there (Czech, Slovak…).
-- **Choosing folders:** *Browse…* next to every destination field (click through drives and folders,
-  new folder), and one list of recent destinations for all of them, kept in the catalog (pin, forget).
-  In the sidebar, *Add* (library) and *Open* (Browse) use a typed or pasted path at once; with the
-  field empty they become *Add…* / *Open…* and open the folder picker.
-- **Quick destinations (D, then 1–9):** numbered folders that copy or move the selection at once;
-  global, and per project in their place. *Files ▾ → Quick destinations…* (or E in the menu) edits them.
+- **For delivery** (Copy to…): remove private details (GPS, serial numbers, owner, maker notes,
+  EXIF thumbnail, XMP / IPTC history, PNG text with AI prompts and ComfyUI workflows), write the
+  author and licence in, or make one zip - JPEG, PNG and WebP without re-encoding.
+- **Resample… (I):** resized copies - longest side, percent, width, height, fit, exact size;
+  Lanczos, bicubic, bilinear, area average or nearest neighbour (pixel art); as the original or
+  PNG / JPEG / WebP; next to the originals, in a subfolder or in one folder; colour profile, EXIF
+  date, file time and animation kept; tags carried over; background job; Ctrl+Z.
 - **Rename (F2):** a pattern with `{name}` `{n}` `{date}` `{tag}` `{project}` `{folder}` `{w}` `{h}`…,
-  find / replace (also regular expressions), case; live preview; names can be swapped or renumbered
-  in place; sidecars follow; Ctrl+Z.
-- **Delete (Del):** to the system's Recycle Bin / Trash (default; Send2Trash) or to Kurator's trash
-  folder on the same disk (⚙ Settings → Delete, emptied after N days). Ctrl+Z brings files back with
-  their catalog entries and tags, from either. Files restored from the system trash by hand get their
-  tags back. On Windows, drives without a Recycle Bin (network, USB) use Kurator's trash folder.
-- **Clean up duplicates** (path bar of the Duplicates view): keep the copy with the most tags, the
-  oldest / newest, the shortest path, the one in a folder or in the open project; the kept copy gets
-  the others' tags; Ctrl+Z.
-- **Copies for delivery** (Copy to… → For delivery): remove private details (GPS, serial numbers,
-  owner, maker notes, EXIF thumbnail, XMP / IPTC history, PNG text with AI prompts and ComfyUI
-  workflows), write the author and licence in, or make one zip - JPEG, PNG and WebP without
-  re-encoding.
+  find / replace (also regular expressions), case; live preview; swaps and renumbering in place;
+  sidecars follow; Ctrl+Z.
+- **Delete (Del):** to the system's Recycle Bin / Trash (default) or Kurator's trash folder on the
+  same disk (⚙ Settings → Delete, emptied after N days). Ctrl+Z brings files back with their
+  catalog entries and tags; files restored from the system trash by hand get their tags back. On
+  Windows, drives without a Recycle Bin (network, USB) use Kurator's trash folder.
+- **Clean up duplicates** (Duplicates view): keep the copy with the most tags, the oldest / newest,
+  the shortest path, the one in a folder or in the open project; it gets the others' tags; Ctrl+Z.
+- **Quick destinations (D, then 1–9):** numbered folders that copy or move the selection at once;
+  global, and per project in their place.
+- **Choosing folders:** *Browse…* next to every destination field (drives, folders, new folder) and
+  one list of recent destinations for all of them (pin, forget). The sidebar's *Add* / *Open* use a
+  typed or pasted path, or open the picker when the field is empty (*Add…* / *Open…*).
+- **Tagging:** **0 or Q** repeats the last tag used (Q in the viewer; first chip in the tag bar);
+  **hotkeys per project** (*Edit…* on a project) replace the global keys while it is open; number
+  keys work without Shift on Czech, Slovak and similar keyboards.
 - **Per-project settings:** Move / Copy, Resample, Join / sheet, Rename and Clean-up remember their
-  settings and folders per project.
-- **Files ▾** in the status bar: Rename, Copy, Send to, Quick destinations, Resample, Delete, Clean
-  up duplicates.
-- **Updates show at once:** the UI's own files are sent with `Cache-Control: no-cache` (a quick 304 when
-  unchanged). Before, browsers guessed how long to keep them and could run old scripts after an update.
-- New dependency: Send2Trash (BSD-3) - run update.bat / update.sh once.
-- **Tests:** the KTX2 zstd test runs on Python 3.14 (built-in `compression.zstd`), and the CMYK
-  profile test no longer assumes the test profile is listed first (macOS has its own).
-- **Playhead 0.3.0** (the vendored library, unchanged; checksum in its README). New in the Look
-  menu: *Tempogram* and *Repetition* for music, *Modulation spectrogram* and *Curve rhythms* for any
-  sound, drawn in place of the waveform. The *Bar raster* (a row per bar) folds time into rows, so
-  it is offered for the grid thumbnails only, and its look code is refused in the viewer with that
-  reason. Sounds are analysed again with the new version when shown (stored analyses are kept per
-  version).
+  settings and folders per project. **Files ▾** in the status bar gathers the file tools.
+- **Playhead 0.3.0** (the vendored library, unchanged; checksum in its README): *Tempogram* and
+  *Repetition* for music, *Modulation spectrogram* and *Curve rhythms* for any sound in the Look
+  menu; the *Bar raster* is offered for grid thumbnails only.
+- **Fixes:** after an update the browser could keep running old scripts (the UI's files now ask
+  every time, a 304 when unchanged); Escape in a dialog opened from another closes only that one;
+  the KTX2 zstd test on Python 3.14 and the CMYK profile test on macOS.
+- Catalog schema 12 (migrated on start). New dependency: Send2Trash (BSD-3) - run update.bat /
+  update.sh.
 
 ## 0.17.0 – Rows for long sounds, Playhead across the library
 - **Rows for long sounds:** a *Rows* menu sets a row height (viewer and side panel); a long sound
