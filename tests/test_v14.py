@@ -41,8 +41,12 @@ def _index(tmp_path, lib, ai=None):
 def make_ktx2(vk: int, w: int, h: int, level: bytes, scheme: int = 0, dfd_model: int | None = None) -> bytes:
     blob = level
     if scheme == 2:
-        import zstandard
-        blob = zstandard.ZstdCompressor().compress(level)
+        try:
+            from compression import zstd   # Python 3.14+ (zstandard is only installed below 3.14)
+            blob = zstd.compress(level)
+        except ImportError:
+            import zstandard
+            blob = zstandard.ZstdCompressor().compress(level)
     elif scheme == 3:
         blob = zlib.compress(level)
     dfd = b""
@@ -210,8 +214,9 @@ def test_inks_and_proof(tmp_path):
     assert cmyk[0, 0] > cmyk[0, 1] and cmyk[0, 0] > 100            # bright blue: mostly cyan
     proof = c.get(f"/api/items/{ids['screen.png']}/proof")
     assert proof.headers["content-type"] == "image/webp"
+    # The computer's own profiles are listed too (macOS: "Generic CMYK Profile" sorts first)
     found = printinfo.cmyk_profiles([str(tmp_path)])
-    assert found[0]["name"] == "Kurator test CMYK"
+    assert any(p["name"] == "Kurator test CMYK" and os.path.samefile(p["path"], prof) for p in found)
 
 
 def _pdf(path):
