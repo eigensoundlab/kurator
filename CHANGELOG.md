@@ -41,6 +41,8 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
   settings and folders per project.
 - **Files ▾** in the status bar: Rename, Copy, Send to, Quick destinations, Resample, Delete, Clean
   up duplicates.
+- **Updates show at once:** the UI's own files are sent with `Cache-Control: no-cache` (a quick 304 when
+  unchanged). Before, browsers guessed how long to keep them and could run old scripts after an update.
 - New dependency: Send2Trash (BSD-3) - run update.bat / update.sh once.
 - **Tests:** the KTX2 zstd test runs on Python 3.14 (built-in `compression.zstd`), and the CMYK
   profile test no longer assumes the test profile is listed first (macOS has its own).

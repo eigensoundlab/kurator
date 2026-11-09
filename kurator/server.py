@@ -244,6 +244,10 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         if request.headers.get("sec-fetch-site") == "cross-site":
             return JSONResponse({"detail": "cross-site request blocked"}, status_code=403)
         resp = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            # the UI's own files: always ask (a 304 when unchanged), so an update shows on the next
+            # reload - without this, browsers guess how long to keep them and run old scripts
+            resp.headers.setdefault("Cache-Control", "no-cache")
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
         resp.headers.setdefault("X-Frame-Options", "DENY")

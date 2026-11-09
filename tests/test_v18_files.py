@@ -324,3 +324,12 @@ def test_recent_folders_mkdir_and_send_slots(env):
     for bad in ({"scope": "global", "slots": {"0": {"path": "x"}}}, {"scope": "global", "slots": {"1": {"path": "x", "action": "zap"}}},
                 {"scope": "99999", "slots": {}}):
         assert c.put("/api/send-slots", json=bad, headers=H).status_code == 400
+
+
+def test_ui_files_are_revalidated(env):
+    """After an update the browser must not keep running old scripts (heuristic caching)."""
+    c = env[0]
+    r = c.get("/static/js/sidebar.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache" and r.headers.get("etag")
+    assert c.get("/static/js/sidebar.js", headers={"if-none-match": r.headers["etag"]}).status_code == 304
+    assert c.get("/").headers["cache-control"] == "no-cache"
