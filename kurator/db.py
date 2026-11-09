@@ -16,7 +16,7 @@ import time
 
 from .playhead_index import MIGRATION as _PH_MIGRATION
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 CATALOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
@@ -233,6 +233,15 @@ MIGRATIONS = {
     10: [
         # Playhead analysis: a summary of each sound's latest document (see playhead_index.py)
         *_PH_MIGRATION,
+    ],
+    11: [
+        # Hotkeys of a project: while it is open, keys 1-9 apply these tags (other keys stay global)
+        """CREATE TABLE project_hotkeys (
+            project_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            hotkey INTEGER NOT NULL,                    -- 1..9
+            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (project_id, hotkey)
+        ) WITHOUT ROWID""",
     ],
 }
 

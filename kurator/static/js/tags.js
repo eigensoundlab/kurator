@@ -18,7 +18,10 @@ export class Tags {
     this.app = app;
     this.list = [];
     this.byId = new Map();
-    this.byHotkey = new Map();
+    this.byHotkey = new Map();         // key -> tag: the open project's own keys over the global ones
+    this.globalByHotkey = new Map();   // key -> tag: the tags' own hotkeys
+    this.keyOf = new Map();            // tag id -> the key that applies it now
+    this.lastId = prefs.get('tags.last', null);   // the last tag used: 0 / Q apply it again
     this.facets = DEFAULT_FACETS;
     this.missing = {};
     this.untagged = 0;
@@ -37,10 +40,33 @@ export class Tags {
     this.facets = r.facets || DEFAULT_FACETS;
     this.missing = r.missing || {};
     this.byId = new Map(this.list.map((t) => [t.id, t]));
-    this.byHotkey = new Map(this.list.filter((t) => t.hotkey).map((t) => [t.hotkey, t]));
+    this.rebuildHotkeys(false);
     this.renderSidebar();
     this.renderBar();
     this.app.onTagsChanged();
+  }
+
+  /** Hotkeys in effect: the global ones, with the open project's own keys in their place. */
+  rebuildHotkeys(render = true) {
+    this.globalByHotkey = new Map(this.list.filter((t) => t.hotkey).map((t) => [t.hotkey, t]));
+    this.byHotkey = new Map(this.globalByHotkey);
+    const own = this.app.projects?.current?.hotkeys || {};
+    for (const [k, id] of Object.entries(own)) {
+      const t = this.byId.get(id);
+      if (t) this.byHotkey.set(+k, t);
+    }
+    this.keyOf = new Map();
+    for (const [k, t] of [...this.byHotkey].sort((a, b) => a[0] - b[0])) if (!this.keyOf.has(t.id)) this.keyOf.set(t.id, k);
+    if (render) { this.renderSidebar(); this.renderBar(); }
+  }
+
+  get last() { return this.lastId != null ? this.byId.get(this.lastId) || null : null; }
+
+  setLast(id) {
+    if (this.lastId === id) return;
+    this.lastId = id;
+    prefs.set('tags.last', id);
+    this.renderBar();
   }
 
   color(id) { return this.byId.get(id)?.color || '#888'; }
@@ -98,7 +124,7 @@ export class Tags {
         },
         el('span', { class: 'dot', style: { background: t.color || '#888' } }),
         el('span', { class: 'nm fit', text: t.name.split('/').pop() }),
-        t.hotkey ? el('span', { class: 'hk', title: `Hotkey ${t.hotkey}`, text: t.hotkey }) : null,
+        this.keyOf.has(t.id) ? el('span', { class: 'hk' + (this.keyOf.get(t.id) !== t.hotkey ? ' proj' : ''), title: `Hotkey ${this.keyOf.get(t.id)}${this.keyOf.get(t.id) !== t.hotkey ? ' (in this project)' : ''}`, text: this.keyOf.get(t.id) }) : null,
         t.live ? el('span', { class: 'live', text: '⟲', title: 'Includes tags, folders or projects automatically' }) : null,
         el('span', { class: 'grow' }),
         el('span', { class: 'ct', text: fmtNum(t.count) }),
@@ -127,21 +153,23 @@ export class Tags {
         if (ts) for (const t of ts) have.set(t, (have.get(t) || 0) + 1);
       }
     }
-    const chip = (t) => {
+    const chip = (t, key = this.keyOf.get(t.id), extra = '') => {
       const h = have.get(t.id) || 0;
-      return el('button', { class: 'chip' + (h && h === n ? ' full' : h ? ' partial' : ''), title: `${this.facetLabel(t.facet)}: ${t.name}${t.hotkey ? ` (${t.hotkey})` : ''} - click to add/remove for ${n} item(s)`,
+      return el('button', { class: 'chip' + (h && h === n ? ' full' : h ? ' partial' : '') + extra, title: `${this.facetLabel(t.facet)}: ${t.name}${key != null ? ` (${key === 0 ? '0 or Q: the last tag you used' : key})` : ''} - click to add/remove for ${n} item(s)`,
         style: { '--c': t.color || '#888' }, 'data-tag-id': t.id, onclick: () => this.app.applyTag(t.id) },
-      t.hotkey ? el('span', { class: 'hk', text: t.hotkey }) : null, el('span', { text: t.name.split('/').pop() }),
+      key != null ? el('span', { class: 'hk', text: key }) : null, el('span', { text: t.name.split('/').pop() }),
       h && h < n ? el('span', { class: 'part', text: `${h}/${n}` }) : null);
     };
     const groups = [];
     for (const f of this.facets) {
-      const shown = this.list.filter((t) => t.facet === f.key && ((t.hotkey && !t.archived) || have.get(t.id)))
-        .sort((a, b) => (a.hotkey || 99) - (b.hotkey || 99) || a.name.localeCompare(b.name));
-      if (shown.length) groups.push(el('span', { class: 'tb-group', text: f.label }), ...shown.map(chip));
+      const shown = this.list.filter((t) => t.facet === f.key && ((this.keyOf.has(t.id) && !t.archived) || have.get(t.id)))
+        .sort((a, b) => (this.keyOf.get(a.id) || 99) - (this.keyOf.get(b.id) || 99) || a.name.localeCompare(b.name));
+      if (shown.length) groups.push(el('span', { class: 'tb-group', text: f.label }), ...shown.map((t) => chip(t)));
     }
+    const last = this.last;
     setKids(this.bar,
       el('span', { class: 'tb-label', text: n ? `Tag ${fmtNum(n)} item${n > 1 ? 's' : ''}:` : 'Select images to tag' }),
+      last ? chip(last, 0, ' last') : null,
       groups,
       el('button', { class: 'chip add', title: 'Tag with any name, in any group (T)', text: '+ Tag…', onclick: () => this.quickTag() }));
   }
@@ -183,9 +211,10 @@ export class Tags {
     const isNew = !tag;
     const name = el('input', { type: 'text', value: tag?.name || '', placeholder: facetKey === 'project' ? 'e.g. Game A' : 'e.g. Creatures', spellcheck: 'false' });
     const color = el('input', { type: 'color', value: tag?.color || '#0090ff' });
-    const hk = el('select', {}, el('option', { value: '', text: 'none' }),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => el('option', { value: String(k), text: `${k}${this.byHotkey.get(k) && this.byHotkey.get(k).id !== tag?.id ? ` (now ${this.byHotkey.get(k).name})` : ''}` })));
-    hk.value = tag?.hotkey ? String(tag.hotkey) : (isNew ? String([1, 2, 3, 4, 5, 6, 7, 8, 9].find((k) => !this.byHotkey.has(k)) || '') : '');
+    const g = this.globalByHotkey;
+    const hk = el('select', { title: 'Global hotkey. A project can give keys its own tags while it is open (Edit… on the project).' }, el('option', { value: '', text: 'none' }),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => el('option', { value: String(k), text: `${k}${g.get(k) && g.get(k).id !== tag?.id ? ` (now ${g.get(k).name})` : ''}` })));
+    hk.value = tag?.hotkey ? String(tag.hotkey) : (isNew ? String([1, 2, 3, 4, 5, 6, 7, 8, 9].find((k) => !g.has(k)) || '') : '');
     const facet = el('select', { title: 'Tag group' }, this.facets.map((f) => el('option', { value: f.key, text: f.label })));
     facet.value = tag?.facet || facetKey;
     if (tag && tag.name.includes('/')) { facet.disabled = true; facet.title = 'Sub-tags stay in the group of their top-level tag'; }

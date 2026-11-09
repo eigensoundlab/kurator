@@ -82,6 +82,43 @@ def set_sources(db: Database, tag_id: int, items: list[dict]) -> list[dict]:
     return sources(db, tag_id)
 
 
+def hotkeys(db: Database, tag_id: int) -> dict[str, int]:
+    """The project's own hotkeys {"1": tag id, ...}: while it is open they replace the global
+    hotkeys of the same number; the other numbers keep their global tags."""
+    return {str(k): t for k, t in db.cat.execute(
+        "SELECT hotkey, tag_id FROM project_hotkeys WHERE project_id = ? ORDER BY hotkey", (tag_id,))}
+
+
+def set_hotkeys(db: Database, tag_id: int, keys: dict) -> dict[str, int]:
+    """keys: {"1": tag id or None, ...} - the whole set (keys not given are cleared)."""
+    if not is_project(db, tag_id):
+        raise ProjectError("Only projects have their own hotkeys")
+    clean: dict[int, int] = {}
+    for k, t in (keys or {}).items():
+        try:
+            k = int(k)
+        except (TypeError, ValueError):
+            raise ProjectError(f"Hotkey must be 1-9, not {k!r}") from None
+        if not 1 <= k <= 9:
+            raise ProjectError("Hotkey must be 1-9")
+        if t in (None, "", 0):
+            continue
+        t = int(t)
+        if not db.cat.execute("SELECT 1 FROM tags WHERE id = ?", (t,)).fetchone():
+            raise ProjectError("That tag doesn't exist any more")
+        for other in [o for o, v in clean.items() if v == t]:   # one key per tag
+            del clean[other]
+        clean[k] = t
+    with db.write_lock:
+        c = db.cat
+        c.execute("BEGIN")
+        c.execute("DELETE FROM project_hotkeys WHERE project_id = ?", (tag_id,))
+        c.executemany("INSERT INTO project_hotkeys(project_id, hotkey, tag_id) VALUES (?, ?, ?)",
+                      [(tag_id, k, t) for k, t in sorted(clean.items())])
+        c.execute("COMMIT")
+    return hotkeys(db, tag_id)
+
+
 def _included_projects(db: Database, tag_id: int, seen: set | None = None) -> set[int]:
     """Projects reachable through 'project' sources (for cycle checks)."""
     seen = set() if seen is None else seen
@@ -188,5 +225,5 @@ def overview(db: Database) -> list[dict]:
                 q, a = member_clause(db, s["ref"])
             s["count"] = db.cat.execute(f"SELECT COUNT(*) FROM files WHERE {q} AND {lib}", a).fetchone()[0]
         out.append({"id": r[0], "name": r[1], "color": r[2], "hotkey": r[3], "archived": bool(r[4]),
-                    "count": total, "by_hand": by_hand, "sources": srcs})
+                    "count": total, "by_hand": by_hand, "sources": srcs, "hotkeys": hotkeys(db, r[0])})
     return out

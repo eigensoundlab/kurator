@@ -189,6 +189,8 @@ details.sec pre { white-space: pre-wrap; word-break: break-word; font-size: 11px
 .chip .x { color: var(--muted); margin-left: 2px; }
 .chip .x:hover { color: var(--bad); }
 .chip.add { border-left-color: var(--line); color: var(--muted); }
+.chip.last { border-style: dashed; border-left-style: solid; margin-right: 6px; }
+.chip.last .hk { color: var(--fg); font-weight: 600; }
 .chip-list { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
 #tagbar { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: var(--bg2); border-top: 1px solid var(--line); overflow-x: auto; min-height: 34px; }
 .tb-label { color: var(--muted); font-size: 12px; white-space: nowrap; margin-right: 4px; }
@@ -244,6 +246,9 @@ table.space tr.offline td { color: var(--muted); }
 .form h3 { font-size: 13px; margin: 14px 0 2px; color: var(--fg); }
 .form .row { align-items: center; flex-wrap: wrap; gap: 8px; }
 .form .grow { flex: 1; }
+.form .row.bottom { align-items: flex-end; }
+.form .row.bottom > input, .form .row.bottom > span { margin-bottom: 8px; }
+.form .row.bottom > span { line-height: 30px; }
 .rules { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .rule { display: flex; align-items: center; gap: 6px; }
 .rule .rn { color: var(--muted); width: 18px; }
@@ -384,6 +389,10 @@ body.dragging-items, body.dragging-items * { cursor: copy !important; }
 .projdlg input[type=color] { width: 54px; height: 30px; padding: 0; border: 1px solid var(--line); background: none; }
 .srclist { border: 1px solid var(--line); border-radius: 6px; padding: 4px; margin: 6px 0; max-height: 220px; overflow: auto; }
 .srcrow { display: flex; align-items: center; gap: 8px; padding: 3px 4px; }
+.hkgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 10px; margin: 6px 0; }
+.projdlg label.hkrow { flex-direction: row; align-items: center; gap: 6px; }
+.projdlg label.hkrow select { flex: 1; min-width: 0; }
+.node .hk.proj { color: var(--fg); border-color: var(--accent); }
 .srcrow .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .srcicon { width: 18px; text-align: center; color: var(--muted); }
 

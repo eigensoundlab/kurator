@@ -18,7 +18,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from kurator import audio_analysis, playhead_index
-from kurator.db import Database
+from kurator.db import SCHEMA_VERSION, Database
 from kurator.scanner import Scanner
 from kurator.server import create_app
 
@@ -251,9 +251,10 @@ def test_backfill_from_016_store(lib):
 def test_migration_from_schema_10(tmp_path):
     db = Database(str(tmp_path / "d"))
     db.cat.execute("DROP TABLE ph_summary")
+    db.cat.execute("DROP TABLE project_hotkeys")      # (schema 11 -> 12, v0.18)
     db.cat.execute("UPDATE settings SET value = '10' WHERE key = 'schema_version'")
     db2 = Database(str(tmp_path / "d"))
-    assert db2.cat.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()[0] == "11"
+    assert db2.cat.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()[0] == str(SCHEMA_VERSION)
     cols = [r[1] for r in db2.cat.execute("PRAGMA table_info(ph_summary)")]
     assert cols[:2] == ["file_id", "mtime_ns"] and set(playhead_index.COLUMNS) <= set(cols)
 

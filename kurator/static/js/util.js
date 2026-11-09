@@ -73,3 +73,11 @@ export const SOURCE_LABEL = {
 };
 
 export const isTyping = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+
+/** The number key pressed (0-9), or null. National layouts (Czech, Slovak…) type letters on
+ * the number row without Shift (ě š č…): the key's place counts then, so hotkeys work unshifted. */
+export function digitKey(e) {
+  if (/^[0-9]$/.test(e.key)) return +e.key;
+  const m = /^(?:Digit|Numpad)([0-9])$/.exec(e.code || '');
+  return m && e.key.length === 1 && e.key.charCodeAt(0) > 127 ? +m[1] : null;
+}

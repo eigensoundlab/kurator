@@ -3,6 +3,22 @@
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
 ## Unreleased
+- **Copy to… (K):** the Move dialog for copies, to any folder (also outside the library). Dates
+  kept, every copy verified, never overwrites, XMP sidecars along (not Unity `.meta` / Godot
+  `.import`: a copy needs its own GUID). In the library the copies appear at once with the
+  original's tags, source, author and licence. Ctrl+Z deletes the copies that are unchanged.
+- **Resample… (I):** resized copies of the selected pictures - longest side, percent, width,
+  height, fit, exact size; Lanczos, bicubic, bilinear, area average or nearest neighbour (pixel
+  art); as the original or PNG / JPEG / WebP; next to the originals, in a subfolder or in one
+  folder; colour profile, EXIF date, file time and animation kept; tags carried over; background
+  job with progress; Ctrl+Z deletes them.
+- **The last tag on 0 and Q:** repeats the last tag you used (hotkey, tag bar, T, drag); first chip
+  in the tag bar. Q also in the viewer (0 fits there).
+- **Hotkeys per project** (*Edit…* on a project): while it is open, keys 1–9 apply the project's
+  own tag set; keys left on *global* keep their tag. Catalog schema 12.
+- Number keys work without Shift on layouts that type letters there (Czech, Slovak…).
+- **Tests:** the KTX2 zstd test runs on Python 3.14 (built-in `compression.zstd`), and the CMYK
+  profile test no longer assumes the test profile is listed first (macOS has its own).
 - **Playhead 0.3.0** (the vendored library, unchanged; checksum in its README). New in the Look
   menu: *Tempogram* and *Repetition* for music, *Modulation spectrogram* and *Curve rhythms* for any
   sound, drawn in place of the waveform. The *Bar raster* (a row per bar) folds time into rows, so

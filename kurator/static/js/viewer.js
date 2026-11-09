@@ -6,7 +6,7 @@ import { MeshView } from './meshview.js';
 import { BoxOverlay, InkView } from './printview.js';
 import { openRegionDialog } from './regiondlg.js';
 import { WaveView } from './waveview.js';
-import { AUDIO, el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
+import { AUDIO, digitKey, el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
 
 const BGS = ['dark', 'gray', 'light', 'checker'];
 
@@ -533,14 +533,16 @@ export class Viewer {
     if ((k === 'l' || k === 'L') && !this.is3d && !this.isVideo && !this.isSound) { this.toggleLit(); return true; }
     if ((k === 'i' || k === 'I') && !this.is3d && !this.isVideo && !this.isSound) { this.toggleInks(); return true; }
     if (k === 'n' || k === 'N') { this.togglePixel(); return true; }
-    if (k === '0') { if (this.is3d) this.mv?.reset(); else this.fitView(); return true; }
+    const dk = e.ctrlKey || e.metaKey || e.altKey ? null : digitKey(e);
+    if (k === '0' || dk === 0) { if (this.is3d) this.mv?.reset(); else this.fitView(); return true; }   // (0 is "fit" here; Q repeats the last tag)
     if (k === 'z' || k === 'Z') { if (this.fitted) this.zoomTo(1); else this.fitView(); return true; }
-    if (/^[1-9]$/.test(k) && !e.ctrlKey && !e.metaKey) {  // tag hotkeys apply to the shown image only
-      const t = this.app.tags.byHotkey.get(+k);
+    if (dk) {  // tag hotkeys apply to the shown image only
+      const t = this.app.tags.byHotkey.get(dk);
       if (t) this.app.applyTag(t.id, { targets: [this.items.ids[this.i]] }).then(() => this.paintTags());
-      else this.app.toast(`No tag on hotkey ${k} yet`);
+      else this.app.toast(`No tag on hotkey ${dk} yet`);
       return true;
     }
+    if (k === 'q' || k === 'Q') { this.app.applyLastTag([this.items.ids[this.i]])?.then(() => this.paintTags()); return true; }
     if (k === 't' || k === 'T') { this.app.tags.quickTag([this.items.ids[this.i]]); return true; }
     if (k === '+' || k === '=') { this.zoomTo(this.s * 1.25); return true; }
     if (k === '-') { this.zoomTo(this.s / 1.25); return true; }

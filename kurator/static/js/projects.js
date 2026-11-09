@@ -32,6 +32,7 @@ export class Projects {
     try { this.list = await api.projects(); } catch { return; }
     if (this.active && !this.current) { this.leave(); return; }
     this.paint();
+    this.app.tags?.rebuildHotkeys();   // the project's own hotkeys may have changed
   }
 
   applyQuery() {
@@ -131,7 +132,7 @@ export class Projects {
     if (!p) return;
     const ids = this.app.tagTargets();
     if (!ids.length) { this.app.toast('Select images first'); return; }
-    const r = await this.app.applyTag(p.id, { op, targets: ids, quiet: true });
+    const r = await this.app.applyTag(p.id, { op, targets: ids, quiet: true, remember: false });   // + / − have their own keys
     if (!r) return;
     const items = this.app.items;
     if (items.m) {
@@ -254,6 +255,22 @@ export class Projects {
       const v = folder.value.trim();
       if (v) { sources.push({ kind: 'folder', ref: v }); folder.value = ''; render(); }
     } });
+    // the project's own hotkeys: while it is open, these numbers apply these tags (others stay global)
+    const own = { ...(p?.hotkeys || {}) };
+    const tagOpts = (k) => {
+      const g = app.tags.globalByHotkey.get(k);
+      const s = el('select', { title: `Key ${k} while this project is open` },
+        el('option', { value: '', text: g ? `global: ${g.name}` : '—' }),
+        app.tags.facets.map((f) => el('optgroup', { label: f.label },
+          app.tags.list.filter((t) => t.facet === f.key && !t.archived && t.id !== id).map((t) => el('option', { value: String(t.id), text: t.name })))));
+      s.value = own[k] ? String(own[k]) : '';
+      s.onchange = () => {
+        if (s.value) for (const [kk, v] of Object.entries(own)) if (String(v) === s.value && +kk !== k) { delete own[kk]; keyBox.querySelector(`[data-k="${kk}"] select`).value = ''; }
+        if (s.value) own[k] = +s.value; else delete own[k];
+      };
+      return el('label', { class: 'hkrow', 'data-k': k }, el('kbd', { text: k }), s);
+    };
+    const keyBox = el('div', { class: 'hkgrid' }, [1, 2, 3, 4, 5, 6, 7, 8, 9].map(tagOpts));
     const body = el('div', { class: 'projdlg' },
       el('div', { class: 'row' }, el('label', { class: 'grow' }, 'Name', name), el('label', {}, 'Colour', color)),
       el('h4', { text: 'Includes automatically' }),
@@ -262,6 +279,9 @@ export class Projects {
       el('div', { class: 'row' }, tagSel, projSel),
       el('div', { class: 'row' }, folder, addFolder),
       p ? el('div', { class: 'muted small', text: `${fmtNum(p.by_hand)} files added by hand · ${fmtNum(p.count)} in total` }) : null,
+      el('h4', { text: 'Hotkeys in this project' }),
+      el('div', { class: 'p-hint small', text: 'A tag set for this project: while it is open, keys 1–9 apply these tags instead of the global ones. Keys left on "global" keep their usual tag. 0 / Q always repeat the last tag used.' }),
+      keyBox,
       msg);
     const d = openDialog({
       title: p ? `Project "${p.name}"` : 'New project', body, width: 620,
@@ -273,6 +293,7 @@ export class Projects {
           if (!pid) pid = (await api.createTag(nm, { facet: 'project', color: color.value, auto_hotkey: true })).id;
           else if (nm !== tag?.name || color.value !== tag?.color) await api.updateTag(pid, { name: nm, color: color.value });
           await api.setProjectSources(pid, sources.map((s) => ({ kind: s.kind, ref: s.ref })));
+          await api.setProjectHotkeys(pid, own);
           close();
           await app.tags.refresh();
           await this.refresh();

@@ -447,6 +447,10 @@ narrows the project down. Click the project again, or × in the path bar, to lea
 - **Files you add by hand:** drag selected images onto the project (sidebar, tag bar or the
   project chip in the path bar), press **+**, use the project's hotkey (1–9) or click it in the tag
   bar.
+- **Its own hotkeys** (*Edit…* → *Hotkeys in this project*): a tag set for the project. While it is
+  open, keys 1–9 apply the project's tags instead of the global ones (e.g. *1 Characters, 2 Props,
+  3 Backgrounds* for a game, *1 Sketch, 2 Final* for a book); keys left on *global* keep their usual
+  tag. The tag bar and the sidebar show the keys that apply now.
 - **Things it includes automatically** (*Edit…* on the project), kept up to date as you work:
   - **tags**: everything tagged *Creatures*, including *Creatures/Dragons*, now and later;
   - **folders**: everything in `D:\Game A\Concepts`, including new files;
@@ -563,6 +567,27 @@ swipe view: one over the other, the divider follows the mouse. **0** fits, **1**
 - A live preview shows the result before saving. New files never overwrite existing ones; save into
   a library folder and they appear in the grid.
 
+### Resampled copies (I or "Resample…")
+
+Smaller (or larger) versions of the selected pictures, as **new files**; the originals are never
+changed.
+
+- **Size:** longest side, percent, width, height, fit inside a box, or an exact size (the proportions
+  may change, e.g. 512 × 512 textures). Quick choices: 50 %, 25 %, 4096 … 512 px, *Pixel art ×2 / ×4*.
+  Pictures already smaller than the size are left out, unless *Also enlarge* is on.
+- **Filter:** Lanczos (sharp), bicubic, bilinear, area average (smooth reductions), **nearest
+  neighbour** for pixel art (whole pixels).
+- **Format:** as the original (PNG, JPEG, WebP, TIFF, BMP, GIF, TGA; layered and other work files
+  such as PSD, Krita, SVG or HEIC become PNG), or PNG / JPEG / WebP with a quality. 16-bit greys
+  (height maps) stay 16-bit in PNG and TIFF.
+- **Where:** next to the originals, in a subfolder next to each (e.g. `resampled/`), or in one folder.
+  The name ending is yours: `_{w}x{h}` (default: `hero_512x256.png`), `@{pct}`, or nothing.
+- Colour profiles and EXIF (with the original date) are kept, and the copy gets the original's file
+  time, so it sorts next to it. Animated GIF / WebP / PNG keep every frame and its timing.
+- In the library the copies appear at once with the original's **tags, source, author and licence**.
+  It runs in the background with progress; **Ctrl+Z** deletes the copies again (only those you
+  haven't changed since).
+
 ### Filters: how they combine
 
 The path bar above the grid always shows what you're looking at: the project, the folder, and one
@@ -599,7 +624,13 @@ chip per filter (× removes it, *Clear filters* removes all but the project).
 - **Hierarchical tags:** `Creatures`, `Creatures/Dragons`, `Items/Weapons`. Filtering by a parent
   includes its children, and renaming a parent renames its children.
 - **Hotkeys 1–9** add or remove a tag on the selection (or the focused image, or the image open in
-  the viewer). Each new tag gets the next free hotkey; change it with ✎ in the Tags list.
+  the viewer). Each new tag gets the next free hotkey; change it with ✎ in the Tags list. A project
+  can have [its own hotkeys](#projects-work-inside-one) while it is open.
+- **0 or Q** repeats the **last tag you used** (by hotkey, tag bar, T or dragging), so a tag without
+  a hotkey is one key away while you sort. It is the first chip in the tag bar. In the viewer **Q**
+  does it (0 fits the picture there).
+- On keyboards that type letters on the number row (Czech, Slovak…) the number keys work without
+  Shift.
 - **T** opens a quick dialog to tag with any name; new names are created as tags.
 - **Tag bar** above the status bar: click a tag to apply it. Each chip shows whether *all*, *some* or
   *none* of the selection has the tag.
@@ -677,6 +708,22 @@ you do yourself write there: moves, and XMP sidecars if you turn them on.)
    - `.xmp` sidecars move along.
    - Tags, dates and metadata stay attached, because the catalog entry is updated in place.
 4. **Ctrl+Z** moves everything back.
+
+### Copying files (K or "Copy to…")
+
+The same dialog as *Move*, for copies; the originals stay where they are.
+
+- **Any folder**, also outside the library: a delivery folder, a USB stick, a client's share. Year
+  subfolders and the date in the file name work as for moves. Copying into the same folder makes
+  `name (2).png`.
+- Modified and creation times are kept, and **every copy is verified byte-for-byte**. Existing files
+  are never overwritten.
+- `.xmp` sidecars are copied along. Unity `.meta` and Godot `.import`/`.uid` files are **not**: they
+  hold the asset's GUID, and a copy needs its own (the engine makes one).
+- **Inside the library** the copies appear in the grid at once, with the original's **tags, source,
+  author and licence** (switch that off in the dialog) and its previews (same content: nothing to
+  index again).
+- **Ctrl+Z** deletes the copies again, but only those still exactly as copied.
 
 ### Move rules (Shift+M or "Rules…")
 
@@ -804,9 +851,11 @@ by filter"*.
 | Shift+arrows | extend selection |
 | X or Ctrl+Space | toggle the focused item |
 | Ctrl+A · Ctrl+I · Esc | select all · invert · clear |
-| **Ctrl+Z / Ctrl+Y** | **undo / redo: selection changes, tag changes and moves** |
-| 1 … 9 · T | tag hotkeys · tag with any name |
-| M · Shift+M | move selection to a folder · move rules |
+| **Ctrl+Z / Ctrl+Y** | **undo / redo: selection changes, tag changes and moves** (undoing a copy deletes the copies) |
+| 1 … 9 · T | tag hotkeys (a project can have its own) · tag with any name |
+| 0 or Q | the last tag used, again |
+| M · Shift+M · K | move selection to a folder · move rules · copy selection to any folder |
+| J · I | join / contact sheet / sprite sheet / atlas · resampled copies |
 | B | backup |
 | O | open in the default application |
 | S · A · Shift+A | AI: find similar · accept suggestions · reject suggestions |
@@ -818,7 +867,7 @@ by filter"*.
 | Enter / double-click | viewer |
 | Ctrl+wheel, + / − | thumbnail size |
 | / | search (start with `?` to search by description with AI) |
-| **Viewer:** ← → · X · 1…9 / T · wheel/drag · 0 / Z · B · N | prev/next · toggle selection · tag the shown image · zoom/pan · fit / toggle 100% · background (dark/gray/light/checker) · pixel-art zoom |
+| **Viewer:** ← → · X · 1…9 / T / Q · wheel/drag · 0 / Z · B · N | prev/next · toggle selection · tag the shown image (Q: last tag) · zoom/pan · fit / toggle 100% · background (dark/gray/light/checker) · pixel-art zoom |
 
 *Show only selected* in the status bar works as a temporary basket view.
 
@@ -856,13 +905,14 @@ kurator/
   dates.py         date resolution and its trust order
   db.py            catalog.db (files, roots, tags, operations) + thumbs.db (blob cache), WAL, migrations
   tags.py          tag hierarchy, hotkeys, apply/toggle
-  fileops.py       safe moves + undo, Windows creation time, folder listing, reveal
+  fileops.py       safe moves and copies + undo, Windows creation time, folder listing, reveal
   rules.py         move rules: tag -> destination template
   projects.py      projects with automatic sources (tags, folders, other projects)
   assets.py        texture sets, model companions, project export to game folders
   similar.py       picture fingerprints (dHash) and grouping of similar images
   stacks.py        version stacks
   sheets.py        contact sheets and joined images
+  resample.py      resampled copies (sizes, filters, formats, animation, background job)
   maps2d.py        companion maps of 2D art (normal, glow, AO, depth, layers)
   projectdirs.py   engine projects and repositories: generated folders, sidecar rules
   unity.py         Unity .meta files: sprite import settings, sliced sprite sheets, undo

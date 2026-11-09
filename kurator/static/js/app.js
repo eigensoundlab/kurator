@@ -13,10 +13,11 @@ import { openBackupDialog } from './backupdlg.js';
 import { Grid } from './grid.js';
 import { LookFilter } from './lookfilter.js';
 import { Timeline } from './timeline.js';
-import { openMoveDialog } from './movedlg.js';
+import { openCopyDialog, openMoveDialog } from './movedlg.js';
 import { Panel } from './panel.js';
 import { phEnabled, phGridPref, phOnBatch, phOnSetting } from './playhead.js';
 import { Projects } from './projects.js';
+import { openResampleDialog } from './resampledlg.js';
 import { openRulesDialog } from './rulesdlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
 import { openSheetsDialog } from './sheetsdlg.js';
@@ -24,7 +25,7 @@ import { Sidebar } from './sidebar.js';
 import { Tags } from './tags.js';
 import { TypeFilter } from './typefilter.js';
 import { AUDIO, MESHES, VIDEO, VIEWABLE, extOf } from './util.js';
-import { $, debounce, el, fmtNum, isTyping, prefs, setKids } from './util.js';
+import { $, debounce, digitKey, el, fmtNum, isTyping, prefs, setKids } from './util.js';
 import { Viewer } from './viewer.js';
 
 const EMPTY = { count: 0, ids: [], v: [], c: [], d: [], n: [], w: [], h: [], ds: [], a: [], t: [], f: [], s: [] };
@@ -498,10 +499,11 @@ class App {
     return this.focusId != null && this.indexOf(this.focusId) >= 0 ? [this.focusId] : [];
   }
 
-  async applyTag(tagId, { op = 'toggle', targets = this.tagTargets(), history = true, quiet = false } = {}) {
+  async applyTag(tagId, { op = 'toggle', targets = this.tagTargets(), history = true, quiet = false, remember = true } = {}) {
     if (!targets.length) { this.toast('Select or focus an image first'); return null; }
     let r;
     try { r = await api.applyTag(tagId, targets, op); } catch (e) { this.toast(e.message); return null; }
+    if (remember && op !== 'remove') this.tags.setLast(tagId);   // 0 / Q apply it again
     this.updateLocalTags(tagId, r.added, r.removed);
     for (const a of r.also_removed || []) this.updateLocalTags(a.tag_id, [], a.ids);  // e.g. "final" replaced "WIP"
     if (history && (r.added.length || r.removed.length || r.also_removed?.length)) {
@@ -513,6 +515,13 @@ class App {
     }
     this.tags.refreshSoon();
     return r;
+  }
+
+  /** 0 or Q: add/remove the last used tag, like its hotkey would. */
+  applyLastTag(targets) {
+    const t = this.tags.last;
+    if (!t) { this.toast('No tag used yet - 0 and Q repeat the last tag you add (hotkey, tag bar, T, drag)'); return null; }
+    return this.applyTag(t.id, targets ? { targets } : {});
   }
 
   updateLocalTags(tagId, added, removed) {
@@ -540,6 +549,24 @@ class App {
 
   // --------------------------------------------------------------- moves
   moveDialog() { openMoveDialog(this, this.tagTargets()); }
+  copyDialog() { openCopyDialog(this, this.tagTargets()); }
+  resampleDialog() { openResampleDialog(this); }
+
+  onCopied(r) {
+    const extra = r.failed.length ? ` · ${r.failed.length} failed` : '';
+    const where = r.indexed === r.copied ? '' : r.indexed ? ` (${fmtNum(r.indexed)} in the library)` : ' (outside the library)';
+    this.toast(`Copied ${fmtNum(r.copied)} file${r.copied === 1 ? '' : 's'}${where}${extra} · Ctrl+Z to undo`, 3500);
+    if (r.failed.length) console.warn('Copy failures', r.failed);
+    if (r.op_id) this.pushHistory({ kind: 'copy', opId: r.op_id, count: r.copied });
+    if (r.indexed) { this.reload(); this.refreshState(); this.tags.refreshSoon(); }
+  }
+
+  onResampled(r) {
+    if (!r?.op_id) return;
+    this.toast(`Made ${fmtNum(r.written)} resampled cop${r.written === 1 ? 'y' : 'ies'}${r.failed ? ` · ${r.failed} failed` : ''} · Ctrl+Z deletes them`, 3500);
+    this.pushHistory({ kind: 'copy', opId: r.op_id, count: r.written });
+    if (r.new_ids?.length) { this.reload(); this.refreshState(); this.tags.refreshSoon(); }
+  }
 
   onMoved(r) {
     const extra = r.failed.length ? ` · ${r.failed.length} failed` : '';
@@ -610,6 +637,16 @@ class App {
       this.future = [];
       this.reload();
       this.refreshState();
+    } else if (e.kind === 'copy') {
+      try {
+        const r = await api.undoOp(e.opId);
+        const kept = r.kept.filter((k) => k.reason !== 'already gone');
+        this.toast(`Deleted ${fmtNum(r.removed)} cop${r.removed === 1 ? 'y' : 'ies'}${kept.length ? ` · ${kept.length} kept (changed since)` : ''}`, 3500);
+      } catch (err) { this.toast(err.message); return; }
+      this.future = [];
+      this.reload();
+      this.refreshState();
+      this.tags.refreshSoon();
     }
   }
 
@@ -943,15 +980,20 @@ class App {
       else if (ctrl && (k === 'i' || k === 'I')) this.invertSelection();
       else if (ctrl && !e.shiftKey && (k === 'z' || k === 'Z')) this.undo();
       else if (ctrl && (k === 'y' || k === 'Y' || ((k === 'z' || k === 'Z') && e.shiftKey))) this.redo();
-      else if (/^[1-9]$/.test(k) && !ctrl && !e.altKey) {
-        const t = this.tags.byHotkey.get(+k);
-        if (t) this.applyTag(t.id); else this.toast(`No tag on hotkey ${k} yet - create one with + in Tags`);
+      else if (digitKey(e) != null && !ctrl && !e.altKey) {
+        const dk = digitKey(e);
+        const t = dk ? this.tags.byHotkey.get(dk) : null;
+        if (!dk) this.applyLastTag();
+        else if (t) this.applyTag(t.id); else this.toast(`No tag on hotkey ${dk} yet - create one with + in Tags${this.projects.active ? ' (or in this project: Edit…)' : ''}`);
       }
+      else if ((k === 'q' || k === 'Q') && !ctrl && !e.altKey) this.applyLastTag();
       else if ((k === 't' || k === 'T') && !ctrl) this.tags.quickTag();
       else if (k === 'M' && e.shiftKey && !ctrl) openRulesDialog(this);
       else if ((k === 'b' || k === 'B') && !ctrl) openBackupDialog(this);
       else if ((k === 'j' || k === 'J') && !ctrl) openSheetsDialog(this);
       else if ((k === 'm' || k === 'M') && !ctrl) this.moveDialog();
+      else if ((k === 'k' || k === 'K') && !ctrl) this.copyDialog();
+      else if ((k === 'i' || k === 'I') && !ctrl && !e.altKey) this.resampleDialog();
       else if ((k === 'r' || k === 'R') && !ctrl) { this.reload(); this.toast('Refreshed'); }
       else if (k === 'Backspace' || (e.altKey && k === 'ArrowUp')) { const p = this.query.folder && this.parentOf(this.query.folder); if (p) this.openPath(p); }
       else if (k === 'Escape') this.clearSelection();
@@ -1067,9 +1109,11 @@ class App {
       el('button', { class: 'btn small', text: 'Invert', title: 'Invert selection (Ctrl+I)', onclick: () => this.invertSelection() }),
       el('button', { class: 'btn small', text: 'Clear', title: 'Clear selection (Esc)', onclick: () => this.clearSelection() }),
       this.showSelBtn,
-      el('button', { class: 'btn small', text: 'Undo', title: 'Undo last change - selection, tags or move (Ctrl+Z)', onclick: () => this.undo() }),
+      el('button', { class: 'btn small', text: 'Undo', title: 'Undo last change - selection, tags, move or copy (Ctrl+Z)', onclick: () => this.undo() }),
       el('button', { class: 'btn small', text: 'Join / sheet…', title: 'Join the selected images into one, make a contact sheet, a sprite sheet or a texture atlas (J)', onclick: () => openSheetsDialog(this) }),
+      el('button', { class: 'btn small', text: 'Resample…', title: 'Make resized copies of the selected pictures: smaller (or larger) versions next to the originals or in a folder (I)', onclick: () => this.resampleDialog() }),
       el('button', { class: 'btn small', text: 'Rules…', title: 'Move files into folders by tag (Shift+M)', onclick: () => openRulesDialog(this) }),
+      el('button', { class: 'btn small', text: 'Copy to…', title: 'Copy the selected files to any folder - the originals stay (K)', onclick: () => this.copyDialog() }),
       el('button', { class: 'btn small primary', text: 'Move to…', title: 'Move the selected files to a folder (M)', onclick: () => this.moveDialog() }));
     this.toastEl = el('div', { class: 'toast' });
     document.body.append(this.toastEl);
@@ -1235,9 +1279,10 @@ class App {
       ['X  or  Ctrl+Space', 'Toggle the focused item'],
       ['Shift + arrows', 'Extend selection'],
       ['Ctrl+A / Ctrl+I / Esc', 'Select all / invert / clear'],
-      ['Ctrl+Z / Ctrl+Y', 'Undo / redo: selection, tags and moves'],
+      ['Ctrl+Z / Ctrl+Y', 'Undo / redo: selection, tags and moves (undoing a copy deletes the copies)'],
       ['Tagging & sorting', ''],
-      ['1 … 9', 'Add/remove the tag on that hotkey (selection, or the focused image)'],
+      ['1 … 9', 'Add/remove the tag on that hotkey (selection, or the focused image). A project can have its own keys: Edit… on the project'],
+      ['0  or  Q', 'Add/remove the last tag you used again (shown first in the tag bar)'],
       ['T', 'Tag with any name (creates the tag if new)'],
       ['Projects', 'Pick one top left (or click it in the sidebar) to work inside it'],
       ['+ · −', 'With a project open: add the selection · take it out'],
@@ -1248,12 +1293,14 @@ class App {
       ['Look ▾ (top bar)', 'Filter by colour, shape, transparency, size; sounds by tempo, key and length (with Playhead also by character: hit or swell, bursty, metal-like, long ring…)'],
       ['Timeline (right edge)', 'When sorted by date: drag along it to jump through years and months'],
       ['J', 'Join the selected images (side by side, stacked, grid), contact sheet, sprite sheet or texture atlas'],
+      ['I', 'Resample: resized copies of the selected pictures (percent, longest side, fit, exact; pixel-art friendly)'],
       ['Ctrl+G · Ctrl+Shift+G', 'Stack the selection as versions (newest on top) · unstack'],
       ['▤ on a thumbnail', 'A version stack: click to see all versions'],
       ['C', 'Compare 2–4 selected images side by side, zooming together (S in compare: swipe A/B)'],
       ['Click a tag', 'Everything with it (in the whole library, or in the open project)'],
       ['Ctrl+click · Alt+click', 'Narrow the current view (e.g. a tag in this folder) · hide items with it'],
       ['M', 'Move selection to a folder (with preview, keeps dates, undoable)'],
+      ['K', 'Copy selection to any folder (keeps dates; in the library the copies keep their tags; undoable)'],
       ['B', 'Backup (sets, plan with free space, restore)'],
       ['AI', ''],
       ['?text in the search box', 'Search by description, e.g. ?robot with a sword'],
@@ -1265,7 +1312,7 @@ class App {
       ['Viewer', ''],
       ['← →', 'Previous / next (selection is kept)'],
       ['X', 'Toggle selection of the shown image'],
-      ['1 … 9, T', 'Tag the shown image'],
+      ['1 … 9, T, Q', 'Tag the shown image (Q: the last tag again)'],
       ['Wheel, drag, double-click', 'Zoom at cursor, pan, toggle fit/100%'],
       ['3D models', 'Drag: turn · right-drag or Shift+drag: move · wheel: zoom · 0 or double-click: reset · in the grid: hover to turn'],
       ['3D: L · Alt+drag', 'Next light preset · turn the lights (view modes and maps: panel top right)'],

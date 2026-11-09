@@ -110,6 +110,10 @@ class MoveIn(BaseModel):
     date_prefix: bool = False
 
 
+class CopyIn(MoveIn):
+    keep_tags: bool = True             # copies inside the library get the original's tags, source, author, licence
+
+
 class IdIn(BaseModel):
     id: int
 
@@ -194,6 +198,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             threading.Thread(target=ph_backfill, name="kurator-ph-backfill", daemon=True).start()
         yield
         ph_job.cancel()
+        resampler.cancel()
         sched.stop()
         ondemand.shutdown(wait=False, cancel_futures=True)
         jobs.cancel()
@@ -690,6 +695,11 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     def put_project_sources(tag_id: int, body: dict):
         return _json(projects.set_sources(db, tag_id, list(body.get("sources") or [])))
 
+    @app.put("/api/projects/{tag_id}/hotkeys")
+    def put_project_hotkeys(tag_id: int, body: dict):
+        """{"hotkeys": {"1": tag id, ...}}: the project's own keys (while it is open)."""
+        return _json(projects.set_hotkeys(db, tag_id, dict(body.get("hotkeys") or {})))
+
     @app.post("/api/tags")
     def create_tag(body: TagIn):
         hk = body.hotkey if body.hotkey is not None else ("auto" if body.auto_hotkey else None)
@@ -1036,6 +1046,54 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                            ppu=ppu, pixel_art=bool(body.get("pixel_art")))
         return _json({"files": files, **stats})
 
+    # -- resampled copies --------------------------------------------------------------
+    from . import resample as resample_mod
+    resampler = resample_mod.ResampleJob(db, scanner, on_done=lambda new_ids, keep_tags: _auto_sidecars(new_ids) if keep_tags else None)
+
+    def _resample_plan(body: dict) -> dict:
+        try:
+            return resample_mod.plan(
+                db, [int(i) for i in body.get("ids") or []], mode=str(body.get("mode") or "long"),
+                value=body.get("value") or 0, value2=body.get("value2"), enlarge=bool(body.get("enlarge")),
+                fmt=str(body.get("format") or "keep"), where=str(body.get("where") or "beside"),
+                folder=str(body.get("folder") or ""), suffix=str(body.get("suffix") if body.get("suffix") is not None else "_{w}x{h}"))
+        except resample_mod.ResampleError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.get("/api/resample/options")
+    def resample_options():
+        return _json({"filters": list(resample_mod.FILTERS), "modes": list(resample_mod.MODES), "formats": list(resample_mod.FORMATS)})
+
+    @app.post("/api/resample/plan")
+    def resample_plan(body: dict):
+        p = _resample_plan(body)
+        reasons: dict[str, int] = {}
+        for s in p["skipped"]:
+            reasons[s["reason"]] = reasons.get(s["reason"], 0) + 1
+        return _json({"count": p["count"], "items": p["items"][:300], "skipped": reasons})
+
+    @app.post("/api/resample/run")
+    def resample_run(body: dict):
+        p = _resample_plan(body)
+        try:
+            quality = int(body.get("quality") or 90)
+        except (TypeError, ValueError):
+            quality = 90
+        try:
+            return _json(resampler.start(p, str(body.get("filter") or "lanczos"), quality,
+                                         body.get("keep_date", True) is not False, body.get("keep_tags", True) is not False))
+        except resample_mod.ResampleError as e:
+            raise HTTPException(409, str(e)) from None
+
+    @app.get("/api/resample/job")
+    def resample_job():
+        return _json(resampler.state)
+
+    @app.post("/api/resample/cancel")
+    def resample_cancel():
+        resampler.cancel()
+        return _json({"ok": True})
+
     @app.post("/api/audio/{item_id}/export")
     def audio_export(item_id: int, body: dict):
         """Save a region of a sound as a new file (fades, normalising, format)."""
@@ -1367,6 +1425,23 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         plan = fileops.plan_move(db, body.ids, body.dest, body.by_year, body.date_prefix)
         res = fileops.execute_moves(db, scanner, plan["moves"], plan["root_id"])
         res["skipped"] = plan["skipped"]
+        return _json(res)
+
+    # -- copying -------------------------------------------------------------
+    @app.post("/api/copy/plan")
+    def copy_plan(body: CopyIn):
+        plan = fileops.plan_copy(db, body.ids, body.dest, body.by_year, body.date_prefix)
+        plan["count"] = len(plan["copies"])
+        plan["copies"] = plan["copies"][:500]
+        return _json(plan)
+
+    @app.post("/api/copy")
+    def copy(body: CopyIn):
+        plan = fileops.plan_copy(db, body.ids, body.dest, body.by_year, body.date_prefix)
+        res = fileops.execute_copies(db, scanner, plan["copies"], body.keep_tags)
+        res["skipped"] = plan["skipped"]
+        if body.keep_tags:
+            _auto_sidecars(res["new_ids"])
         return _json(res)
 
     # -- backups -------------------------------------------------------------

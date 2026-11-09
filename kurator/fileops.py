@@ -1,4 +1,4 @@
-"""File system operations: safe moves (with undo), folder listing, reveal in file manager.
+"""File system operations: safe moves and copies (with undo), folder listing, reveal in file manager.
 
 Moving rules
   * never overwrite: name clashes get " (2)", " (3)" ...
@@ -8,6 +8,15 @@ Moving rules
   * sidecars travel along: photo.jpg.xmp / photo.xmp, and engine files: Unity .meta, Godot .import
   * catalog rows are updated in place, so tags and dates stay attached
   * every move is logged and can be undone
+
+Copying rules
+  * any folder, also outside the library (a client folder, a USB stick); never overwrites
+  * modified + creation time kept, every copy verified byte-for-byte
+  * XMP sidecars are copied too; Unity .meta and Godot .import/.uid are not (a copy needs its own
+    GUID/UID - the engine makes new ones)
+  * copies inside the library are in the catalog at once, with the original's tags, source,
+    author and licence (no re-indexing: same content, same previews)
+  * undo deletes the copies that are still unchanged
 """
 
 from __future__ import annotations
@@ -107,15 +116,47 @@ def move_file(src: str, dst: str) -> str:
     return "copy"
 
 
-def _sidecars(path: str) -> list[str]:
+def copy_file(src: str, dst: str) -> None:
+    """Copy one file keeping its timestamps, verified byte-for-byte. dst must not exist."""
+    if os.path.lexists(dst):
+        raise OpError(f"Target exists: {dst}")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    st = os.stat(src)
+    birth = getattr(st, "st_birthtime", None)
+    try:
+        shutil.copy2(src, dst)  # data + modified/accessed time + permission bits
+        if birth and os.name == "nt":
+            set_creation_time(dst, birth)
+        if os.path.getsize(dst) != st.st_size or _hash_file(dst) != _hash_file(src):
+            raise OpError("Copy verification failed")
+    except BaseException:
+        try:
+            os.remove(dst)
+        except OSError:
+            pass
+        raise
+
+
+def _sidecars(path: str, xmp_only: bool = False) -> list[str]:
     """Files that travel with `path`: XMP sidecars, Unity .meta (keeps references to the asset
-    working), Godot .import/.uid."""
+    working), Godot .import/.uid. xmp_only: just the XMP sidecars (for copies - an engine file
+    holds the asset's own GUID/UID, which a copy must not share)."""
     stem = os.path.splitext(path)[0]
     out = []
-    for cand in (path + ".xmp", stem + ".xmp", path + ".XMP", stem + ".XMP", path + ".meta", path + ".import", path + ".uid"):
+    cands = (path + ".xmp", stem + ".xmp", path + ".XMP", stem + ".XMP")
+    if not xmp_only:
+        cands += (path + ".meta", path + ".import", path + ".uid")
+    for cand in cands:
         if os.path.isfile(cand) and cand not in out:
             out.append(cand)
     return out
+
+
+def _sidecar_target(src: str, sc: str, dst: str) -> str:
+    """Where sidecar `sc` of `src` goes when `src` becomes `dst` (photo.jpg.xmp or photo.xmp style)."""
+    if sc.startswith(src):
+        return dst + sc[len(src):]
+    return os.path.splitext(dst)[0] + sc[len(os.path.splitext(src)[0]):]
 
 
 def _free_name(path: str, taken: set[str]) -> str:
@@ -134,11 +175,34 @@ def _free_name(path: str, taken: set[str]) -> str:
 # ----------------------------------------------------------------------- move
 def plan_move(db: Database, ids: list[int], dest: str, by_year: bool = False, date_prefix: bool = False) -> dict:
     """Plan moving files into one destination folder (optionally into year subfolders)."""
-    dest = os.path.normpath(os.path.abspath(os.path.expanduser(dest.strip().strip('"'))))
+    dest = _dest_dir(dest)
     root = db.root_for(dest, "library")
     if root is None:
         raise OpError("The destination must be inside a library folder. Add it to the library first.")
     rows = _rows(db, ids)
+    plan = plan_moves(db, _entries(ids, rows, dest, by_year, date_prefix), rows)
+    plan.update(dest=dest, root_id=root["id"])
+    return plan
+
+
+def plan_copy(db: Database, ids: list[int], dest: str, by_year: bool = False, date_prefix: bool = False) -> dict:
+    """Plan copying files into one folder - anywhere, also outside the library."""
+    dest = _dest_dir(dest)
+    rows = _rows(db, ids)
+    plan = plan_moves(db, _entries(ids, rows, dest, by_year, date_prefix), rows, copy=True)
+    plan["copies"] = plan.pop("moves")
+    plan.update(dest=dest, in_library=db.root_for(dest, "library") is not None)
+    return plan
+
+
+def _dest_dir(dest: str) -> str:
+    dest = (dest or "").strip().strip('"')
+    if not dest:
+        raise OpError("Choose a destination folder")
+    return os.path.normpath(os.path.abspath(os.path.expanduser(dest)))
+
+
+def _entries(ids, rows: dict, dest: str, by_year: bool, date_prefix: bool) -> list[dict]:
     entries = []
     for fid in dict.fromkeys(int(i) for i in ids):
         r = rows.get(fid)
@@ -146,9 +210,7 @@ def plan_move(db: Database, ids: list[int], dest: str, by_year: bool = False, da
         if r and by_year and r[4]:
             target = os.path.join(dest, f"{datetime.fromtimestamp(r[4]):%Y}")
         entries.append({"id": fid, "dir": target, "date_prefix": date_prefix})
-    plan = plan_moves(db, entries, rows)
-    plan.update(dest=dest, root_id=root["id"])
-    return plan
+    return entries
 
 
 def _rows(db: Database, ids) -> dict:
@@ -162,9 +224,10 @@ def _rows(db: Database, ids) -> dict:
     return rows
 
 
-def plan_moves(db: Database, entries: list[dict], rows: dict | None = None) -> dict:
+def plan_moves(db: Database, entries: list[dict], rows: dict | None = None, copy: bool = False) -> dict:
     """entries: [{'id', 'dir', 'date_prefix', ...extra keys copied to the move}] - each file may
-    have its own destination. Destinations outside the library are refused per file."""
+    have its own destination. Destinations outside the library are refused per file.
+    copy: plan copies instead - any destination, and a copy into the file's own folder gets " (2)"."""
     rows = rows if rows is not None else _rows(db, [e["id"] for e in entries])
     moves, skipped = [], []
     taken: set[str] = set()
@@ -180,11 +243,12 @@ def plan_moves(db: Database, entries: list[dict], rows: dict | None = None) -> d
             continue
         _, src, name, size, ts = r
         target_dir = os.path.normpath(os.path.abspath(e["dir"]))
-        if target_dir not in lib_ok:
-            lib_ok[target_dir] = db.root_for(target_dir, "library") is not None
-        if not lib_ok[target_dir]:
-            skipped.append({"id": fid, "from": src, "reason": "destination outside the library", **extra})
-            continue
+        if not copy:
+            if target_dir not in lib_ok:
+                lib_ok[target_dir] = db.root_for(target_dir, "library") is not None
+            if not lib_ok[target_dir]:
+                skipped.append({"id": fid, "from": src, "reason": "destination outside the library", **extra})
+                continue
         if not os.path.isfile(src):
             skipped.append({"id": fid, "from": src, "reason": "missing on disk", **extra})
             continue
@@ -192,7 +256,7 @@ def plan_moves(db: Database, entries: list[dict], rows: dict | None = None) -> d
         if e.get("date_prefix") and ts and dates.parse_filename_date(name) is None:
             new_name = f"{datetime.fromtimestamp(ts):%Y-%m-%d}_{name}"
         dst = os.path.join(target_dir, new_name)
-        if os.path.normcase(dst) == os.path.normcase(src):
+        if not copy and os.path.normcase(dst) == os.path.normcase(src):
             skipped.append({"id": fid, "from": src, "reason": "already there", **extra})
             continue
         dst = _free_name(dst, taken)
@@ -254,6 +318,168 @@ def execute_moves(db: Database, scanner, moves: list[dict], root_id: int | None,
             "copied": sum(1 for d in done if d["method"] == "copy")}
 
 
+# Copied files that are new catalog rows: everything but the place and the stack is the original's.
+_NOT_CLONED = {"id", "root_id", "path", "dir", "name", "ext", "size", "mtime_ns", "seen", "stack_id"}
+
+
+def _clone_row(db: Database, fid: int, dst: str, root_id: int, keep_tags: bool) -> int | None:
+    """A catalog row for the copy `dst` of file `fid`: same content, so the same hash, dates,
+    metadata and previews - nothing to index again. With keep_tags also its tags and its
+    source / author / licence."""
+    c = db.cat
+    cols = [r[1] for r in c.execute("PRAGMA table_info(files)") if r[1] not in _NOT_CLONED]
+    st = os.stat(dst)
+    name = os.path.basename(dst)
+    cl = ", ".join(cols)
+    with db.write_lock:
+        c.execute("BEGIN")
+        try:
+            # A stale row for the target path (file deleted outside, not rescanned yet) would clash.
+            c.execute("DELETE FROM files WHERE path = ?", (dst,))
+            new = c.execute(
+                f"INSERT INTO files(root_id, path, dir, name, ext, size, mtime_ns, seen, {cl}) "
+                f"SELECT ?, ?, ?, ?, ?, ?, ?, 0, {cl} FROM files WHERE id = ?",
+                (root_id, dst, os.path.dirname(dst), name, os.path.splitext(name)[1].lower(),
+                 st.st_size, st.st_mtime_ns, fid)).lastrowid
+            if keep_tags:
+                c.execute("INSERT OR IGNORE INTO file_tags(file_id, tag_id, source, confidence, added) "
+                          "SELECT ?, tag_id, source, confidence, added FROM file_tags WHERE file_id = ?", (new, fid))
+                c.execute("INSERT OR IGNORE INTO file_info(file_id, source, author, licence, updated) "
+                          "SELECT ?, source, author, licence, updated FROM file_info WHERE file_id = ?", (new, fid))
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+    return new
+
+
+def add_derived_file(db: Database, path: str, root_id: int, like_id: int, keep_tags: bool = True) -> int:
+    """A new file Kurator made from catalog file `like_id` (a resampled copy...): a catalog row to be
+    indexed (pending), starting with the original's date, and with its tags, source, author and
+    licence when keep_tags."""
+    st = os.stat(path)
+    name = os.path.basename(path)
+    ext = os.path.splitext(name)[1].lower()
+    h = handler_for(ext)
+    orig = db.cat.execute("SELECT date_ts, date_source FROM files WHERE id = ?", (like_id,)).fetchone()
+    ts, src = (orig[0], orig[1]) if orig and orig[0] else dates.resolve_date({}, name, st)
+    c = db.cat
+    with db.write_lock:
+        c.execute("BEGIN")
+        try:
+            c.execute("DELETE FROM files WHERE path = ?", (path,))
+            new = c.execute(
+                "INSERT INTO files(root_id, path, dir, name, ext, kind, size, mtime_ns, date_ts, date_source, status, seen) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,0,0)",
+                (root_id, path, os.path.dirname(path), name, ext, h.kind if h else "image", st.st_size, st.st_mtime_ns,
+                 ts, src)).lastrowid
+            if keep_tags:
+                c.execute("INSERT OR IGNORE INTO file_tags(file_id, tag_id, source, confidence, added) "
+                          "SELECT ?, tag_id, source, confidence, ? FROM file_tags WHERE file_id = ?", (new, time.time(), like_id))
+                c.execute("INSERT OR IGNORE INTO file_info(file_id, source, author, licence, updated) "
+                          "SELECT ?, source, author, licence, updated FROM file_info WHERE file_id = ?", (new, like_id))
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+    return new
+
+
+def indexed_root(db: Database, folder: str, cache: dict) -> int | None:
+    """The library root that will index files in `folder` (None: outside the library, or in a
+    folder the scan skips, like a hidden one or Unity's Library/)."""
+    if folder not in cache:
+        r = db.root_for(folder, "library")
+        if r is not None:
+            from .scanner import _excluded, _norm
+            if _excluded(_norm(r["path"]), _norm(folder)):
+                r = None
+        cache[folder] = r["id"] if r else None
+    return cache[folder]
+
+
+def execute_copies(db: Database, scanner, copies: list[dict], keep_tags: bool = True) -> dict:
+    """Perform planned copies. Copies inside the library join the catalog at once."""
+    done, failed = [], []
+    roots: dict[str, int | None] = {}
+    with scanner.fs_lock:
+        for m in copies:
+            src, dst, fid = m["from"], m["to"], m["id"]
+            try:
+                if not os.path.isfile(src):
+                    raise OpError("missing on disk")
+                if os.path.lexists(dst):
+                    dst = _free_name(dst, set())
+                copy_file(src, dst)
+                side = []
+                for sc in _sidecars(src, xmp_only=True):
+                    sdst = _sidecar_target(src, sc, dst)
+                    if os.path.lexists(sdst):
+                        continue   # a stray sidecar of that name stays as it is
+                    try:
+                        copy_file(sc, sdst)
+                        side.append(sdst)
+                    except OSError:
+                        pass
+                # photo.jpg.xmp: written for the copy later (tagging) unless one was there before
+                own_xmp = dst + ".xmp" in side or not os.path.lexists(dst + ".xmp")
+                st = os.stat(dst)
+                new_id = None
+                rid = indexed_root(db, os.path.dirname(dst), roots)
+                if rid is not None:
+                    new_id = _clone_row(db, fid, dst, rid, keep_tags)
+                done.append({"id": new_id, "src_id": fid, "from": src, "to": dst, "size": st.st_size,
+                             "mtime_ns": st.st_mtime_ns, "sidecars": side, "own_xmp": own_xmp})
+            except Exception as e:
+                failed.append({"id": fid, "from": src, "to": dst, "error": f"{type(e).__name__}: {e}"})
+    op_id = None
+    if done:
+        with db.write_lock:
+            op_id = db.cat.execute("INSERT INTO operations(ts, kind, data) VALUES (?, ?, ?)",
+                                   (time.time(), "copy", json.dumps(done))).lastrowid
+    scanner._bump()
+    return {"op_id": op_id, "copied": len(done), "failed": failed,
+            "new_ids": [d["id"] for d in done if d["id"] is not None],
+            "indexed": sum(1 for d in done if d["id"] is not None)}
+
+
+def _undo_copies(db: Database, scanner, entries: list[dict]) -> dict:
+    """Delete copies Kurator made - only those still exactly as they were copied."""
+    removed, kept = 0, []
+    with scanner.fs_lock:
+        for e in entries:
+            path = e["to"]
+            if e.get("id") is not None:   # moved since (inside Kurator): follow it
+                row = db.cat.execute("SELECT path FROM files WHERE id = ?", (e["id"],)).fetchone()
+                if row:
+                    path = row[0]
+            try:
+                st = os.stat(path)
+            except OSError:
+                kept.append({"path": path, "reason": "already gone"})
+                continue
+            if (st.st_size, st.st_mtime_ns) != (e["size"], e["mtime_ns"]):
+                kept.append({"path": path, "reason": "changed since it was copied"})
+                continue
+            try:
+                os.remove(path)
+            except OSError as ex:
+                kept.append({"path": path, "reason": f"{type(ex).__name__}: {ex}"})
+                continue
+            removed += 1
+            # its sidecars: the copied ones, and photo.jpg.xmp written for it since (tagging)
+            side = [*e.get("sidecars", []), *([path + ".xmp"] if e.get("own_xmp") and path == e["to"] else [])]
+            for sc in dict.fromkeys(side):
+                try:
+                    os.remove(sc)
+                except OSError:
+                    pass
+            with db.write_lock:
+                db.cat.execute("DELETE FROM files WHERE path = ?", (path,))
+    scanner._bump()
+    return {"removed": removed, "kept": kept}
+
+
 def undo_operation(db: Database, scanner, op_id: int) -> dict:
     row = db.cat.execute("SELECT kind, data, undone FROM operations WHERE id = ?", (op_id,)).fetchone()
     if not row:
@@ -261,6 +487,11 @@ def undo_operation(db: Database, scanner, op_id: int) -> dict:
     if row[2]:
         raise OpError("Already undone")
     entries = json.loads(row[1])
+    if row[0] in ("copy", "resample"):   # new files: undo removes them
+        res = _undo_copies(db, scanner, entries)
+        with db.write_lock:
+            db.cat.execute("UPDATE operations SET undone = 1 WHERE id = ?", (op_id,))
+        return res
     back = []
     for e in reversed(entries):
         back.append({"id": e["id"], "from": e["to"], "to": e["from"]})
