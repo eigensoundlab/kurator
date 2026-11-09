@@ -52,6 +52,11 @@ packages are never touched.
   Security). Meshopt-compressed glTF needs nothing extra.
 - Get the code with `git clone https://github.com/eigensoundlab/kurator` or download a release ZIP.
 
+**Desktop app (optional):** Kurator in its own window instead of a browser tab, with real file drops
+(also of folders), dragging files out into other programs and the system's right-click menu. It
+starts and stops your installed Kurator. Installers for Windows, macOS and Linux are attached to the
+releases; see [docs/desktop.md](docs/desktop.md).
+
 The browser opens at `http://127.0.0.1:8765/`. Library folders are remembered, and you can add more
 from the sidebar: type or paste a path and press *Add*, or press *Add…* with the field empty to
 click through your folders. Upgrading keeps your catalog: it is migrated automatically, nothing is re-indexed.
@@ -768,6 +773,27 @@ Drag files from Explorer, Finder or another app onto Kurator:
 - One confirmation shows both groups; **Don't ask again** skips it (⚙ Settings → *Dropping files*
   brings it back). **Ctrl+Z** takes the tags off and deletes the copied files.
 - Folders are left out: add them with *Add…* in the sidebar.
+- **In the desktop app** the paths are known: library files are found by path, new files are
+  copied from where they are (nothing is uploaded), and **dropped folders can be added to the
+  library**. Selected thumbnails can also be dragged **out** of the window into other programs
+  (Windows, macOS).
+
+### Right-click menu and Open with
+
+Right-click a **thumbnail** for Open, **Open with** (a submenu of programs), Show in Explorer /
+Finder, Copy path, Copy to…, Move to…, Send to a quick destination…, Rename…, Resample… and
+Delete… - for the right-clicked file, or for the selection if it is part of it. On a **folder**
+(sidebar, path bar): Open, Show in Explorer / Finder, Copy path, Pin, copy or move the selected
+files there, add it to or remove it from the library. On a **tag or project**: show it, narrow the
+view to it, hide its files, add it to or remove it from the selected items, edit it. On the empty
+grid: Select all, Invert selection. Text fields keep their usual menu. In the desktop app the menu
+is the system's own.
+
+**Open with** lists the programs Kurator finds where their installers put them - Krita, Photoshop,
+GIMP, Affinity, Pixelmator Pro, Aseprite, Paint.NET, Inkscape, Blender (for `.blend`), Audacity,
+REAPER, VLC - for the kinds of files they open. *Open with → Programs…* (or ⚙ Settings → *Open
+with*) hides found ones and adds any other program: its `.exe`, `.app` or command, and which files
+it is offered for. Only programs on this list can be started.
 
 ### Quick destinations (D, then 1–9)
 
@@ -991,7 +1017,8 @@ kurator/
   dates.py         date resolution and its trust order
   db.py            catalog.db (files, roots, tags, operations) + thumbs.db (blob cache), WAL, migrations
   tags.py          tag hierarchy, hotkeys, apply/toggle
-  fileops.py       safe moves, copies, renames + undo, Windows creation time, folder listing, reveal
+  fileops.py       safe moves, copies, renames + undo, Windows creation time, folder listing, reveal, drops
+  apps.py          Open with: finds art, 3D and sound programs; programs added in Settings
   trash.py         delete to the system trash or Kurator's trash folder, restore (undo)
   dupes.py         keep one copy of each duplicate
   delivery.py      copies for delivery: metadata cleaned / credited without re-encoding
@@ -1042,6 +1069,8 @@ kurator/
     service.py     embeddings.db, search, similar, tag pools, training, suggestions, review
     vlm.py         Ollama and OpenAI-compatible clients with a fixed-answer JSON schema
   static/          the UI: plain ES modules, no build step, no npm dependencies
+    js/ctxmenu.js          the right-click menu (the page's, or the system's in the desktop app)
+    js/shell.js            what the desktop app adds: drops with paths, dragging out, native menus
     js/playhead.js         optional Playhead analysis: documents, worker queue, batches, grid strips
     js/playhead-worker.js  the analysis in a module worker
     js/phlibdlg.js         "Analyse sounds with Playhead" (command line or browser)
@@ -1050,7 +1079,8 @@ kurator/
 tests/             pytest: dates, indexing, API + security, tags, moves, rules, sidecars, watching
 tools/             sample library generator, indexing benchmark, browser UI checks
 install / update / kurator  (.bat for Windows, .sh for Linux/macOS)
-.github/           CI (tests on Windows/Linux/macOS + pip-audit, weekly) and Dependabot
+desktop/           the desktop app (Tauri 2, Rust): starts Kurator, shows it, stops it (docs/desktop.md)
+.github/           CI (tests on Windows/Linux/macOS + pip-audit, weekly; desktop builds) and Dependabot
 ```
 
 **Handlers** are the extension point. Each handler declares extensions and returns
@@ -1094,6 +1124,11 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
   (a fuzz test feeds it damaged files). The optional `basisu` tool runs as a separate process
   with a time limit, on a temporary copy. The frontend has
   **zero** third-party dependencies.
+- **Desktop app:** its window shows only its start page and Kurator; other pages open in your
+  browser. Kurator's page may use only file drops, dragging files out, the system's menu, the
+  clipboard and the Open dialog, granted for `http://127.0.0.1:<port>` alone. Open with starts only
+  programs that were found or that you added, by their place on that list, never a path from a
+  request.
 - **Staying current:** `update.bat` / `update.sh` upgrade every dependency to its newest compatible
   version and run `pip-audit`. On GitHub, CI runs the audit on every push and weekly, and Dependabot
   proposes updates. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
@@ -1111,6 +1146,7 @@ KURATOR_RCLONE=/path/to/rclone pytest tests/test_rclone.py         # cloud tests
 pip install -e ".[ui-tests]" && playwright install chromium         # optional browser tests
 python tools/ui_check.py 8765 /tmp/ui
 pip install -e ".[ai]" && pytest tests/test_ai.py                    # AI tests (offline, random weights)
+cd desktop && npm ci && npm run tauri dev                            # the desktop app (Rust + Node.js, docs/desktop.md)
 ```
 
 ## Roadmap

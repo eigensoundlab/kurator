@@ -1,0 +1,19 @@
+:root { color-scheme: dark; }
+html, body { margin: 0; height: 100%; background: #15171c; color: #d9dde6; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; box-sizing: border-box; text-align: center; }
+.logo { width: 72px; height: 72px; }
+h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: .02em; }
+#msg { margin: 6px 0 0; font-size: 15px; }
+.detail { margin: 0; max-width: 640px; color: #8b93a5; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.detail.log { text-align: left; font: 12px/1.4 ui-monospace, Consolas, monospace; background: #1c1f26; border: 1px solid #2e3340;
+  border-radius: 6px; padding: 8px 10px; max-height: 220px; overflow: auto; width: min(720px, 90vw); box-sizing: border-box; }
+.bar { width: 220px; height: 3px; background: #2e3340; border-radius: 2px; overflow: hidden; margin-top: 8px; }
+.bar span { display: block; width: 40%; height: 100%; background: #7aa2ff; border-radius: 2px; animation: slide 1.2s ease-in-out infinite; }
+.bar.off { visibility: hidden; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 12px; }
+.actions[hidden] { display: none; }
+button { background: #1c1f26; color: #d9dde6; border: 1px solid #2e3340; border-radius: 6px; padding: 7px 14px; font: inherit; cursor: pointer; }
+button:hover { border-color: #7aa2ff; }
+button.primary { background: #4a6fd0; border-color: #4a6fd0; color: #fff; }
+button[hidden] { display: none; }

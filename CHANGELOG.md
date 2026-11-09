@@ -2,6 +2,28 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## Unreleased (0.19.0) – Desktop app, right-click menu, Open with
+- **Desktop app** (optional, `desktop/`, Tauri 2, app id `com.eigensound.kurator`): Kurator in its
+  own window. It finds your Kurator folder (or asks once), starts Kurator without a console window -
+  or uses one already running - and stops it when closed, also if the app crashes. In the window:
+  **file drops with paths** (library files found by path, new ones copied from where they are,
+  **folders added to the library** by dropping them), **dragging files out** into other programs
+  (Windows, macOS), the system's **right-click menu**, links in the default browser, downloads to
+  Downloads, one window that remembers its size and place. See [docs/desktop.md](docs/desktop.md).
+- **Right-click menu** (browser and app) on thumbnails, folders, the path bar, tags, projects and the
+  empty grid: Open, Open with, Show in Explorer / Finder, Copy path, Copy to…, Move to…, Send to…,
+  Rename…, Resample…, Delete…; copy or move the selection into a folder, pin, add to / remove from
+  the library; add a tag to / remove it from the selection, edit it; Select all.
+- **Open with:** Krita, Photoshop, GIMP, Affinity, Pixelmator Pro, Aseprite, Paint.NET, Inkscape,
+  Blender, Audacity, REAPER and VLC are found where their installers put them and offered for the
+  files they open; add any other program (⚙ Settings → Open with → Programs…).
+- Yes/no questions (remove a library folder, delete a tag, a backup set, a tag pool, empty the trash
+  folder) are asked in the page instead of the browser's box, which the macOS app doesn't have.
+- `--quit-on-stdin-close`: Kurator quits when its standard input closes (how the app runs it).
+- **CI:** the desktop app is built for Windows, macOS (Apple silicon + Intel) and Linux on every
+  change to it, started against Kurator (`--selftest`), and attached to published releases; macOS is
+  signed and notarized once the Apple secrets are set.
+
 ## 0.18.1 – Drop files onto Kurator; fixes
 - **Dropping files onto Kurator** (from Explorer, Finder, a browser): onto a tag or project they get
   it; onto the grid, the open project and the filtered tags. Files already in the library are found

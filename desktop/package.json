@@ -1,0 +1,15 @@
+{
+  "name": "kurator-desktop",
+  "private": true,
+  "version": "0.19.0",
+  "description": "Kurator desktop app (Tauri): a window around the local Kurator server",
+  "license": "Apache-2.0",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

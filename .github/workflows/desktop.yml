@@ -1,0 +1,172 @@
+name: Desktop app
+
+# Builds the desktop app (desktop/, Tauri) for Windows, macOS (one app for Apple silicon and Intel)
+# and Linux, then starts each one against this checkout's Kurator (--selftest).
+#   * every run: the installers as downloadable artifacts of the run (Actions → this run → Artifacts)
+#   * a published GitHub release (tag vX.Y.Z): the installers are attached to it
+# macOS is signed and notarized when the Apple secrets are set (docs/desktop.md), else signed ad hoc.
+
+on:
+  push:
+    branches: [main]
+    paths: ["desktop/**", "kurator/static/**", "kurator/__main__.py", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    permissions:
+      contents: write   # attaching the installers to a release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            args: ""
+            targets: ""
+          - name: macos
+            os: macos-latest
+            args: "--target universal-apple-darwin"
+            targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - name: linux
+            os: ubuntu-24.04
+            args: ""
+            targets: ""
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The release is this version of the app
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          v=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
+          if [ "${{ github.event.release.tag_name }}" != "v$v" ]; then
+            echo "::error::The release is ${{ github.event.release.tag_name }} but the desktop app says $v (desktop/src-tauri/tauri.conf.json, Cargo.toml, package.json)"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "desktop/src-tauri -> target"
+
+      - name: Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf xvfb
+
+      - name: Tauri CLI
+        working-directory: desktop
+        run: npm ci
+
+      - name: macOS signing (when the secrets are set)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # only what is set goes on to the build: an empty variable would make Tauri try to use it
+          put() { if [ -n "${!1}" ]; then { echo "$1<<KURATOR_EOF"; printf '%s\n' "${!1}"; echo "KURATOR_EOF"; } >> "$GITHUB_ENV"; fi; }
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            echo "Signing with the Developer ID certificate"
+            put APPLE_CERTIFICATE; put APPLE_CERTIFICATE_PASSWORD; put APPLE_SIGNING_IDENTITY
+            if [ -n "$APPLE_API_KEY_P8" ]; then
+              printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+              echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+              put APPLE_API_ISSUER; put APPLE_API_KEY
+              echo "Notarizing with the App Store Connect API key"
+            elif [ -n "$APPLE_ID" ]; then
+              put APPLE_ID; put APPLE_PASSWORD; put APPLE_TEAM_ID
+              echo "Notarizing with the Apple ID"
+            else
+              echo "::warning::Signed but not notarized: add APPLE_API_ISSUER, APPLE_API_KEY and APPLE_API_KEY_P8 (docs/desktop.md)"
+            fi
+          else
+            echo "No certificate: the app is signed ad hoc (macOS asks once before the first start, see docs/desktop.md)"
+            echo '{"bundle": {"macOS": {"signingIdentity": "-"}}}' > "$RUNNER_TEMP/adhoc.json"
+            echo "EXTRA_ARGS=--config $RUNNER_TEMP/adhoc.json" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          args: ${{ matrix.args }} ${{ env.EXTRA_ARGS }}
+          releaseId: ${{ github.event_name == 'release' && github.event.release.id || '' }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: "kurator-desktop-[platform]-[arch]-[bundle]"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Kurator for the self-test
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ "$RUNNER_OS" = Windows ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
+          "$PY" -m pip install -q --upgrade pip
+          "$PY" -m pip install -q -e .
+
+      - name: Self-test (the app starts Kurator, shows its page, and the page can use the app)
+        shell: bash
+        timeout-minutes: 10
+        env:
+          KURATOR_HOME: ${{ github.workspace }}
+          KURATOR_ARGS: --no-ai --no-scan --no-watch --data-dir ${{ runner.temp }}/kurator-data
+          KURATOR_SELFTEST_OUT: ${{ runner.temp }}/selftest.txt
+        run: |
+          dir=desktop/src-tauri/target/release
+          [ "$RUNNER_OS" = macOS ] && dir=desktop/src-tauri/target/universal-apple-darwin/release
+          exe=""
+          for name in Kurator Kurator.exe kurator-desktop kurator-desktop.exe; do
+            [ -f "$dir/$name" ] && exe="$dir/$name" && break
+          done
+          [ -n "$exe" ] || { echo "::error::No app in $dir"; ls -la "$dir"; exit 1; }
+          echo "Running $exe --selftest"
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$exe" --selftest; else "$exe" --selftest; fi
+          cat "$KURATOR_SELFTEST_OUT"
+
+      - name: Self-test logs to the run summary
+        if: failure()
+        shell: bash
+        run: |
+          local_data=/nonexistent
+          [ -n "$LOCALAPPDATA" ] && local_data=$(cygpath -u "$LOCALAPPDATA")
+          {
+            echo "### Desktop app: ${{ matrix.name }}"
+            for f in "${{ runner.temp }}/selftest.txt" \
+                     $(find "$HOME/.local/share/com.eigensound.kurator" "$HOME/Library/Logs/com.eigensound.kurator" \
+                            "$local_data/com.eigensound.kurator" -name '*.log' 2>/dev/null); do
+              [ -f "$f" ] || continue
+              echo; echo "**$(basename "$f")**"; echo '```'; tail -n 40 "$f"; echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

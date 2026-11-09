@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "splash",
+  "description": "The start page shown while Kurator starts or can't be found.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-get-status",
+    "allow-retry",
+    "allow-pick-home",
+    "allow-open-logs",
+    "allow-open-help"
+  ]
+}
