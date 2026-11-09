@@ -2,7 +2,7 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
-## Unreleased
+## 0.18.1 – Drop files onto Kurator; fixes
 - **Dropping files onto Kurator** (from Explorer, Finder, a browser): onto a tag or project they get
   it; onto the grid, the open project and the filtered tags. Files already in the library are found
   by name, size and time and tagged in place; new ones are copied into a folder you choose (per
@@ -10,6 +10,8 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
   Dropping files); Ctrl+Z.
 - **Fix:** case-only renames (shot1.png → SHOT1.png) on case-insensitive disks (macOS) no longer get
   " (2)".
+- **CI:** failed tests are summed up on the run's Summary page - every failing job's OS, Python,
+  test names, messages and tracebacks on one page, ready to copy.
 
 ## 0.18.0 – Copy, resample, rename, delete: file tools, quick destinations, delivery
 - **Copy to… (K):** the Move dialog for copies, to any folder (also outside the library). Dates
