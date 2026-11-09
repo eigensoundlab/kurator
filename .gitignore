@@ -43,3 +43,4 @@ desktop.ini
 # Local secrets, just in case
 .env
 *.conf.local
+pytest-report.xml

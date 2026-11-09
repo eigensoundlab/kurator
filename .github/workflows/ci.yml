@@ -28,7 +28,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade --upgrade-strategy eager -e ".[dev,3d]"
       - name: Tests
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=pytest-report.xml
+      - name: Failures to the run summary (one page for all jobs, ready to copy)
+        if: failure()
+        shell: bash
+        run: python tools/ci_failures.py pytest-report.xml "test (${{ matrix.os }}, ${{ matrix.python }})" >> "$GITHUB_STEP_SUMMARY"
 
   audit:
     runs-on: ubuntu-latest

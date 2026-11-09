@@ -117,16 +117,19 @@ def test_rename_case_only(env):
 
 
 def test_rename_plan_on_a_case_insensitive_disk(env):
-    """On Windows and macOS "SHOT2.png" and "shot2.png" are one file. Imitated with a hard link: the
-    other name points to the file being renamed, so it is free; an unrelated file is not."""
+    """On Windows and macOS "SHOT2.png" and "shot2.png" are one file: the new name points to the file
+    being renamed, so it is free. A case-sensitive disk (Linux) gets the same situation from a hard
+    link. A name that points to another file is taken, on any disk."""
     c, db, sc, lib, _ = env
     ids = by_name(c)
-    os.link(lib / "a" / "shot2.png", lib / "a" / "SHOT2.png")
+    upper = lib / "a" / "SHOT2.png"
+    if not upper.exists():                       # case-sensitive: make the other name point to the file
+        os.link(lib / "a" / "shot2.png", upper)
+    assert os.path.samefile(upper, lib / "a" / "shot2.png")
     p = c.post("/api/rename/plan", json={"ids": [ids["a/shot2.png"]], "template": "{name}", "case": "upper"}, headers=H).json()
     assert os.path.basename(p["renames"][0]["to"]) == "SHOT2.png" and not p["renames"][0]["clash"]
-    (lib / "a" / "SHOT0.png").write_bytes(b"another file")
-    p = c.post("/api/rename/plan", json={"ids": [ids["a/shot0.png"]], "template": "{name}", "case": "upper"}, headers=H).json()
-    assert os.path.basename(p["renames"][0]["to"]) == "SHOT0 (2).png" and p["renames"][0]["clash"]
+    p = c.post("/api/rename/plan", json={"ids": [ids["a/shot0.png"]], "template": "dup"}, headers=H).json()   # a/dup.png: another file
+    assert os.path.basename(p["renames"][0]["to"]) == "dup (2).png" and p["renames"][0]["clash"]
 
 
 # ---------------------------------------------------------------- delete
