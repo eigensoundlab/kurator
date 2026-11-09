@@ -1400,6 +1400,7 @@ class App {
       ['F2', 'Rename: a pattern with {date} {tag} {n}…, find / replace, case; sidecars follow; undoable'],
       ['Del', 'Delete to the Recycle Bin / Trash, or Kurator\'s trash folder (⚙ Settings → Delete); Ctrl+Z brings files back'],
       ['Browse… (destination fields)', 'Click through folders, make a new one, or pick a recent destination'],
+      ['Add… · Open… (sidebar)', 'With the field empty: click through folders to add to the library / to open; a typed or pasted path is used at once'],
       ['B', 'Backup (sets, plan with free space, restore)'],
       ['AI', ''],
       ['?text in the search box', 'Search by description, e.g. ?robot with a sword'],

@@ -1,6 +1,7 @@
 // Left sidebar: Pinned folders, Library tree, Tags, and a file-system browser for any folder.
 
 import { api } from './api.js';
+import { pickFolder } from './folderpick.js';
 import { el, fmtNum, prefs } from './util.js';
 
 function section(key, title, ...extra) {
@@ -35,19 +36,34 @@ export class Sidebar {
     this.tagSec = section('tags', 'Tags', el('button', { class: 'mini', title: 'New tag', text: '+', onclick: () => app.tags.editDialog(null) }));
     this.fsSec = section('fs', 'Browse');
 
-    this.input = el('input', { type: 'text', placeholder: 'Add library folder, e.g. D:\\Art', spellcheck: 'false' });
+    // Add / Open: a typed or pasted path is used at once; with the field empty the button opens the
+    // folder picker ("Add…", "Open…").
+    this.input = el('input', { type: 'text', placeholder: 'Paste a path, or Add…', spellcheck: 'false' });
     this.msg = el('div', { class: 'side-msg' });
     this.libTree = el('div', { class: 'tree' });
+    this.addBtn = el('button', { class: 'btn', type: 'submit' });
     this.libSec.body.append(this.libTree,
-      el('form', { class: 'add-root', onsubmit: (e) => { e.preventDefault(); this.addRoot(); } },
-        this.input, el('button', { class: 'btn', type: 'submit', text: 'Add' })), this.msg);
+      el('form', { class: 'add-root', onsubmit: async (e) => {
+        e.preventDefault();
+        if (this.input.value.trim()) { this.addRoot(); return; }
+        const p = await pickFolder(app, { title: 'Add a folder to the library (with its subfolders)', use: 'Add to library' });
+        if (p) this.addRoot(p);
+      } }, this.input, this.addBtn), this.msg);
 
     this.fsTree = el('div', { class: 'tree' });
-    this.fsInput = el('input', { type: 'text', placeholder: 'Open any folder path…', spellcheck: 'false' });
+    this.fsInput = el('input', { type: 'text', placeholder: 'Paste a path, or Open…', spellcheck: 'false' });
+    this.openBtn = el('button', { class: 'btn', type: 'submit' });
     this.fsSec.body.append(
-      el('form', { class: 'add-root', onsubmit: (e) => { e.preventDefault(); if (this.fsInput.value.trim()) app.openPath(this.fsInput.value.trim()); } },
-        this.fsInput, el('button', { class: 'btn', type: 'submit', text: 'Open' })),
+      el('form', { class: 'add-root', onsubmit: async (e) => {
+        e.preventDefault();
+        const typed = this.fsInput.value.trim();
+        const p = typed || await pickFolder(app, { start: app.query.folder || '', title: 'Open a folder (it is browsed, not added to the library)', use: 'Open' });
+        if (p) { app.openPath(p); this.fsInput.value = ''; this.paintFieldButtons(); }
+      } }, this.fsInput, this.openBtn),
       this.fsTree);
+    this.input.addEventListener('input', () => this.paintFieldButtons());
+    this.fsInput.addEventListener('input', () => this.paintFieldButtons());
+    this.paintFieldButtons();
     this.fsChildren = new Map();   // path -> [{name, path}]
     this.fsOpen = new Set();
 
@@ -58,6 +74,17 @@ export class Sidebar {
   }
 
   get tagContainer() { return this.tagSec.body; }
+
+  /** "Add" / "Open" with a path in the field; "Add…" / "Open…" (the folder picker) when it is empty. */
+  paintFieldButtons() {
+    const paint = (input, btn, verb, what) => {
+      const p = input.value.trim();
+      btn.textContent = p ? verb : `${verb}…`;
+      btn.title = p ? `${verb} ${p}` : `Browse for a folder to ${what} - or type / paste its path in the field`;
+    };
+    paint(this.input, this.addBtn, 'Add', 'add to the library (with its subfolders)');
+    paint(this.fsInput, this.openBtn, 'Open', 'open without adding it to the library');
+  }
 
   // ------------------------------------------------------------ saved views
   async loadViews(list) {
@@ -194,6 +221,7 @@ export class Sidebar {
     try {
       const r = await api.addRoot(p);
       this.input.value = '';
+      this.paintFieldButtons();
       await this.app.refreshState();
       this.app.toast(`Added to library: ${r.path}`);
       return r;

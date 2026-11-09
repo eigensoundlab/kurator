@@ -159,6 +159,25 @@ with sync_playwright() as p:
     page.wait_for_timeout(1500)
     print("after Ctrl+Z:", toast())
 
+    # --- sidebar: Add… / Open… open the folder picker when the field is empty; a typed path is used at once
+    print("sidebar buttons (empty):", page.locator(".add-root button").all_inner_texts())
+    os.makedirs(os.path.join(os.path.dirname(LIB), "extra", "more"), exist_ok=True)
+    page.locator(".add-root input").nth(1).fill(os.path.dirname(LIB))
+    print("  with a path typed:", page.locator(".add-root button").all_inner_texts())
+    page.locator(".add-root button").nth(1).click()
+    page.wait_for_timeout(1000)
+    print("  Open with a path:", page.evaluate(f"{K}.query.folder"), "| field cleared:", page.locator(".add-root input").nth(1).input_value() == "")
+    page.locator(".add-root button").nth(0).click()
+    page.wait_for_selector(".fp-wrap")
+    page.locator(".dlg-wrap:last-child .fp-path input[type=text]").fill(os.path.join(os.path.dirname(LIB), "extra"))
+    page.locator(".dlg-wrap:last-child .fp-path input[type=text]").press("Enter")
+    page.wait_for_timeout(500)
+    page.screenshot(path=f"{OUT}/sidebar_add_picker.png")
+    print("  Add… picker:", page.locator(".dlg-wrap:last-child .dlg-title").inner_text(), "| button:", page.locator(".dlg-wrap:last-child button.primary").inner_text())
+    page.locator(".dlg-wrap:last-child button.primary").click()
+    page.wait_for_timeout(1500)
+    print("  library folders:", [r["path"] for r in api("GET", "/api/state")["roots"] if r["kind"] == "library"])
+
     # --- Files ▾ menu and Settings → Delete
     page.click('#statusbar button:has-text("Files ▾")')
     page.wait_for_selector(".popmenu")

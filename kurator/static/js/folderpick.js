@@ -31,7 +31,7 @@ export function destField(app, input, { title = 'Choose a folder', extra = [], o
 }
 
 /** Resolves to the chosen folder, or null. */
-export function pickFolder(app, { start = '', title = 'Choose a folder' } = {}) {
+export function pickFolder(app, { start = '', title = 'Choose a folder', use = 'Use this folder' } = {}) {
   return new Promise((resolve) => {
     let cur = null;
     let done = false;
@@ -49,10 +49,13 @@ export function pickFolder(app, { start = '', title = 'Choose a folder' } = {}) 
     const info = el('div', { class: 'muted small' });
     const msg = el('div');
 
+    let nav = 0;   // only the newest navigation counts (the first one may answer after you typed a path)
     const go = async (path) => {
+      const mine = ++nav;
       setKids(msg);
       let r;
       try { r = await api.listDir(path); } catch (e) {
+        if (mine !== nav) return;
         // a destination that doesn't exist yet: open the nearest folder above it
         const parent = path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
         const next = /^[A-Za-z]:$/.test(parent) ? parent + '\\' : (parent || (path.startsWith('/') ? '/' : ''));
@@ -60,12 +63,13 @@ export function pickFolder(app, { start = '', title = 'Choose a folder' } = {}) 
         setKids(msg, el('div', { class: 'err', text: e.message }));
         return;
       }
+      if (mine !== nav) return;
       cur = r;
       pathIn.value = r.path;
       up.disabled = !r.parent;
       setKids(list, r.dirs.length ? r.dirs.map((x) => el('div', { class: 'node', title: x.path, onclick: () => go(x.path) },
         el('span', { class: 'tw', text: '📁' }), el('span', { class: 'nm', text: x.name })))
-        : el('div', { class: 'p-hint small', text: 'No folders inside. "Use this folder" picks this one.' }),
+        : el('div', { class: 'p-hint small', text: `No folders inside. "${use}" takes this one.` }),
       r.truncated ? el('div', { class: 'muted small', text: 'Only the first folders are shown.' }) : null);
       info.textContent = `${r.images ? `${fmtNum(r.images)} file${r.images === 1 ? '' : 's'} Kurator knows here · ` : ''}${r.library ? `in your library (${base(r.library)})` : 'outside your library'}`;
       d.buttons.use.disabled = false;
@@ -100,7 +104,7 @@ export function pickFolder(app, { start = '', title = 'Choose a folder' } = {}) 
         el('div', { class: 'fp-wrap' }, side, el('div', {}, list, el('div', { class: 'row' }, newName, mk), info)),
         msg),
       buttons: [{ label: 'Cancel', onClick: (close) => { finish(null); close(); } },
-        { label: 'Use this folder', id: 'use', primary: true, disabled: true, onClick: (close) => { finish(cur?.path ?? null); close(); } }],
+        { label: use, id: 'use', primary: true, disabled: true, onClick: (close) => { finish(cur?.path ?? null); close(); } }],
       onClose: () => finish(null),
     });
     sideRows();

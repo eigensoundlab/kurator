@@ -53,7 +53,8 @@ packages are never touched.
 - Get the code with `git clone https://github.com/eigensoundlab/kurator` or download a release ZIP.
 
 The browser opens at `http://127.0.0.1:8765/`. Library folders are remembered, and you can add more
-from the sidebar. Upgrading keeps your catalog: it is migrated automatically, nothing is re-indexed.
+from the sidebar: type or paste a path and press *Add*, or press *Add…* with the field empty to
+click through your folders. Upgrading keeps your catalog: it is migrated automatically, nothing is re-indexed.
 
 | Option | Meaning |
 |---|---|
@@ -110,8 +111,8 @@ removes it from the catalog.
   NovelAI).
 - **Folder tree** with counts, *include subfolders* toggle, name search, type filter and sorting by
   date, name, folder, type, size or dimensions.
-- **Browse any folder** on any drive (sidebar *Browse*, or type a path) without adding it to the
-  library. Only that folder's files are catalogued, and it is forgotten after 14 days unused.
+- **Browse any folder** on any drive (sidebar *Browse*: type or paste a path and press *Open*, or
+  *Open…* with the field empty to click through your folders) without adding it to the library. Only that folder's files are catalogued, and it is forgotten after 14 days unused.
   **+ Add to library** in the path bar indexes it with all subfolders, reusing work already done.
 - **Pinned folders**: ☆ on any folder (library or not) puts it at the top of the sidebar.
 - **Animated GIF / WebP / APNG** play in the viewer, in the side panel, and on hover in the grid

@@ -19,6 +19,8 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
 - Number keys work without Shift on layouts that type letters there (Czech, Slovak…).
 - **Choosing folders:** *Browse…* next to every destination field (click through drives and folders,
   new folder), and one list of recent destinations for all of them, kept in the catalog (pin, forget).
+  In the sidebar, *Add* (library) and *Open* (Browse) use a typed or pasted path at once; with the
+  field empty they become *Add…* / *Open…* and open the folder picker.
 - **Quick destinations (D, then 1–9):** numbered folders that copy or move the selection at once;
   global, and per project in their place. *Files ▾ → Quick destinations…* (or E in the menu) edits them.
 - **Rename (F2):** a pattern with `{name}` `{n}` `{date}` `{tag}` `{project}` `{folder}` `{w}` `{h}`…,
