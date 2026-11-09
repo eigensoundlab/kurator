@@ -2,7 +2,7 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
-## Unreleased (0.19.0) – Desktop app, right-click menu, Open with
+## 0.19.0 – Desktop app, right-click menu, Open with
 - **Desktop app** (optional, `desktop/`, Tauri 2, app id `com.eigensound.kurator`): Kurator in its
   own window. It finds your Kurator folder (or asks once), starts Kurator without a console window -
   or uses one already running - and stops it when closed, also if the app crashes. In the window:
