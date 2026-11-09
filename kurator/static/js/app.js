@@ -14,6 +14,7 @@ import { Grid } from './grid.js';
 import { LookFilter } from './lookfilter.js';
 import { Timeline } from './timeline.js';
 import { openDupesDialog } from './dupesdlg.js';
+import { installDrop } from './dropfiles.js';
 import { openCopyDialog, openMoveDialog } from './movedlg.js';
 import { Panel } from './panel.js';
 import { phEnabled, phGridPref, phOnBatch, phOnSetting } from './playhead.js';
@@ -99,6 +100,7 @@ class App {
     this.buildHelp();
     this.bindGridPointer();
     this.bindKeys();
+    installDrop(this);   // files dropped from Explorer / Finder
     this.tags.refresh();
     this.projects.refresh();
     this.refreshState().then(async () => {
@@ -709,6 +711,20 @@ class App {
       this.future = [];
       this.reload();
       this.refreshState();
+    } else if (e.kind === 'drop') {   // files dropped onto the page: tags off, copied files deleted
+      let r = null;
+      try {
+        for (const ch of e.changes) {
+          if (ch.added.length) await api.applyTag(ch.tagId, ch.added, 'remove');
+          for (const a of ch.also || []) await api.applyTag(a.tag_id, a.ids, 'add');
+        }
+        if (e.opId) r = await api.undoOp(e.opId);
+      } catch (err) { this.toast(err.message); return; }
+      this.toast(`Drop undone${r ? ` · ${fmtNum(r.removed)} copied file${r.removed === 1 ? '' : 's'} deleted` : ''}`);
+      this.future = [];
+      this.reload();
+      this.refreshState();
+      this.tags.refreshSoon();
     } else if (e.kind === 'rename') {
       try {
         const r = await api.undoOp(e.opId);
@@ -1400,6 +1416,7 @@ class App {
       ['F2', 'Rename: a pattern with {date} {tag} {n}…, find / replace, case; sidecars follow; undoable'],
       ['Del', 'Delete to the Recycle Bin / Trash, or Kurator\'s trash folder (⚙ Settings → Delete); Ctrl+Z brings files back'],
       ['Browse… (destination fields)', 'Click through folders, make a new one, or pick a recent destination'],
+      ['Drop files from Explorer / Finder', 'Onto a tag or project: they get it; onto the grid: the open project and filtered tags. Files already in the library are tagged in place, new ones copied into a folder you choose. Ctrl+Z undoes'],
       ['Add… · Open… (sidebar)', 'With the field empty: click through folders to add to the library / to open; a typed or pasted path is used at once'],
       ['B', 'Backup (sets, plan with free space, restore)'],
       ['AI', ''],

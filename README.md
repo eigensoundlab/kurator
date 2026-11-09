@@ -755,6 +755,20 @@ pick one of the **recent destinations** (shared by all of them, kept in the cata
 folder. ☆ in the list pins a folder (also in the sidebar), × forgets it. Typing a path still works,
 with the same folders suggested.
 
+### Dropping files onto Kurator
+
+Drag files from Explorer, Finder or another app onto Kurator:
+
+- **Onto a tag or project** (sidebar, tag bar, the project chip in the path bar): they get it.
+  **Onto the grid:** they get the open project and the tags the view is filtered by.
+- **Files already in the library** are recognised by name, size and modified time and tagged where
+  they are. (A web page never sees where a dropped file is, only its name, size, time and bytes.)
+- **New files** (a download, an image from a website or a chat) are **copied into a folder** you
+  choose - remembered per project - keeping their modified time, then indexed and tagged.
+- One confirmation shows both groups; **Don't ask again** skips it (⚙ Settings → *Dropping files*
+  brings it back). **Ctrl+Z** takes the tags off and deletes the copied files.
+- Folders are left out: add them with *Add…* in the sidebar.
+
 ### Quick destinations (D, then 1–9)
 
 Folders with a number that copy or move the selection at once, without a dialog:
@@ -926,6 +940,7 @@ by filter"*.
 | M · Shift+M · K | move selection to a folder · move rules · copy selection to any folder |
 | D, then 1…9 | send the selection to a quick destination (copy or move) |
 | F2 · Del | rename (pattern, counter, find / replace) · delete to the trash (undoable) |
+| Drop files from Explorer / Finder | onto a tag or project, or the grid: tagged in place if in the library, else copied into a folder and tagged |
 | J · I | join / contact sheet / sprite sheet / atlas · resampled copies |
 | B | backup |
 | O | open in the default application |

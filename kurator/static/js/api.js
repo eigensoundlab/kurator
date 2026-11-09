@@ -96,6 +96,18 @@ export const api = {
   recentFolders: () => req('GET', '/api/folders/recent'),
   forgetFolder: (path) => req('POST', '/api/folders/recent/forget', { path }),
   mkdir: (parent, name) => req('POST', '/api/fs/mkdir', { parent, name }),
+  dropMatch: (files) => req('POST', '/api/drop/match', { files }),
+  dropFile: async (batch, dest, file) => {   // the file's bytes as the body (no form encoding)
+    const q = new URLSearchParams({ batch, dest, name: file.name, mtime: String(file.lastModified || 0) });
+    const r = await fetch('/api/drop/file?' + q, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } });
+    if (!r.ok) {
+      let msg = r.statusText;
+      try { msg = (await r.json()).detail || msg; } catch { /* not json */ }
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+    return r.json();
+  },
+  dropDone: (batch) => req('POST', '/api/drop/done', { batch }),
   sendSlots: () => req('GET', '/api/send-slots'),
   setSendSlots: (scope, slots) => req('PUT', '/api/send-slots', { scope, slots }),
   undoOp: (id) => req('POST', `/api/operations/${id}/undo`, {}),

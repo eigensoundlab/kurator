@@ -1559,6 +1559,59 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     def fs_mkdir(body: dict):
         return _json({"path": fileops.make_folder(str(body.get("parent") or ""), str(body.get("name") or ""))})
 
+    # -- files dropped onto the page (from Explorer / Finder / another app) -----------------
+    drops: dict[str, dict] = {}
+    drops_lock = threading.Lock()
+
+    @app.post("/api/drop/match")
+    def drop_match(body: dict):
+        """{files: [{name, size, mtime (ms)}]} -> {ids: [[catalog ids] per file]}"""
+        files = list(body.get("files") or [])[:20000]
+        return _json({"ids": fileops.match_dropped(db, files)})
+
+    @app.post("/api/drop/file")
+    async def drop_file(request: Request, batch: str, dest: str, name: str, mtime: float = 0):
+        """The bytes of one dropped file (the request body), saved into `dest`."""
+        import uuid
+        folder = os.path.normpath(os.path.abspath(os.path.expanduser(dest.strip().strip('"'))))
+        if not dest.strip():
+            raise HTTPException(400, "Choose a folder for the new files")
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            raise HTTPException(400, f"Can't use {folder}: {e.strerror or e}") from None
+        tmp = os.path.join(folder, f".kurator-drop-{uuid.uuid4().hex}.part")
+        try:
+            with open(tmp, "wb") as f:
+                async for chunk in request.stream():
+                    f.write(chunk)
+            entry = await run_in_threadpool(fileops.receive_file, db, scanner, tmp, folder, name, mtime)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        with drops_lock:
+            for k in [k for k, v in drops.items() if time.time() - v["ts"] > 86400]:   # never finished
+                drops.pop(k, None)
+            b = drops.setdefault(batch[:64], {"entries": [], "dest": folder, "ts": time.time()})
+            b["entries"].append(entry)
+        return _json({"id": entry["id"], "path": entry["to"]})
+
+    @app.post("/api/drop/done")
+    def drop_done(body: dict):
+        """The end of a drop: one operation (Ctrl+Z deletes the received files), then indexing."""
+        with drops_lock:
+            b = drops.pop(str(body.get("batch") or "")[:64], None)
+        if not b or not b["entries"]:
+            return _json({"op_id": None, "received": 0, "indexed": 0})
+        with db.write_lock:
+            op_id = db.cat.execute("INSERT INTO operations(ts, kind, data) VALUES (?, ?, ?)",
+                                   (time.time(), "copy", json.dumps(b["entries"]))).lastrowid
+        new_ids = [e["id"] for e in b["entries"] if e["id"] is not None]
+        if new_ids:
+            scanner.request_process()
+        fileops.remember_folder(db, b["dest"])
+        return _json({"op_id": op_id, "received": len(b["entries"]), "indexed": len(new_ids), "ids": new_ids})
+
     @app.get("/api/send-slots")
     def get_send_slots():
         return _json(db.get_setting("send_slots", {}) or {})

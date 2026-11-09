@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { PH_HOME, PH_PAPER, phEnabled, phGridPref, phLib, phSetEnabled, phSetGridPref } from './playhead.js';
 import { openDialog } from './dialog.js';
 import { openPhLibraryDialog } from './phlibdlg.js';
-import { el, fmtBytes, fmtNum, setKids } from './util.js';
+import { el, fmtBytes, fmtNum, prefs, setKids } from './util.js';
 
 export async function openSettingsDialog(app) {
   let st;
@@ -96,6 +96,9 @@ export async function openSettingsDialog(app) {
     paintTrash();
   };
   paintTrash();
+  const dropAsk = el('input', { type: 'checkbox' });
+  dropAsk.checked = prefs.get('drop.ask', true);
+  dropAsk.onchange = () => { prefs.set('drop.ask', dropAsk.checked); app.toast(dropAsk.checked ? 'Dropped files: Kurator asks first' : 'Dropped files are added without asking'); };
   const untagged = el('input', { type: 'checkbox' });
   const out = el('div', { class: 'move-preview' });
 
@@ -165,6 +168,9 @@ export async function openSettingsDialog(app) {
       st.system_trash === false ? el('div', { class: 'warn small', text: 'The system trash needs the Send2Trash package: run update.bat / update.sh once.' }) : null,
       el('div', { class: 'p-hint small', text: "Either way Ctrl+Z brings files back, with their tags. From the system trash you can also restore files yourself - Kurator gives them their tags back. Kurator's trash folder is its data folder when that is on the same disk, else a hidden .kurator-trash folder at the top of the disk: deleting is instant and keeps everything until it is emptied." }),
       daysRow,
+      el('h3', { text: 'Dropping files' }),
+      el('label', { class: 'chk' }, dropAsk, 'Ask before adding files dropped from Explorer / Finder'),
+      el('div', { class: 'p-hint small', text: 'Files already in the library get the tag or project they are dropped onto; new ones are copied into a folder (remembered per project). Without asking, the last folder and the tags of the drop are used.' }),
       el('h3', { text: 'Sounds' }),
       el('label', { class: 'chk' }, ph, 'Playhead analysis (experimental)'),
       el('div', { class: 'p-hint small' },

@@ -3,6 +3,7 @@ duplicate cleanup, copies for delivery (clean, credit, zip), recent folders, qui
 
 from __future__ import annotations
 
+import io
 import os
 import struct
 import sys
@@ -346,3 +347,32 @@ def test_ui_files_are_revalidated(env):
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache" and r.headers.get("etag")
     assert c.get("/static/js/sidebar.js", headers={"if-none-match": r.headers["etag"]}).status_code == 304
     assert c.get("/").headers["cache-control"] == "no-cache"
+
+
+# ---------------------------------------------------------------- files dropped onto the page
+def test_drop_match_receive_and_undo(env):
+    c, db, sc, lib, tmp = env
+    ids = by_name(c)
+    st = os.stat(lib / "a" / "shot1.png")
+    files = [{"name": "SHOT1.png", "size": st.st_size, "mtime": st.st_mtime_ns / 1e6 + 1500},   # case, FAT-like time
+             {"name": "shot1.png", "size": st.st_size + 1, "mtime": st.st_mtime_ns / 1e6},       # other size
+             {"name": "new.png", "size": 10, "mtime": 0}]
+    assert c.post("/api/drop/match", json={"files": files}, headers=H).json()["ids"] == [[ids["a/shot1.png"]], [], []]
+    # a new file into the library: its own name (never overwriting), its time, a catalog row to index
+    buf = io.BytesIO()
+    Image.new("RGB", (20, 10), "orange").save(buf, "PNG")
+    q = {"batch": "b1", "dest": str(lib / "b"), "name": "C:\\fake\\dup.png", "mtime": 1600000000000}
+    r = c.post("/api/drop/file", params=q, content=buf.getvalue(), headers=H).json()
+    assert r["path"] == str(lib / "b" / "dup (2).png") and r["id"]
+    assert os.stat(r["path"]).st_mtime == 1600000000
+    assert c.post("/api/drop/file", params={**q, "name": "notes.txt"}, content=b"hi", headers=H).status_code == 400
+    out = c.post("/api/drop/file", params={**q, "dest": str(tmp / "elsewhere"), "name": "x.png"}, content=buf.getvalue(), headers=H).json()
+    assert out["id"] is None and os.path.exists(out["path"])                                 # outside: only saved
+    assert not [n for n in os.listdir(lib / "b") if n.endswith(".part")]
+    done = c.post("/api/drop/done", json={"batch": "b1"}, headers=H).json()
+    assert done["received"] == 2 and done["indexed"] == 1 and done["ids"] == [r["id"]]
+    wait(sc)
+    assert c.get(f"/api/items/{r['id']}").json()["width"] == 20
+    assert c.post(f"/api/operations/{done['op_id']}/undo", headers=H).json()["removed"] == 2
+    assert not os.path.exists(r["path"]) and not os.path.exists(out["path"])
+    assert c.post("/api/drop/done", json={"batch": "nope"}, headers=H).json()["received"] == 0

@@ -660,3 +660,10 @@ details.delivery summary { cursor: pointer; color: var(--fg); font-size: 13px; p
 details.delivery label.chk { white-space: normal; }
 .btn.primary.danger { background: #a3412c; border-color: #a3412c; color: #fff; }
 .btn.primary.danger:hover { background: #b84a33; }
+
+/* files dropped from Explorer / Finder */
+.drop-overlay { position: fixed; inset: 0; z-index: 70; display: none; pointer-events: none; align-items: flex-end; justify-content: center;
+  padding-bottom: 90px; border: 3px dashed var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drop-overlay.show { display: flex; }
+.drop-box { background: var(--bg2); border: 1px solid var(--accent2); border-radius: 8px; padding: 10px 16px; font-size: 14px; box-shadow: 0 10px 30px #0008; }
+.drop-part { margin: 10px 0; }

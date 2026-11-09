@@ -8,6 +8,8 @@ folder next to it.
     python tools/ui_check_v18_files.py PORT OUT_DIR LIBRARY_FOLDER
 """
 
+import base64
+import io
 import os
 import sys
 import zipfile
@@ -158,6 +160,51 @@ with sync_playwright() as p:
     page.keyboard.press("Control+z")
     page.wait_for_timeout(1500)
     print("after Ctrl+Z:", toast())
+
+    # --- files dropped from the desktop: onto a tag in the sidebar; one known, one new; Ctrl+Z
+    from PIL import Image
+    def drop_files(selector, files):
+        page.evaluate("""([sel, files]) => {
+          const t = document.querySelector(sel);
+          const dt = new DataTransfer();
+          for (const f of files) dt.items.add(new File([Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0))], f.name, { type: 'image/png', lastModified: f.mtime }));
+          for (const type of ['dragenter', 'dragover', 'drop']) t.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+        }""", [selector, files])
+    page.keyboard.press("Escape")
+    page.evaluate(f"{K}.setDupes(false)")
+    open_folder(INBOX)
+    hero = api("POST", "/api/tags", {"name": "Hero", "auto_hotkey": False})
+    page.evaluate(f"{K}.tags.refresh()")
+    page.wait_for_timeout(600)
+    known = os.path.join(INBOX, "pic1.png")
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (250, 120, 0)).save(buf, "PNG")
+    files = [{"name": "pic1.png", "b64": base64.b64encode(open(known, "rb").read()).decode(), "mtime": os.stat(known).st_mtime_ns / 1e6},
+             {"name": "from the web.png", "b64": base64.b64encode(buf.getvalue()).decode(), "mtime": 1600000000000}]
+    drop_files(f".tagnode[data-tag-id='{hero['id']}']", files)
+    page.wait_for_selector(".dlg")
+    page.wait_for_timeout(300)
+    print("drop dialog:", page.locator(".dlg .dlg-body").inner_text().replace("\n", " | ")[:260])
+    page.fill(".dlg .destfield input", SORTED)
+    page.screenshot(path=f"{OUT}/drop_dialog.png")
+    page.click(".dlg button.primary")
+    page.wait_for_timeout(2500)
+    print("toast:", toast(), "| in sorted:", sorted(os.listdir(SORTED)))
+    tagged = api("GET", f"/api/items?tag={hero['id']}")
+    print("tagged Hero:", sorted(tagged["n"]), "| new file's time kept:", int(os.stat(os.path.join(SORTED, "from the web.png")).st_mtime) == 1600000000)
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(1500)
+    print("after Ctrl+Z:", toast(), "| tagged:", api("GET", f"/api/items?tag={hero['id']}")["n"], "| in sorted:", sorted(os.listdir(SORTED)))
+    # don't ask again: the next drop goes straight in (the folder remembered)
+    drop_files(f".tagnode[data-tag-id='{hero['id']}']", files[1:])
+    page.wait_for_selector(".dlg")
+    page.locator(".dlg label.chk:has-text(\"Don't ask again\") input").check()
+    page.click(".dlg button.primary")
+    page.wait_for_timeout(2000)
+    files[1]["name"] = "second.png"
+    drop_files("#grid", files[1:])
+    page.wait_for_timeout(2000)
+    print("without asking:", page.locator(".dlg-wrap").count() == 0, "|", toast(), "| in sorted:", sorted(os.listdir(SORTED)))
 
     # --- sidebar: Add… / Open… open the folder picker when the field is empty; a typed path is used at once
     print("sidebar buttons (empty):", page.locator(".add-root button").all_inner_texts())

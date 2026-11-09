@@ -356,15 +356,15 @@ def _clone_row(db: Database, fid: int, dst: str, root_id: int, keep_tags: bool) 
     return new
 
 
-def add_derived_file(db: Database, path: str, root_id: int, like_id: int, keep_tags: bool = True) -> int:
-    """A new file Kurator made from catalog file `like_id` (a resampled copy...): a catalog row to be
-    indexed (pending), starting with the original's date, and with its tags, source, author and
-    licence when keep_tags."""
+def add_derived_file(db: Database, path: str, root_id: int, like_id: int | None, keep_tags: bool = True) -> int:
+    """A new file Kurator made from catalog file `like_id` (a resampled copy...) or received (a dropped
+    file, like_id None): a catalog row to be indexed (pending), starting with the original's date, and
+    with its tags, source, author and licence when keep_tags."""
     st = os.stat(path)
     name = os.path.basename(path)
     ext = os.path.splitext(name)[1].lower()
     h = handler_for(ext)
-    orig = db.cat.execute("SELECT date_ts, date_source FROM files WHERE id = ?", (like_id,)).fetchone()
+    orig = db.cat.execute("SELECT date_ts, date_source FROM files WHERE id = ?", (like_id,)).fetchone() if like_id else None
     ts, src = (orig[0], orig[1]) if orig and orig[0] else dates.resolve_date({}, name, st)
     c = db.cat
     with db.write_lock:
@@ -376,7 +376,7 @@ def add_derived_file(db: Database, path: str, root_id: int, like_id: int, keep_t
                 "VALUES (?,?,?,?,?,?,?,?,?,?,0,0)",
                 (root_id, path, os.path.dirname(path), name, ext, h.kind if h else "image", st.st_size, st.st_mtime_ns,
                  ts, src)).lastrowid
-            if keep_tags:
+            if keep_tags and like_id:
                 c.execute("INSERT OR IGNORE INTO file_tags(file_id, tag_id, source, confidence, added) "
                           "SELECT ?, tag_id, source, confidence, ? FROM file_tags WHERE file_id = ?", (new, time.time(), like_id))
                 c.execute("INSERT OR IGNORE INTO file_info(file_id, source, author, licence, updated) "
@@ -963,3 +963,53 @@ def make_folder(parent: str, name: str) -> str:
     except OSError as e:
         raise OpError(f"Can't make {path}: {e.strerror or e}") from None
     return path
+
+
+# ----------------------------------------------------------------------- files dropped onto the page
+def match_dropped(db: Database, files: list[dict]) -> list[list[int]]:
+    """Catalog files that are the dropped ones. A browser never sees a dropped file's path - only its
+    name, size and modified time (ms) - and those three together find it in the catalog."""
+    out: list[list[int]] = [[] for _ in files]
+    by_size: dict[int, list[int]] = {}
+    for k, f in enumerate(files):
+        try:
+            by_size.setdefault(int(f.get("size")), []).append(k)
+        except (TypeError, ValueError):
+            continue
+    sizes = list(by_size)
+    for i in range(0, len(sizes), 900):
+        chunk = sizes[i:i + 900]
+        q = ",".join("?" * len(chunk))
+        for fid, name, size, mtime_ns in db.cat.execute(f"SELECT id, name, size, mtime_ns FROM files WHERE size IN ({q})", chunk):
+            for k in by_size.get(size, []):
+                f = files[k]
+                try:
+                    near = abs(mtime_ns / 1e6 - float(f.get("mtime") or 0)) <= 2000   # FAT keeps 2-second times
+                except (TypeError, ValueError):
+                    near = False
+                if near and str(f.get("name") or "").lower() == name.lower():
+                    out[k].append(fid)
+    return out
+
+
+def receive_file(db: Database, scanner, tmp: str, dest: str, name: str, mtime_ms: float | None) -> dict:
+    """A dropped file whose bytes the page sent (in `tmp`, inside `dest`): saved under its own name
+    (never overwriting), with its modified time; in the library a catalog row to index."""
+    base = os.path.basename(str(name or "").replace("\\", "/"))
+    stem, ext = os.path.splitext(base)
+    if handler_for(ext.lower()) is None:
+        raise OpError(f"{base}: not a kind of file Kurator shows")
+    stem = _safe_stem(stem) or "dropped"
+    with scanner.fs_lock:
+        dst = _free_name(os.path.join(dest, stem + ext), set())
+        os.replace(tmp, dst)
+        if mtime_ms:
+            ns = int(float(mtime_ms) * 1_000_000)
+            os.utime(dst, ns=(ns, ns))
+            if os.name == "nt":
+                set_creation_time(dst, ns / 1e9)
+        st = os.stat(dst)
+        rid = indexed_root(db, dest, {})
+        new_id = add_derived_file(db, dst, rid, None, False) if rid is not None else None
+    return {"id": new_id, "src_id": None, "from": None, "to": dst, "size": st.st_size, "mtime_ns": st.st_mtime_ns,
+            "sidecars": [], "own_xmp": not os.path.lexists(dst + ".xmp")}
