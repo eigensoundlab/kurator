@@ -1,12 +1,15 @@
 // Kurator desktop: a window around the local Kurator server.
 //
-// Kurator itself is the Python program in your Kurator folder (set up once with install.bat or
-// install.sh). This app finds that folder, starts Kurator in the background - or uses one that is
-// already running - shows it in its own window and stops it again when the window closes.
+// Kurator itself is the Python program in a Kurator folder: one the app installs for you (Install
+// Kurator: its own Python and Kurator's code in the app's data folder, see install.rs), or your own
+// (set up with install.bat or install.sh). This app finds it, starts Kurator in the background - or
+// uses one that is already running - shows it in its own window and stops it when the window closes.
 // In the window, dropped files come with their paths, files can be dragged out to other programs,
 // links open in the default browser and right-click shows the system's menu.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod install;
 
 use std::fs;
 use std::io::{Read, Write};
@@ -34,10 +37,12 @@ const START_FLAG: &str = "--quit-on-stdin-close";
 
 #[derive(Clone, Serialize, Default)]
 struct Status {
-    /// starting | updating | need-home | error | ready
+    /// starting | installing | updating | need-home | error | ready
     phase: String,
     message: String,
     detail: String,
+    /// how far a download is (0..1), when known
+    progress: Option<f32>,
     /// Kurator's page once it runs (the start page goes there too: after Back, say)
     url: String,
 }
@@ -55,6 +60,9 @@ struct Shell {
     /// the Kurator folder in use, and the start page's address (shown again while Kurator updates)
     home: Mutex<Option<PathBuf>>,
     start_page: Mutex<Option<Url>>,
+    /// Kurator's installer while the app installs Kurator (stopped when the app closes)
+    installer: Mutex<Option<Child>>,
+    installing: AtomicBool,
 }
 
 // ------------------------------------------------------------------ logs
@@ -73,10 +81,18 @@ fn log(app: &AppHandle, line: &str) {
 }
 
 fn set_status(app: &AppHandle, phase: &str, message: impl Into<String>, detail: impl Into<String>) {
+    set_status_p(app, phase, message, detail, None);
+}
+
+fn set_status_p(app: &AppHandle, phase: &str, message: impl Into<String>, detail: impl Into<String>, progress: Option<f32>) {
     let shell = app.state::<Shell>();
     let url = shell.status.lock().unwrap().url.clone();
-    let s = Status { phase: phase.into(), message: message.into(), detail: detail.into(), url: if phase == "ready" { url } else { String::new() } };
-    log(app, &format!("{}: {} {}", s.phase, s.message, s.detail.lines().next().unwrap_or("")));
+    let s = Status { phase: phase.into(), message: message.into(), detail: detail.into(), progress,
+                     url: if phase == "ready" { url } else { String::new() } };
+    let quiet = { let old = shell.status.lock().unwrap(); old.phase == s.phase && old.message == s.message };   // progress ticks
+    if !quiet {
+        log(app, &format!("{}: {} {}", s.phase, s.message, s.detail.lines().next().unwrap_or("")));
+    }
     if shell.selftest && (phase == "error" || phase == "need-home") {
         selftest_done(app, false, &format!("{}\n{}", s.message, s.detail));
     }
@@ -120,6 +136,7 @@ fn candidates(app: &AppHandle) -> Vec<PathBuf> {
             v.push(PathBuf::from(saved.trim()));
         }
     }
+    v.push(install::home(app));   // the one the app installed
     if let Ok(exe) = std::env::current_exe() {
         v.extend(exe.ancestors().skip(1).take(8).map(Path::to_path_buf));
     }
@@ -228,10 +245,22 @@ fn run_start(app: &AppHandle) {
     if let Some(v) = kurator_at(PORT) {
         return show(app, PORT, format!("Kurator {v} is already running"));
     }
-    let Some(home) = find_home(app) else {
-        return set_status(app, "need-home", "Where is Kurator?",
-            "Choose the folder Kurator is in: the one with install.bat, install.sh and kurator.bat.\n\
-             No Kurator yet? Download it, run install.bat (Windows) or install.sh (macOS, Linux) once, then come back.");
+    let want = app.package_info().version.to_string();
+    let home = match find_home(app) {
+        // the app's own Kurator, older than the app (a new app brings a new Kurator) or half installed
+        Some(h) if h == install::home(app) && install::outdated(app, &want) => match do_install(app, &want) {
+            Ok(h) => h,
+            Err(e) => return set_status(app, "error", "Kurator could not be installed", e),
+        },
+        Some(h) => h,
+        None if app.state::<Shell>().selftest && std::env::var_os("KURATOR_SELFTEST_INSTALL").is_some() => match do_install(app, &want) {
+            Ok(h) => h,
+            Err(e) => return set_status(app, "error", "Kurator could not be installed", e),
+        },
+        None => return set_status(app, "need-home", "Kurator isn't installed yet",
+            "Install Kurator here: the app gets its own Python and everything Kurator needs (about 80 MB to download, a few minutes), \
+             in its own folder - nothing else on your computer changes.\n\
+             Have Kurator already (a folder with install.bat and kurator.bat)? Choose that folder instead."),
     };
     let Some(python) = venv_python(&home) else {
         return set_status(app, "need-home", "Kurator is not set up in this folder yet",
@@ -281,6 +310,23 @@ fn run_start(app: &AppHandle) {
             thread::sleep(Duration::from_millis(250));
         }
     }
+}
+
+/// Install Kurator `version` into the app's data folder (see install.rs), showing each step.
+fn do_install(app: &AppHandle, version: &str) -> Result<PathBuf, String> {
+    let shell = app.state::<Shell>();
+    if shell.installing.swap(true, Ordering::SeqCst) {
+        return Err("Kurator is being installed already".into());
+    }
+    log(app, &format!("installing Kurator {version} into {}", install::home(app).display()));
+    let say = |msg: &str, detail: &str, progress: Option<f32>| set_status_p(app, "installing", msg, detail, progress);
+    let r = install::install(app, version, &say, &shell.installer);
+    shell.installing.store(false, Ordering::SeqCst);
+    match &r {
+        Ok(_) => log(app, &format!("installed Kurator {version}")),
+        Err(e) => log(app, &format!("install failed: {}", e.lines().next().unwrap_or(""))),
+    }
+    r
 }
 
 /// Lets Kurator's page (and only it) use what the app adds: native drops, dragging files out, the
@@ -383,15 +429,48 @@ fn show_kurator(app: AppHandle) {
 
 /// Kurator's page, "Update now": stop Kurator, run update.bat / update.sh in its folder (the newest
 /// code and packages), start it again. The start page shows meanwhile.
+/// For a Kurator the app installed: the release `version` (the newest, as Kurator's page knows it),
+/// installed the same way as the first time.
 #[tauri::command]
-fn update_kurator(app: AppHandle) -> Result<(), String> {
+fn update_kurator(app: AppHandle, version: Option<String>) -> Result<(), String> {
     let shell = app.state::<Shell>();
     if shell.child.lock().unwrap().is_none() {
         return Err("This Kurator was started outside the app (kurator.bat): close it, run update.bat (update.sh) in the Kurator folder, then start it again.".into());
     }
     let Some(home) = shell.home.lock().unwrap().clone() else { return Err("No Kurator folder".into()) };
+    if home.join(install::MARKER).is_file() {
+        let v = version.filter(|v| install::version_tuple(v).len() == 3 && v.chars().all(|c| c.is_ascii_digit() || c == '.'))
+            .ok_or("Which version? Update from Kurator's update dialog.")?;
+        thread::spawn(move || {
+            set_status(&app, "updating", format!("Updating Kurator to {v}…"), "");
+            if let (Some(url), Some(w)) = (app.state::<Shell>().start_page.lock().unwrap().clone(), app.get_webview_window("main")) {
+                let _ = w.navigate(url);
+            }
+            stop_server(&app);
+            match do_install(&app, &v) {
+                Ok(_) => start(app.clone()),
+                Err(e) => set_status(&app, "error", "The update stopped", e),
+            }
+        });
+        return Ok(());
+    }
     thread::spawn(move || run_update(&app, &home));
     Ok(())
+}
+
+/// The start page: Install Kurator (this app's version).
+#[tauri::command]
+fn install_kurator(app: AppHandle) {
+    if app.state::<Shell>().installing.load(Ordering::SeqCst) {
+        return;   // a second click
+    }
+    thread::spawn(move || {
+        let want = app.package_info().version.to_string();
+        match do_install(&app, &want) {
+            Ok(_) => start(app.clone()),
+            Err(e) => set_status(&app, "error", "Kurator could not be installed", e),
+        }
+    });
 }
 
 fn run_update(app: &AppHandle, home: &Path) {
@@ -513,7 +592,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
         .manage(Shell { selftest, ..Default::default() })
-        .invoke_handler(tauri::generate_handler![get_status, show_kurator, update_kurator, retry, pick_home, open_logs, open_help, selftest_report])
+        .invoke_handler(tauri::generate_handler![get_status, show_kurator, update_kurator, install_kurator, retry, pick_home, open_logs, open_help, selftest_report])
         .setup(move |app| {
             let h = app.handle().clone();
             let nav = h.clone();
@@ -559,6 +638,9 @@ fn main() {
     app.run(|app, event| {
         if let RunEvent::Exit = event {
             stop_server(app);
+            if let Some(mut c) = app.state::<Shell>().installer.lock().unwrap().take() {
+                let _ = c.kill();   // installing again on the next start picks it up
+            }
         }
     });
 }

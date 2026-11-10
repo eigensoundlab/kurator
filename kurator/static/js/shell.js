@@ -96,7 +96,8 @@ export async function appVersion() {
   try { return inShell() ? await T().core.invoke('plugin:app|version') : null; } catch { return null; }
 }
 
-/** The desktop app: stop Kurator, run its update script, start it again (the start page shows meanwhile). */
-export async function updateKurator() {
-  await T().core.invoke('update_kurator');
+/** The desktop app: stop Kurator, get `version` (a Kurator the app installed) or run its update script,
+ * start it again (the start page shows meanwhile). */
+export async function updateKurator(version) {
+  await T().core.invoke('update_kurator', { version: version || null });
 }

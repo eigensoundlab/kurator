@@ -1,9 +1,10 @@
 # Kurator desktop app
 
-The desktop app is a window for Kurator. Kurator itself is installed as before, with `install.bat` or
-`install.sh` (see [Install and run](../README.md#install-and-run)). The app finds that folder, starts Kurator
-in the background without a console window, shows it, and stops it when you close the window. If a
-Kurator is already running (`kurator.bat`), the app uses that one and leaves it running.
+The desktop app is a window for Kurator. On a computer without Kurator it **installs Kurator itself** -
+no Python, Terminal or install script needed. If you already have a Kurator folder (installed with
+`install.bat` or `install.sh`, see [Install and run](../README.md#install-and-run)), it uses that one. It
+starts Kurator in the background without a console window, shows it, and stops it when you close the
+window. If a Kurator is already running (`kurator.bat`), the app uses that one and leaves it running.
 
 The browser still works the same: the app is optional.
 
@@ -43,9 +44,26 @@ The installers are attached to each [release](https://github.com/eigensoundlab/k
 Builds between releases are on the **Actions** tab: *Desktop app* → a run → *Artifacts* (you have to
 be signed in to GitHub to download them).
 
-**First start:** if the app doesn't find Kurator, it asks for the folder - the one with
-`install.bat`, `install.sh` and `kurator.bat`. It remembers the folder. It looks by itself in
-`Documents\GitHub\kurator`, `~/kurator`, `~/src/kurator` and similar places, and next to the app.
+**First start:** if the app doesn't find Kurator, it offers **Install Kurator**: it downloads its own
+Python (3.14, a [python-build-standalone](https://github.com/astral-sh/python-build-standalone) build,
+checked against the SHA-256 the app carries) and the Kurator code of its own version from GitHub, then
+runs Kurator's installer with that Python - about 80 MB and a few minutes, with the steps shown. All
+of it goes into the app's own folder, used for nothing else:
+
+| | Kurator, installed by the app | Your catalog and settings (not touched) |
+|---|---|---|
+| Windows | `%LOCALAPPDATA%\com.eigensound.kurator\` | `%LOCALAPPDATA%\Kurator` |
+| macOS | `~/Library/Application Support/com.eigensound.kurator/` | `~/Library/Application Support/Kurator` |
+| Linux | `~/.local/share/com.eigensound.kurator/` | `~/.local/share/kurator` |
+
+**Updates:** a newer app brings its Kurator up to the app's version when it starts (seconds: only
+what changed is downloaded again). *Update now* in Kurator installs the newest release the same way.
+Removing the app's folder removes that Kurator; your catalog stays.
+
+**Have Kurator already?** *Choose the Kurator folder…* - the one with `install.bat`, `install.sh` and
+`kurator.bat`. The app remembers it, and looks by itself in `Documents\GitHub\kurator`, `~/kurator`,
+`~/src/kurator` and similar places, and next to the app. That Kurator is updated with its own
+`update.bat` / `update.sh`, as before.
 
 **Unsigned builds** (until the app is signed, see below):
 
@@ -95,7 +113,12 @@ starts Kurator, loads its page, checks that the page can use the app, then quits
   answers, show it. Kurator quits when the app closes its standard input - also when the app
   crashes or is killed, so no Kurator is left behind. When port 8765 is taken by something else,
   the next free one is used.
-- `desktop/ui/` is the start page shown while Kurator starts (or when it can't be found).
+- `desktop/src-tauri/src/install.rs` installs Kurator for people without it: the Python pinned in
+  `desktop/src-tauri/python-runtime.json` (made by `python tools/pin_python.py <release> 3.14`: a newer
+  Python comes with a newer app), the code from `https://github.com/eigensoundlab/kurator/archive/refs/tags/v<version>.tar.gz`,
+  then `install.bat` / `install.sh` with `KURATOR_PYTHON` set to that Python. `KURATOR_SOURCE` (a
+  `.tar.gz` path or address) replaces the code download - the CI's install self-test uses this commit's code.
+- `desktop/ui/` is the start page shown while Kurator starts, installs (or when it can't be found).
 - The window shows only the start page and Kurator; any other page opens in your browser.
 - Kurator's page is allowed exactly these: file drop events, dragging files out, the system's menu,
   writing text and pictures to the clipboard and the system's Open dialog. They are granted at run time for

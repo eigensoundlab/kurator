@@ -42,7 +42,8 @@ def install_kind() -> dict:
     home = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = "update.bat" if os.name == "nt" else "update.sh"
     return {"git": os.path.isdir(os.path.join(home, ".git")), "script": script,
-            "script_found": os.path.isfile(os.path.join(home, script)), "folder": home}
+            "script_found": os.path.isfile(os.path.join(home, script)), "folder": home,
+            "app": os.path.isfile(os.path.join(home, ".kurator-app"))}   # installed by the desktop app: it updates it
 
 
 def check(db: Database, force: bool = False) -> dict:

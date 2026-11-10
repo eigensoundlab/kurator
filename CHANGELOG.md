@@ -21,6 +21,13 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
   view, with a neutral studio when it has no lights - and can be saved as a PNG next to it.
 - The viewer stays on its file when the list reloads while it is open (a saved video frame or
   render, indexing finishing).
+- **The desktop app installs Kurator.** On a computer without Kurator, *Install Kurator* on its start
+  page downloads its own Python (3.14, checksum-pinned) and the Kurator code of the app's version,
+  and runs Kurator's installer with it - no Python, Terminal or script needed; the steps and download
+  progress show. It lives in the app's data folder (catalog and settings stay where they are). A
+  newer app brings that Kurator up to its version on start; *Update now* installs the newest release
+  the same way. The CI installs Kurator this way on Windows, macOS and Linux in every desktop build.
+  The app now runs on macOS 10.15 and newer (was 11). Installers accept `KURATOR_PYTHON`.
 - **Installing never stops at one missing package.** HEIC (pi-heif) and PDF (pypdfium2) support moved
   to a `formats` extra that the installers add one package at a time, ready-made builds only: on a
   brand-new Python (3.15: no pi-heif yet) or macOS older than 13 (no pypdfium2) Kurator installs

@@ -16,8 +16,16 @@ function paint(s) {
   d.textContent = s.detail || '';
   d.classList.toggle('log', s.phase === 'error' && (s.detail || '').includes('\n'));
   const stuck = s.phase === 'error' || s.phase === 'need-home';
-  $('bar').classList.toggle('off', stuck);
+  const bar = $('bar');
+  bar.classList.toggle('off', stuck);
+  const known = typeof s.progress === 'number';   // a download: how far; otherwise just moving
+  bar.classList.toggle('known', known);
+  bar.firstElementChild.style.width = known ? `${Math.round(Math.min(1, Math.max(0, s.progress)) * 100)}%` : '';
   $('actions').hidden = !stuck;
+  const fresh = s.phase === 'need-home' && !/set up in this folder/.test(s.message || '');
+  $('install').hidden = !fresh;
+  $('choose').classList.toggle('primary', s.phase === 'need-home' && !fresh);
+  $('retry').hidden = s.phase === 'need-home';
   $('help').hidden = s.phase !== 'need-home';
 }
 
@@ -29,10 +37,11 @@ async function poll() {
 async function act(cmd) {
   if (busy) return;
   busy = true;
-  try { await invoke(cmd); } catch (e) { paint({ phase: 'need-home', message: 'That is not a Kurator folder', detail: String(e) }); }
+  try { await invoke(cmd); } catch (e) { paint({ phase: 'need-home', message: cmd === 'pick_home' ? 'That is not a Kurator folder' : 'That did not work', detail: String(e) }); }
   busy = false;
 }
 
+$('install').onclick = () => { paint({ phase: 'installing', message: 'Getting ready to install…' }); act('install_kurator'); };
 $('choose').onclick = () => act('pick_home');
 $('retry').onclick = () => act('retry');
 $('logs').onclick = () => act('open_logs');

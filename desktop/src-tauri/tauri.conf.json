@@ -19,7 +19,7 @@
     "targets": "all",
     "category": "GraphicsAndDesign",
     "shortDescription": "Fast local asset manager",
-    "longDescription": "Kurator finds, previews and tags pictures, textures, sounds, videos and 3D files on your own disks. This app is its window: it starts your installed Kurator and stops it when closed.",
+    "longDescription": "Kurator finds, previews and tags pictures, textures, sounds, videos and 3D files on your own disks. This app is its window: it installs Kurator on first start (or uses yours), starts it and stops it when closed.",
     "publisher": "eigensound",
     "copyright": "sandner.art",
     "homepage": "https://github.com/eigensoundlab/kurator",
@@ -35,7 +35,7 @@
       "nsis": { "installMode": "currentUser" }
     },
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "10.15"
     }
   }
 }

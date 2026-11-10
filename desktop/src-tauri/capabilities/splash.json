@@ -10,6 +10,7 @@
     "allow-retry",
     "allow-pick-home",
     "allow-open-logs",
-    "allow-open-help"
+    "allow-open-help",
+    "allow-install-kurator"
   ]
 }

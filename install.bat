@@ -25,6 +25,9 @@ for %%A in (%*) do (
 
 rem The newest Python that every package has ready-made builds for comes first; a brand-new one last.
 set "PY="
+rem KURATOR_PYTHON: the Python to use (the desktop app sets it to the Python it installed for Kurator)
+if defined KURATOR_PYTHON if exist "%KURATOR_PYTHON%" set "PY="%KURATOR_PYTHON%""
+if defined PY goto :have_py
 where py >nul 2>nul
 if %errorlevel%==0 (
     for %%V in (3.14 3.13 3.12 3.11) do (
@@ -45,6 +48,7 @@ if not defined PY (
         if not errorlevel 1 set "PY=python"
     )
 )
+:have_py
 if not defined PY (
     echo [Kurator] Python 3.11 or newer was not found.
     echo           Install it from https://www.python.org/downloads/ ^(3.12+ recommended^)

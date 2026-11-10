@@ -10,6 +10,7 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: .02em; }
 .bar { width: 220px; height: 3px; background: #2e3340; border-radius: 2px; overflow: hidden; margin-top: 8px; }
 .bar span { display: block; width: 40%; height: 100%; background: #7aa2ff; border-radius: 2px; animation: slide 1.2s ease-in-out infinite; }
 .bar.off { visibility: hidden; }
+.bar.known span { animation: none; transition: width .25s; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 12px; }
 .actions[hidden] { display: none; }

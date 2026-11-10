@@ -19,8 +19,9 @@ for a in "$@"; do
 done
 
 # The newest Python that every package has ready-made builds for comes first; a brand-new one last.
+# KURATOR_PYTHON: the Python to use (the desktop app sets it to the Python it installed for Kurator)
 PY=""
-for cand in python3.14 python3.13 python3.12 python3.11 python3 python; do
+for cand in ${KURATOR_PYTHON:+"$KURATOR_PYTHON"} python3.14 python3.13 python3.12 python3.11 python3 python; do
     if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
         PY="$cand"; break
     fi

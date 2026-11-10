@@ -63,9 +63,10 @@ packages are never touched.
 - Get the code with `git clone https://github.com/eigensoundlab/kurator` or download a release ZIP.
 
 **Desktop app (optional):** Kurator in its own window instead of a browser tab, with real file drops
-(also of folders), dragging files out into other programs and the system's right-click menu. It
-starts and stops your installed Kurator. Installers for Windows, macOS and Linux are attached to the
-releases; see [docs/desktop.md](docs/desktop.md).
+(also of folders), dragging files out into other programs and the system's right-click menu.
+**On a computer without Kurator it installs Kurator itself** (its own Python included - no Terminal
+needed); otherwise it starts and stops your installed Kurator. Installers for Windows, macOS (10.15
+and newer) and Linux are attached to the releases; see [docs/desktop.md](docs/desktop.md).
 
 The browser opens at `http://127.0.0.1:8765/`. Library folders are remembered, and you can add more
 from the sidebar: type or paste a path and press *Add*, or press *Add…* with the field empty to

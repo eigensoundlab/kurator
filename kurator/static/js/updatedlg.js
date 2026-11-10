@@ -28,7 +28,11 @@ export async function openUpdateDialog(app) {
   const msg = el('div');
   const shellVersion = inShell() ? await appVersion() : null;
   const news = u.url ? el('a', { href: u.url, target: '_blank', rel: 'noopener', text: `What is new in ${bare(u.latest)}` }) : null;
-  const how = inShell()
+  const how = u.app
+    ? el('div', { class: 'p-hint small', text: inShell()
+      ? 'Update now downloads the new version and its packages, and starts Kurator again - a minute or two. Your catalog and settings stay as they are.'
+      : 'This Kurator was installed by the desktop app: update it from there (open the app, then Update now).' })
+    : inShell()
     ? el('div', { class: 'p-hint small', text: `Update now stops Kurator, gets the new version${u.git ? ' (git pull)' : ''} and its packages with ${u.script}, and starts it again - a minute or two.` })
     : el('div', { class: 'p-hint small', text: `To update: close Kurator (its console window), run ${u.script} in ${u.folder}, then start Kurator again.${u.git ? '' : ' This folder is not a git clone: download the new release and unzip it over it first.'}` });
   const appNote = shellVersion && u.latest && bare(u.latest) !== shellVersion
@@ -42,7 +46,7 @@ export async function openUpdateDialog(app) {
     buttons.unshift({ label: 'Skip this version', onClick: async (close) => { await api.updateSkip(u.latest); await checkForUpdate(app); close(); } });
     if (inShell() && u.script_found) {
       buttons.push({ label: 'Update now', primary: true, onClick: async (close) => {
-        try { await updateKurator(); close(); } catch (e) { setKids(msg, el('div', { class: 'err', text: String(e?.message || e) })); }
+        try { await updateKurator(bare(u.latest)); close(); } catch (e) { setKids(msg, el('div', { class: 'err', text: String(e?.message || e) })); }
       } });
     }
   }

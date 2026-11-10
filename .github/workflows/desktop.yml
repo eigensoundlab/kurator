@@ -9,7 +9,8 @@ name: Desktop app
 on:
   push:
     branches: [main]
-    paths: ["desktop/**", "kurator/static/**", "kurator/__main__.py", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "kurator/static/**", "kurator/__main__.py", "install.sh", "install.bat", "pyproject.toml",
+            "tools/install_extras.py", ".github/workflows/desktop.yml"]
   pull_request:
     paths: ["desktop/**", ".github/workflows/desktop.yml"]
   release:
@@ -177,6 +178,33 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$exe" --selftest; else "$exe" --selftest; fi
           cat "$KURATOR_SELFTEST_OUT"
 
+      - name: Install self-test (a computer without Kurator or Python - the app installs Kurator itself)
+        shell: bash
+        timeout-minutes: 25
+        env:
+          KURATOR_SELFTEST_INSTALL: "1"
+          KURATOR_ARGS: --no-ai --no-scan --no-watch --data-dir ${{ runner.temp }}/kurator-data-2
+          KURATOR_SELFTEST_OUT: ${{ runner.temp }}/selftest-install.txt
+        run: |
+          # this commit's code stands in for the release download; the app runs from outside the checkout,
+          # so it finds no Kurator: it downloads its Python (checksum-pinned), installs Kurator and starts it
+          T="$RUNNER_TEMP"
+          [ "$RUNNER_OS" = Windows ] && T=$(cygpath -u "$RUNNER_TEMP")
+          git archive --prefix=kurator-src/ -o "$T/kurator-src.tar.gz" HEAD
+          export KURATOR_SOURCE="$T/kurator-src.tar.gz"
+          [ "$RUNNER_OS" = Windows ] && export KURATOR_SOURCE=$(cygpath -w "$KURATOR_SOURCE")
+          dir=desktop/src-tauri/target/release
+          [ "$RUNNER_OS" = macOS ] && dir=desktop/src-tauri/target/universal-apple-darwin/release
+          exe=""
+          for name in Kurator Kurator.exe kurator-desktop kurator-desktop.exe; do
+            [ -f "$dir/$name" ] && exe="$dir/$name" && break
+          done
+          mkdir -p "$T/fresh" && cp "$exe" "$T/fresh/"
+          app="$T/fresh/$(basename "$exe")"
+          echo "Running $app --selftest (installing)"
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a "$app" --selftest; else "$app" --selftest; fi
+          cat "$KURATOR_SELFTEST_OUT"
+
       - name: Self-test logs to the run summary
         if: failure()
         shell: bash
@@ -185,7 +213,7 @@ jobs:
           [ -n "$LOCALAPPDATA" ] && local_data=$(cygpath -u "$LOCALAPPDATA")
           {
             echo "### Desktop app: ${{ matrix.name }}"
-            for f in "${{ runner.temp }}/selftest.txt" \
+            for f in "${{ runner.temp }}/selftest.txt" "${{ runner.temp }}/selftest-install.txt" \
                      $(find "$HOME/.local/share/com.eigensound.kurator" "$HOME/Library/Logs/com.eigensound.kurator" \
                             "$local_data/com.eigensound.kurator" -name '*.log' 2>/dev/null); do
               [ -f "$f" ] || continue
