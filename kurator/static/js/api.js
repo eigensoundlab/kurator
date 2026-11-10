@@ -116,6 +116,7 @@ export const api = {
   saveApps: (custom, hidden) => req('PUT', '/api/apps', { custom, hidden }),
   openWith: (app, ids, layout = null) => req('POST', '/api/open-with', { app, ids, layout }),
   remake: (ids) => req('POST', '/api/remake', { ids }),
+  blendReport: (id) => req('GET', `/api/items/${id}/blend/report`),
   sfxShare: (ids, dest, tags, label = '') => req('POST', '/api/sfx/share', { ids, dest, tags, label }),
   sfxLinks: () => req('GET', '/api/sfx/links'),
   sfxEndLinks: () => req('DELETE', '/api/sfx/links'),

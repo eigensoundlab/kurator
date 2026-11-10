@@ -2118,6 +2118,46 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             raise HTTPException(415, "this texture can't be read (format not supported)")
         return Response(out[0], media_type=out[1], headers={"Cache-Control": "private, max-age=600"})
 
+    # -- .blend files: what the materials are made of, and pictures rendered by Blender --------
+    def _blend(item_id: int) -> tuple[str, str]:
+        from . import blender
+        row = db.cat.execute("SELECT path, ext, hash FROM files WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(404)
+        if row[1] not in (".blend", ".blend1", ".blend2"):
+            raise HTTPException(415, "Only .blend files")
+        if not blender.find():
+            raise HTTPException(415, "Install Blender to look into .blend files (or set KURATOR_BLENDER to blender.exe)")
+        if not os.path.isfile(row[0]):
+            raise HTTPException(404, "file is missing on disk")
+        st = os.stat(row[0])
+        return row[0], row[2] or f"id{item_id}-{st.st_size}-{st.st_mtime_ns}"
+
+    @app.get("/api/items/{item_id}/blend/report")
+    def blend_report(item_id: int):
+        from . import blender
+        path, h = _blend(item_id)
+        try:
+            return _json(blender.report(path, h, os.path.join(db.data_dir, "cache", "blend")))
+        except blender.BlenderError as e:
+            raise HTTPException(422, str(e)) from None
+
+    def _render(item_id: int, engine: str, camera: int) -> tuple[str, str, str]:
+        from . import blender
+        path, h = _blend(item_id)
+        try:
+            png, used = blender.render(path, h, os.path.join(db.data_dir, "cache", "blend"), engine, bool(camera))
+        except blender.BlenderError as e:
+            raise HTTPException(422, str(e)) from None
+        return path, png, used
+
+    @app.get("/api/items/{item_id}/blend/render")
+    def blend_render(item_id: int, engine: str = "eevee", camera: int = 1):
+        """A picture rendered by Blender (EEVEE, else Cycles; the file's camera or a three-quarter view).
+        Made once per file version, engine and camera; the first time takes seconds to minutes."""
+        _, png, used = _render(item_id, engine, camera)
+        return FileResponse(png, media_type="image/png", headers={"X-Kurator-Engine": used, "Cache-Control": "no-cache"})
+
     def _mesh_entry(item_id: int):
         from .mesh3d import MeshError, read_mesh
         from .mesh3d.pack import pack

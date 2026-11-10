@@ -14,6 +14,13 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
   Workbench…* on folders, tags and the grid. A private, origin-locked link that ends a day after
   its last use; ⚙ Settings → *SFX Workbench* (address, end all links). Needs SFX Workbench with
   the Kurator link (its next version).
+- **Blender files:** *Materials* in the viewer - per material what feeds base colour, roughness,
+  normal…: image textures (size, missing files), procedural nodes or values, and whether the 3D
+  view shows it (procedural: bake it); meshes as exported with UV maps and modifiers. **◐ Render**
+  (EEVEE, or Cycles) shows the file as Blender renders it - from its camera or a three-quarter
+  view, with a neutral studio when it has no lights - and can be saved as a PNG next to it.
+- The viewer stays on its file when the list reloads while it is open (a saved video frame or
+  render, indexing finishing).
 - The status line keeps refreshing even if painting it fails once, and catches up as soon as the
   window is back in view. Errors in the page go to Kurator's log (`[page] …`); the desktop app has
   developer tools (Ctrl+Shift+I).

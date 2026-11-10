@@ -131,7 +131,9 @@ def test_mesh_api_and_index(samples, tmp_path):
     assert rows["shape74.fbx"]["date_source"] == "document"
     c = TestClient(create_app(db, sc, 8765), base_url=BASE)
     st = c.get("/api/state").json()["types"]
-    assert "3d" in {g["key"] for g in st["groups"]} and "glb" in st["meshes"] and "blend" not in st["meshes"]
+    from kurator import blender
+    assert "3d" in {g["key"] for g in st["groups"]} and "glb" in st["meshes"]
+    assert ("blend" in st["meshes"]) == bool(blender.find())          # .blend in 3D only with Blender installed
     r = c.get(f"/api/mesh/{rows['scene.glb']['id']}")
     body = r.content
     assert body[:4] == b"KMSH"
@@ -140,7 +142,7 @@ def test_mesh_api_and_index(samples, tmp_path):
     assert head["triangles"] == 18 and head["vertices"] == 13 and head["colors"] is True
     assert head["version"] == 2 and head["uv"] is False
     assert len(body) == 8 + hl + 13 * 12 + 13 * 4 + 13 * 4 + 18 * 12   # positions, normals, colours, indices
-    assert c.get(f"/api/mesh/{rows['scene.blend']['id']}").status_code == 415
+    assert c.get(f"/api/mesh/{rows['scene.blend']['id']}").status_code == (422 if blender.find() else 415)   # a made-up .blend
     item = c.get(f"/api/items/{rows['print.3mf']['id']}").json()
     assert item["meta"]["model"]["triangles"] == 18 and item["meta"]["model"]["dimensions"] == [2.0, 3.5, 2.0]
 

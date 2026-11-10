@@ -172,6 +172,7 @@ class App {
     this.idIndex = new Map();
     for (let i = 0; i < it.ids.length; i++) this.idIndex.set(it.ids[i], i);
     this.focusIndex = this.focusId != null ? this.indexOf(this.focusId) : -1;
+    this.viewer?.relocate();   // the list changed under the open viewer (a saved frame or render, indexing)
     this.anchor = Math.min(this.anchor, it.ids.length - 1);
     this.grid.setItems(it, { keepScroll });
     this.timeline.update();

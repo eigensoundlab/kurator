@@ -1,6 +1,7 @@
 // Full-screen viewer / quick look. Browsing here never changes a multi-selection.
 
 import { api, originalUrl, thumbUrl } from './api.js';
+import { openBlendReport, summary as blendSummary } from './blenddlg.js';
 import { Lit2D } from './lit2d.js';
 import { MeshView } from './meshview.js';
 import { BoxOverlay, InkView } from './printview.js';
@@ -24,6 +25,9 @@ export class Viewer {
       this.inkBtn = el('button', { class: 'v-btn v-inkbtn', title: 'Inks: C, M, Y, K plates, total ink, gamut (I)', text: '◧ Inks', onclick: () => this.toggleInks() }),
       this.boxBtn = el('button', { class: 'v-btn v-boxbtn', title: 'Trim and bleed boxes of the PDF page', text: '▭ Boxes', onclick: () => this.toggleBoxes() }),
       this.litBtn = el('button', { class: 'v-btn v-litbtn', title: 'Lit preview with the companion maps (L)', text: '☀ Lit', onclick: () => this.toggleLit() }),
+      el('button', { class: 'v-btn v-blendbtn', title: 'What the materials are made of, and what this view shows of them', text: 'Materials', onclick: () => this.blendReport() }),
+      el('button', { class: 'v-btn v-blendbtn v-render', title: 'A picture rendered by Blender (EEVEE): procedural materials, lights and world as in Blender. Right-click for Cycles.', text: '◐ Render', onclick: () => this.renderBlend('eevee') }),
+      el('button', { class: 'v-btn v-back3d', title: 'Back to the 3D view (Esc)', text: '⟲ 3D', onclick: () => this.backTo3d() }),
       el('button', { class: 'v-btn', title: 'Background (B)', text: 'BG', onclick: () => this.cycleBg() }),
       el('button', { class: 'v-btn v-2d', title: 'Pixel-art zoom (N)', text: 'PX', onclick: () => this.togglePixel() }),
       el('button', { class: 'v-btn v-fit', title: 'Fit / reset view (0)', text: 'Fit', onclick: () => (this.is3d ? this.mv?.reset() : this.fitView()) }),
@@ -77,6 +81,7 @@ export class Viewer {
   close() {
     if (!this.isOpen) return;
     this.isOpen = false;
+    this.leaveRender();
     this.root.classList.remove('open');
     this.img.removeAttribute('src');
     this.mv?.clear();
@@ -95,6 +100,9 @@ export class Viewer {
   show(i) {
     const it = this.items;
     this.i = i;
+    this.curId = it.ids[i];
+    this.leaveRender();
+    this.root.classList.toggle('is-blend', /^blend\d?$/.test(extOf(it.n[i])) && it.v[i] !== 'e');
     this.app.setFocus(i, { scroll: false });
     this.w = it.w[i]; this.h = it.h[i];
     this.full = false;
@@ -526,6 +534,94 @@ export class Viewer {
   }
 
   /** The video's current frame as a PNG next to the video (indexed, Ctrl+Z deletes it). */
+  /** The list was loaded again: find the shown file in it (its place may have moved). */
+  relocate() {
+    if (!this.isOpen || this.curId == null) return;
+    const j = this.app.indexOf(this.curId);
+    if (j >= 0) this.i = j;
+  }
+
+  // ---------------------------------------------------------------- .blend files
+  async blendReport() {
+    const id = this.items.ids[this.i], name = this.items.n[this.i];
+    this.app.toast('Asking Blender…', 30000);
+    try {
+      const r = await api.blendReport(id);
+      this.app.toast(blendSummary(r), 3000);
+      openBlendReport(this.app, name, r);
+    } catch (e) { this.app.toast(`Materials: ${e.message}`, 6000); }
+  }
+
+  /** A picture made by Blender, shown in place of the 3D view (zoom and move as a picture; Esc: back to 3D). */
+  async renderBlend(engine = 'eevee', camera = prefs.get('blend.camera', true)) {
+    const id = this.items.ids[this.i];
+    const mine = () => this.isOpen && this.items.ids[this.i] === id;
+    const label = engine === 'cycles' ? 'Cycles' : 'EEVEE';
+    this.setLoading(`Rendering in Blender (${label})… the first time takes a while`, null);
+    try {
+      const r = await fetch(`/api/items/${id}/blend/render?engine=${engine}&camera=${camera ? 1 : 0}`);
+      if (!r.ok) {
+        let msg = r.statusText;
+        try { msg = (await r.json()).detail || msg; } catch { /* not JSON */ }
+        throw new Error(msg);
+      }
+      const used = r.headers.get('X-Kurator-Engine') || engine;
+      const blob = await r.blob();
+      if (!mine()) return;
+      this.setLoading(null);
+      this.leaveRender();
+      this.rendered = { engine: used, camera, url: URL.createObjectURL(blob), blob };
+      this.is3d = false;
+      this.root.classList.remove('mode3d', 'mesh-ready');
+      this.root.classList.add('blend-render');
+      this.w = 0; this.h = 0;
+      this.img.classList.remove('ready');
+      this.img.src = this.rendered.url;
+      this.infoBase = this.info.textContent;
+      this.info.textContent = `${this.infoBase.replace(/ · drag: turn.*?0: reset/, '')} · rendered by Blender (${used === 'cycles' ? 'Cycles' : 'EEVEE'})${used !== engine ? ' - EEVEE needs a graphics card' : ''} · Esc: back to 3D`;
+    } catch (e) {
+      if (mine()) { this.setLoading(null); this.app.toast(`Render: ${e.message}`, 6000); }
+    }
+  }
+
+  leaveRender() {
+    if (!this.rendered) return;
+    URL.revokeObjectURL(this.rendered.url);
+    this.rendered = null;
+    this.root.classList.remove('blend-render');
+    if (this.infoBase != null) { this.info.textContent = this.infoBase; this.infoBase = null; }
+  }
+
+  backTo3d() {
+    if (!this.rendered) return;
+    this.leaveRender();
+    const it = this.items, i = this.i;
+    this.w = it.w[i]; this.h = it.h[i];
+    this.img.src = thumbUrl(it, i, 1600);
+    this.is3d = true;
+    this.root.classList.add('mode3d');
+    if (this.mv?.n) { this.root.classList.add('mesh-ready'); this.mv.onChange(); this.zoomLbl.textContent = `${fmtNum(this.mv.head?.triangles || 0)} triangles`; }
+    if (this.w && this.h) this.fitView();
+  }
+
+  /** The render as a PNG next to the .blend (Ctrl+Z deletes it). */
+  async saveRender() {
+    const r = this.rendered;
+    if (!r) return;
+    const id = this.items.ids[this.i], stem = this.items.n[this.i].replace(/\.[^.]+$/, '');
+    const file = new File([r.blob], `${stem} render ${r.engine}.png`, { type: 'image/png', lastModified: Date.now() });
+    try {
+      const [path] = (await api.paths([id])).paths;
+      const dir = path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')));
+      const batch = `render-${Date.now()}`;
+      const got = await api.dropFile(batch, dir, file);
+      const done = await api.dropDone(batch);
+      if (done.op_id) this.app.pushHistory({ kind: 'drop', opId: done.op_id, changes: [] });
+      this.app.toast(`Saved ${got.path.split(/[\\/]/).pop()}${done.indexed ? '' : ' (outside the library)'} · Ctrl+Z to undo`, 4000);
+      this.app.reload();
+    } catch (e) { this.app.toast(e.message, 4000); }
+  }
+
   async saveFrame() {
     const v = this.video, id = this.items.ids[this.i], name = this.items.n[this.i];
     if (!v?.videoWidth) { this.app.toast('No frame to save yet'); return; }
@@ -562,6 +658,7 @@ export class Viewer {
   /** Returns true if the key was handled. */
   onKey(e) {
     const k = e.key;
+    if (k === 'Escape' && this.rendered) { this.backTo3d(); return true; }
     if (k === 'Escape' || k === 'Enter') { this.close(); return true; }
     if (this.isVideo && k === ' ' && !this.quick) { if (this.video.paused) this.video.play(); else this.video.pause(); return true; }
     if (this.isSound && (k === 'e' || k === 'E') && this.wave?.sel) { openRegionDialog(this.app, this.wave.id, this.wave.sel); return true; }

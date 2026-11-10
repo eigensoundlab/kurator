@@ -9,7 +9,7 @@ import { openRegionDialog } from './regiondlg.js';
 import { openSendMenu } from './senddlg.js';
 import { sendToSfx } from './sfxdlg.js';
 import { inShell, nativeMenu, writeClipboard, writeClipboardImage } from './shell.js';
-import { el, extOf, fmtNum } from './util.js';
+import { el, extOf, fmtNum, prefs } from './util.js';
 import { BGS } from './viewer.js';
 
 const UA = navigator.userAgent;
@@ -99,6 +99,22 @@ async function viewerItems(app, x, y) {
   const one = [id];
   const ow = await openWithItems(app, one);
   const own = [];
+  const blend = /^blend\d?$/.test(ext);
+  const cam = prefs.get('blend.camera', true);
+  const renders = (now) => [
+    { label: 'EEVEE (quick)', checked: now === 'eevee', run: () => v.renderBlend('eevee', cam) },
+    { label: 'Cycles (path traced, slower)', checked: now === 'cycles', run: () => v.renderBlend('cycles', cam) },
+    '-',
+    { label: 'From the file\'s camera', checked: cam, run: () => { prefs.set('blend.camera', !cam); if (v.rendered) v.renderBlend(v.rendered.engine, !cam); } },
+  ];
+  if (blend && v.rendered) {
+    own.push(
+      { label: 'Back to the 3D view', key: 'Esc', run: () => v.backTo3d() },
+      { label: 'Save the render as a picture', run: () => v.saveRender() },
+      { label: 'Render in Blender', items: renders(v.rendered.engine) },
+      { label: 'Materials…', run: () => v.blendReport() },
+      '-');
+  }
   if (v.is3d && v.mv?.n) {
     const mv = v.mv;
     own.push(
@@ -108,6 +124,7 @@ async function viewerItems(app, x, y) {
       { label: 'Lights', items: Object.entries(LIGHTS).map(([k, l]) => ({ label: l.name, checked: mv.lights === k, run: () => mv.set({ lights: k }) })) },
       { label: 'Cavity', key: 'C', checked: mv.cavity, run: () => mv.set({ cavity: !mv.cavity }) },
       { label: 'Smooth shading', checked: !!mv.smooth, run: () => mv.set({ smooth: !mv.smooth }) });
+    if (blend) own.push('-', { label: 'Materials…', run: () => v.blendReport() }, { label: 'Render in Blender', items: renders(null) });
   } else if (v.isVideo && v.video) {
     const vid = v.video;
     own.push(

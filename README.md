@@ -402,6 +402,19 @@ group of the type filter.
   folders, or via `KURATOR_BLENDER`), Enter on a `.blend` file converts it once in the background
   to glTF and shows it in the 3D viewer; later views are instant. Blender runs with
   `--disable-autoexec`, so scripts stored in a .blend file never run.
+- **Materials** (button in the viewer, or right-click): what each material of a `.blend` is made
+  of - image textures (size, packed, **missing** files), procedural nodes, plain values - and what
+  the 3D view shows of it: glTF carries image textures and values, so procedural inputs say *not in
+  the preview - bake it to a texture*, and textures through a Color Ramp or similar *the preview
+  shows the plain texture*. Also the meshes as exported (triangles, vertices, **UV maps**, modifiers),
+  camera, lights and world.
+- **◐ Render** (or right-click → *Render in Blender*): a picture made by Blender, with procedural
+  materials, the file's lights and world, from the file's camera (or a three-quarter view of
+  everything visible; untick *From the file's camera*). **EEVEE** is quick and needs a graphics card
+  (without one Cycles renders instead); **Cycles** is path traced and slower. Files without lights
+  get a neutral studio on a clear background. The render shows in place of the 3D view (zoom, pick
+  colours; Esc or ⟲ 3D goes back), is kept for the next time, and *Save the render as a picture*
+  puts a PNG next to the `.blend` (Ctrl+Z deletes it).
 - **Texture sets:** maps named like `rock_albedo.png`, `rock_normal_4k.png`, `rock_roughness.png`
   are recognised as one set. The side panel shows the set (click a map to jump to it), the files a
   model uses (OBJ materials and textures, glTF buffers and images, textures named in FBX/3DS/DAE),
@@ -1087,7 +1100,7 @@ kurator/
   atlas.py         sprite sheets and packed texture atlases (+ TexturePacker JSON)
   audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms (whole or a part)
   playhead_index.py  Playhead documents: store, catalog summaries, filters / sorts, command-line job
-  blender.py       optional: .blend -> glTF through an installed Blender (no auto-run scripts)
+  blender.py       optional: .blend -> glTF, material report, renders through an installed Blender (no auto-run scripts)
   xmp.py           XMP sidecars (write), keyword import (XMP, Windows tags, sidecars)
   watcher.py       live folder watching (watchdog), debounced re-check of changed folders
   backup.py        backup sets, planner (layouts, spreading over targets, space), runner, restore
