@@ -3,29 +3,33 @@
 // Materials with base colour, normal, emissive, occlusion and metal/roughness maps; normal maps
 // use tangents derived on the fly (screen-space derivatives), so models need no tangent data.
 // View modes show single maps, normals or a UV checker; light presets and smooth/flat shading.
+// Like Blender's solid view: matcaps, random colours per part, and cavity (ridges lighter, hollows
+// darker - from the curvature at each vertex, worked out once when cavity is first switched on).
 
 import { el, prefs, setKids } from './util.js';
 
 const VS = `#version 300 es
-in vec3 aPos; in vec4 aNrm; in vec2 aUV; in vec4 aCol;
+in vec3 aPos; in vec4 aNrm; in vec2 aUV; in vec4 aCol; in float aCurv;
 uniform mat4 uView; uniform mat4 uProj;
-out vec3 vPos; out vec3 vNrm; out vec2 vUV; out vec3 vCol;
+out vec3 vPos; out vec3 vNrm; out vec2 vUV; out vec3 vCol; out float vCurv;
 void main() {
   vec4 p = uView * vec4(aPos, 1.0);
   vPos = p.xyz;
   vNrm = mat3(uView) * aNrm.xyz;
-  vUV = aUV; vCol = aCol.rgb;
+  vUV = aUV; vCol = aCol.rgb; vCurv = aCurv;
   gl_Position = uProj * p;
 }`;
 
 const FS = `#version 300 es
 precision highp float;
-in vec3 vPos; in vec3 vNrm; in vec2 vUV; in vec3 vCol;
-uniform int uMode;          // 0 lit, 1 base colour, 2 normals, 3 UV checker, 4 clay, 5 single map
+in vec3 vPos; in vec3 vNrm; in vec2 vUV; in vec3 vCol; in float vCurv;
+uniform int uMode;          // 0 lit, 1 base colour, 2 normals, 3 UV checker, 4 clay, 5 single map, 6 matcap, 7 random colours
 uniform int uSmooth;
 uniform vec4 uColor; uniform vec3 uEmissive; uniform int uVCol;
 uniform int uHas[5];        // base, normal, emissive, occlusion, metal_rough
-uniform sampler2D uBase, uNormal, uEmis, uOcc, uMR;
+uniform sampler2D uBase, uNormal, uEmis, uOcc, uMR, uMatcap;
+uniform vec3 uPartCol;      // mode 7: this part's colour
+uniform int uCavity; uniform float uRadius;
 uniform int uShowMap;       // for mode 5: which sampler
 uniform float uNormalY;     // -1: OpenGL-style maps with glTF UVs (default), 1: DirectX-style
 uniform vec3 uLightDir[3]; uniform vec3 uLightCol[3];
@@ -48,6 +52,13 @@ void main() {
   vec3 flatN = normalize(cross(dFdx(vPos), dFdy(vPos)));
   vec3 N = uSmooth == 1 && dot(vNrm, vNrm) > 0.01 ? normalize(vNrm) : flatN;
   if (dot(N, -vPos) < 0.0) N = -N;                      // two-sided
+  // cavity: the surface's curvature at the vertices (1 / length), in units of the model's size
+  float cav = 1.0;
+  if (uCavity == 1 && uMode != 2 && uMode != 3 && uMode != 5) {
+    float c = clamp(vCurv * uRadius * 0.04, -1.0, 1.0);
+    cav = 1.0 + (c > 0.0 ? 0.5 * c : 0.7 * c);
+  }
+  bool plain = uMode == 4 || uMode == 6 || uMode == 7;  // no textures
   if (uMode == 3) {
     vec2 c = floor(vUV * 8.0);
     float k = mod(c.x + c.y, 2.0);
@@ -60,18 +71,21 @@ void main() {
              uShowMap == 2 ? texture(uEmis, vUV).rgb : uShowMap == 3 ? texture(uOcc, vUV).rrr : texture(uMR, vUV).rgb;
     o = vec4(uShowMap == 0 || uShowMap == 2 ? pow(t, vec3(1.0 / 2.2)) : t, 1.0); return;
   }
-  if (uHas[1] == 1 && uMode != 4) {
+  if (uHas[1] == 1 && !plain) {
     vec3 tn = texture(uNormal, vUV).xyz * 2.0 - 1.0;
     tn.y *= uNormalY;
     N = normalize(cotangentFrame(N, vPos, vUV) * tn);
   }
   if (uMode == 2) { o = vec4(N * 0.5 + 0.5, 1.0); return; }
-  vec3 base = uMode == 4 ? vec3(0.62) : toLin(uColor.rgb) * (uVCol == 1 ? toLin(vCol) : vec3(1.0));
-  if (uHas[0] == 1 && uMode != 4) base *= texture(uBase, vUV).rgb;   // sRGB texture: already linear
-  if (uMode == 1) { o = vec4(pow(base, vec3(1.0 / 2.2)), 1.0); return; }
+  if (uMode == 6) {                                      // matcap: a lit sphere, looked up by the normal
+    o = vec4(texture(uMatcap, N.xy * 0.49 + 0.5).rgb * cav, 1.0); return;
+  }
+  vec3 base = uMode == 4 ? vec3(0.62) : uMode == 7 ? toLin(uPartCol) : toLin(uColor.rgb) * (uVCol == 1 ? toLin(vCol) : vec3(1.0));
+  if (uHas[0] == 1 && !plain) base *= texture(uBase, vUV).rgb;   // sRGB texture: already linear
+  if (uMode == 1) { o = vec4(pow(base * cav, vec3(1.0 / 2.2)), 1.0); return; }
   float rough = 0.6, metal = 0.0, occ = 1.0;
-  if (uHas[4] == 1 && uMode != 4) { vec3 mr = texture(uMR, vUV).rgb; rough = mr.g; metal = mr.b; }
-  if (uHas[3] == 1 && uMode != 4) occ = texture(uOcc, vUV).r;
+  if (uHas[4] == 1 && !plain) { vec3 mr = texture(uMR, vUV).rgb; rough = mr.g; metal = mr.b; }
+  if (uHas[3] == 1 && !plain) occ = texture(uOcc, vUV).r;
   vec3 V = normalize(-vPos);
   vec3 diffCol = base * (1.0 - metal);
   vec3 specCol = mix(vec3(0.04), base, metal);
@@ -85,14 +99,70 @@ void main() {
     col += uLightCol[i] * nl * (diffCol + specCol * sp);
   }
   vec3 em = toLin(uEmissive);
-  if (uHas[2] == 1 && uMode != 4) em = (dot(em, em) > 0.0 ? em : vec3(1.0)) * texture(uEmis, vUV).rgb;
-  col = col * uExposure + em;
+  if (uHas[2] == 1 && !plain) em = (dot(em, em) > 0.0 ? em : vec3(1.0)) * texture(uEmis, vUV).rgb;
+  if (plain) em = vec3(0.0);
+  col = (col * uExposure + em) * cav;
   col = col / (1.0 + col * 0.15);                        // soft shoulder, keeps highlights
   o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
 }`;
 
-export const VIEW_MODES = [['lit', 'Lit'], ['base', 'Base colour'], ['clay', 'Clay (no textures)'], ['normals', 'Normals'], ['uv', 'UV checker']];
-const MODE_ID = { lit: 0, base: 1, normals: 2, uv: 3, clay: 4, map: 5 };
+export const VIEW_MODES = [['lit', 'Lit'], ['base', 'Base colour (flat)'], ['clay', 'Clay (no textures)'], ['matcap', 'Matcap'],
+  ['random', 'Random colours (per part)'], ['normals', 'Normals'], ['uv', 'UV checker']];
+const MODE_ID = { lit: 0, base: 1, normals: 2, uv: 3, clay: 4, map: 5, matcap: 6, random: 7 };
+
+// Matcaps: a lit sphere, drawn here (no image files). base: colour; spec: highlight strength and
+// tightness; wrap: light reaching round the side (wax, jade); chrome: a reflected sky and ground
+export const MATCAPS = {
+  clay: { name: 'Clay', base: [0.74, 0.69, 0.64], spec: [0.18, 18], wrap: 0.15 },
+  grey: { name: 'Studio grey', base: [0.62, 0.63, 0.66], spec: [0.35, 40], wrap: 0.05 },
+  wax: { name: 'Red wax', base: [0.72, 0.14, 0.1], spec: [0.55, 60], wrap: 0.45 },
+  jade: { name: 'Jade', base: [0.3, 0.62, 0.46], spec: [0.5, 80], wrap: 0.6 },
+  skin: { name: 'Skin', base: [0.86, 0.6, 0.5], spec: [0.2, 24], wrap: 0.5 },
+  chrome: { name: 'Chrome', chrome: true },
+  toon: { name: 'Toon', base: [0.55, 0.7, 0.95], toon: true },
+};
+
+function matcapPixels(def, n = 256) {
+  const px = new Uint8ClampedArray(n * n * 4);
+  const L = norm([-0.45, 0.6, 0.66]), H = norm([L[0], L[1], L[2] + 1]);
+  const lin = (c) => c ** 2.2, srgb = (c) => Math.round(255 * Math.min(1, Math.max(0, c)) ** (1 / 2.2));
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const x = ((i + 0.5) / n) * 2 - 1, y = 1 - ((j + 0.5) / n) * 2;
+      const r2 = x * x + y * y;
+      const k = (j * n + i) * 4;
+      if (r2 > 1) { px[k + 3] = 255; continue; }
+      const z = Math.sqrt(1 - r2), N = [x, y, z];
+      let c;
+      if (def.chrome) {   // reflection of the view ray: sky above, a dark horizon, warm ground
+        const ry = 2 * N[1] * N[2];
+        const sky = [0.85, 0.9, 1], ground = [0.35, 0.3, 0.26], band = [0.06, 0.06, 0.07];
+        const t = ry > 0 ? Math.min(1, ry * 1.6) : Math.min(1, -ry * 2.2);
+        const far = ry > 0 ? sky : ground;
+        c = [0, 1, 2].map((q) => lin(band[q] + (far[q] - band[q]) * t) + 0.9 * Math.max(0, dot(N, H)) ** 120);
+      } else if (def.toon) {
+        const d = dot(N, L);
+        const step = d > 0.55 ? 1 : d > 0.05 ? 0.62 : 0.32;
+        c = def.base.map((b) => lin(b) * step + (dot(N, H) > 0.97 ? 0.5 : 0));
+      } else {
+        const d = dot(N, L);
+        const diff = Math.max(0, (d + def.wrap) / (1 + def.wrap));
+        const spec = def.spec[0] * Math.max(0, dot(N, H)) ** def.spec[1];
+        const rim = 0.12 * (1 - z) ** 3;
+        c = def.base.map((b) => lin(b) * (0.16 + 0.95 * diff) + spec + rim);
+      }
+      px[k] = srgb(c[0]); px[k + 1] = srgb(c[1]); px[k + 2] = srgb(c[2]); px[k + 3] = 255;
+    }
+  }
+  return px;
+}
+
+/** A pleasant colour per part (mode Random colours), the same every time for the same part. */
+function partColour(i) {
+  const h = (i * 0.61803398875 + 0.12) % 1;
+  const f = (n) => { const k = (n + h * 6) % 6; return 0.62 - 0.42 * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return [f(5), f(3), f(1)];
+}
 const ROLE_SLOT = { base: 0, normal: 1, emissive: 2, occlusion: 3, metal_rough: 4 };
 const ROLE_LABEL = { base: 'Base colour', normal: 'Normal', emissive: 'Emissive', occlusion: 'Occlusion', metal_rough: 'Metal / rough',
   roughness: 'Roughness', metallic: 'Metallic', opacity: 'Opacity', specular: 'Specular', height: 'Height' };
@@ -152,6 +222,8 @@ export class MeshView {
     this.lightYaw = 0;
     this.smoothPref = P.smooth ?? null;   // null: from the file (smooth when it has normals)
     this.dxNormals = !!P.dx;
+    this.matcap = MATCAPS[P.matcap] ? P.matcap : 'clay';
+    this.cavity = !!P.cavity;
     this.showMap = null;
     this.onChange = () => {};
     if (this.ok) this.initGL();
@@ -160,7 +232,7 @@ export class MeshView {
     this.ro.observe(this.canvas);
   }
 
-  savePrefs() { prefs.set('mesh', { mode: this.mode, lights: this.lights, smooth: this.smoothPref, dx: this.dxNormals }); }
+  savePrefs() { prefs.set('mesh', { mode: this.mode, lights: this.lights, smooth: this.smoothPref, dx: this.dxNormals, matcap: this.matcap, cavity: this.cavity }); }
 
   initGL() {
     const gl = this.gl;
@@ -178,15 +250,90 @@ export class MeshView {
     this.prog = p;
     const U = (n) => gl.getUniformLocation(p, n);
     this.loc = { pos: gl.getAttribLocation(p, 'aPos'), nrm: gl.getAttribLocation(p, 'aNrm'), uv: gl.getAttribLocation(p, 'aUV'),
-      col: gl.getAttribLocation(p, 'aCol'), view: U('uView'), proj: U('uProj'), mode: U('uMode'), smooth: U('uSmooth'),
+      col: gl.getAttribLocation(p, 'aCol'), curv: gl.getAttribLocation(p, 'aCurv'), view: U('uView'), proj: U('uProj'), mode: U('uMode'), smooth: U('uSmooth'),
       color: U('uColor'), emissive: U('uEmissive'), vcol: U('uVCol'), has: U('uHas'), showMap: U('uShowMap'), normalY: U('uNormalY'),
       lightDir: U('uLightDir'), lightCol: U('uLightCol'), sky: U('uSky'), ground: U('uGround'), exposure: U('uExposure'),
-      samplers: ['uBase', 'uNormal', 'uEmis', 'uOcc', 'uMR'].map(U) };
+      samplers: ['uBase', 'uNormal', 'uEmis', 'uOcc', 'uMR', 'uMatcap'].map(U), partCol: U('uPartCol'), cavity: U('uCavity'), radius: U('uRadius') };
     this.vao = gl.createVertexArray();
-    this.bufs = { pos: gl.createBuffer(), nrm: gl.createBuffer(), uv: gl.createBuffer(), col: gl.createBuffer(), idx: gl.createBuffer() };
+    this.bufs = { pos: gl.createBuffer(), nrm: gl.createBuffer(), uv: gl.createBuffer(), col: gl.createBuffer(), idx: gl.createBuffer(), curv: gl.createBuffer() };
     this.white = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.white);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+    this.matcapTex = gl.createTexture();
+    this.matcapMade = null;
+  }
+
+  /** Per-vertex curvature for the cavity: along each edge, how much the normal turns per length
+   * (positive on ridges, negative in hollows), averaged at each point. Vertices split for UV seams
+   * or hard edges count as one point with their normals averaged, so creases show too. */
+  ensureCurvature() {
+    if (!this.geo || this.curvFor === this.id || this.loc.curv < 0) return;
+    this.curvFor = this.id;
+    const { pos, nrm, idx } = this.geo;
+    const nv = pos.length / 3;
+    // weld split vertices: the same position (to 1/100000 of the model) is one point
+    const lo = this.head.min, span = Math.max(1e-12, ...[0, 1, 2].map((k) => this.head.max[k] - lo[k]));
+    const q = (v, k) => Math.round(((v - lo[k]) / span) * 100000);
+    const ids = new Map(), weld = new Uint32Array(nv);
+    for (let i = 0; i < nv; i++) {
+      const key = q(pos[i * 3], 0) * 17179869184 + q(pos[i * 3 + 1], 1) * 131072 + q(pos[i * 3 + 2], 2);
+      let w = ids.get(key);
+      if (w === undefined) { w = ids.size; ids.set(key, w); }
+      weld[i] = w;
+    }
+    const nw = ids.size, wn = new Float32Array(nw * 3), wp = new Float32Array(nw * 3);
+    for (let i = 0; i < nv; i++) {
+      const w = weld[i];
+      for (let k = 0; k < 3; k++) { wn[w * 3 + k] += nrm[i * 4 + k] / 127; wp[w * 3 + k] = pos[i * 3 + k]; }
+    }
+    for (let w = 0; w < nw; w++) {
+      const l = Math.hypot(wn[w * 3], wn[w * 3 + 1], wn[w * 3 + 2]) || 1;
+      for (let k = 0; k < 3; k++) wn[w * 3 + k] /= l;
+    }
+    const sum = new Float32Array(nw), cnt = new Uint16Array(nw);
+    const edge = (a, b) => {
+      if (a === b) return;
+      let dd = 0, dn = 0;
+      for (let k = 0; k < 3; k++) {
+        const dp = wp[b * 3 + k] - wp[a * 3 + k];
+        dd += dp * dp; dn += (wn[b * 3 + k] - wn[a * 3 + k]) * dp;
+      }
+      if (dd <= 0) return;
+      const c = dn / dd;
+      sum[a] += c; sum[b] += c;
+      if (cnt[a] < 65535) cnt[a]++;
+      if (cnt[b] < 65535) cnt[b]++;
+    };
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = weld[idx[t]], b = weld[idx[t + 1]], c = weld[idx[t + 2]];
+      edge(a, b); edge(b, c); edge(c, a);
+    }
+    const curv = new Float32Array(nv);
+    for (let i = 0; i < nv; i++) { const w = weld[i]; curv[i] = cnt[w] ? sum[w] / cnt[w] : 0; }
+    const gl = this.gl;
+    gl.bindVertexArray(this.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.bufs.curv);
+    gl.bufferData(gl.ARRAY_BUFFER, curv, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(this.loc.curv);
+    gl.vertexAttribPointer(this.loc.curv, 1, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+  }
+
+  /** The chosen matcap as a texture (drawn when first needed). */
+  bindMatcap() {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.matcapTex);
+    if (this.matcapMade === this.matcap) return;
+    this.matcapMade = this.matcap;
+    const n = 256;
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);   // row 0 of the pixels is the top of the sphere
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, n, n, 0, gl.RGBA, gl.UNSIGNED_BYTE, matcapPixels(MATCAPS[this.matcap], n));
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   }
 
   /** Fetch and show the geometry of a catalog item. Resolves to the header info. */
@@ -247,7 +394,10 @@ export class MeshView {
     else if (this.loc.uv >= 0) { gl.disableVertexAttribArray(this.loc.uv); gl.vertexAttrib2f(this.loc.uv, 0, 0); }
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.bufs.idx);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+    if (this.loc.curv >= 0) { gl.disableVertexAttribArray(this.loc.curv); gl.vertexAttrib1f(this.loc.curv, 0); }
     gl.bindVertexArray(null);
+    this.geo = { pos, nrm, idx };   // for the cavity, worked out when first wanted
+    this.curvFor = null;
     this.n = idx.length;
     this.head = head;
     this.id = id;
@@ -317,9 +467,18 @@ export class MeshView {
     if (opts.lights) this.lights = opts.lights;
     if (opts.smooth != null) { this.smooth = opts.smooth; this.smoothPref = opts.smooth; }
     if (opts.dx != null) this.dxNormals = opts.dx;
+    if (opts.matcap && MATCAPS[opts.matcap]) { this.matcap = opts.matcap; if (!opts.mode) { this.mode = 'matcap'; this.showMap = null; } }
+    if (opts.cavity != null) this.cavity = opts.cavity;
     this.savePrefs();
     this.draw();
     this.onChange();
+  }
+
+  /** Matcap mode, or its next matcap; returns the matcap's name. */
+  nextMatcap() {
+    const keys = Object.keys(MATCAPS);
+    this.set(this.mode === 'matcap' ? { matcap: keys[(keys.indexOf(this.matcap) + 1) % keys.length] } : { mode: 'matcap' });
+    return MATCAPS[this.matcap].name;
   }
 
   cycleLights() {
@@ -375,8 +534,12 @@ export class MeshView {
     gl.uniform1f(L.normalY, this.dxNormals ? 1 : -1);
     gl.uniform1i(L.showMap, ROLE_SLOT[this.showMap] ?? 0);
     L.samplers.forEach((s, k) => gl.uniform1i(s, k));
+    if (this.cavity) this.ensureCurvature();
+    gl.uniform1i(L.cavity, this.cavity ? 1 : 0);
+    gl.uniform1f(L.radius, this.radius || 1);
+    this.bindMatcap();
     gl.bindVertexArray(this.vao);
-    for (const g of this.groups) {
+    this.groups.forEach((g, gi) => {
       const m = this.mats[g.material] || null;
       const has = [0, 0, 0, 0, 0];
       for (const [role, slot] of Object.entries(ROLE_SLOT)) {
@@ -392,8 +555,9 @@ export class MeshView {
       gl.uniform4f(L.color, c[0], c[1], c[2], c[3] ?? 1);
       const e = m?.emissive || [0, 0, 0];
       gl.uniform3f(L.emissive, e[0], e[1], e[2]);
+      gl.uniform3fv(L.partCol, partColour(gi));
       gl.drawElements(gl.TRIANGLES, g.count * 3, gl.UNSIGNED_INT, g.start * 12);
-    }
+    });
     gl.bindVertexArray(null);
   }
 
@@ -424,8 +588,11 @@ export class MeshView {
       setKids(box,
         el('div', { class: 'mv-row' },
           sel(VIEW_MODES, this.mode, (v) => this.set({ mode: v })),
-          sel(Object.entries(LIGHTS).map(([k, l]) => [k, l.name]), this.lights, (v) => this.set({ lights: v }))),
+          this.mode === 'matcap' ? sel(Object.entries(MATCAPS).map(([k, m]) => [k, m.name]), this.matcap, (v) => this.set({ matcap: v }))
+            : sel(Object.entries(LIGHTS).map(([k, l]) => [k, l.name]), this.lights, (v) => this.set({ lights: v }))),
         el('div', { class: 'mv-row' },
+          el('label', { class: 'chk', title: 'Ridges lighter, hollows darker - like Blender\'s cavity (C)' },
+            (() => { const c = el('input', { type: 'checkbox' }); c.checked = this.cavity; c.onchange = () => this.set({ cavity: c.checked }); return c; })(), 'Cavity'),
           el('label', { class: 'chk', title: 'Smooth shading with the normals of the file (or averaged ones)' },
             (() => { const c = el('input', { type: 'checkbox' }); c.checked = this.smooth; c.onchange = () => this.set({ smooth: c.checked }); return c; })(), 'Smooth'),
           mapsRows.some((r) => r.textContent.includes('Normal')) ? el('label', { class: 'chk', title: 'Normal maps made for DirectX / Unreal (green channel down)' },
@@ -441,10 +608,11 @@ export class MeshView {
 
   bind() {
     const c = this.canvas;
-    let drag = null;
+    let drag = null, menuAt = null;
     c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
+      menuAt = e.button === 2 ? [e.clientX, e.clientY] : null;
       drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.button === 1 || e.shiftKey, light: e.altKey,
         yaw: this.yaw, pitch: this.pitch, lightYaw: this.lightYaw, target: [...(this.target || [0, 0, 0])] };
       c.setPointerCapture(e.pointerId);
@@ -453,6 +621,7 @@ export class MeshView {
       if (!drag || !this.n) return;
       e.stopPropagation();
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (menuAt && Math.abs(dx) + Math.abs(dy) > 4) menuAt = null;   // right-drag moves the model
       if (drag.light) {
         this.lightYaw = drag.lightYaw + dx * 0.01;
       } else if (drag.pan) {
@@ -466,7 +635,12 @@ export class MeshView {
       this.draw();
     });
     const end = (e) => { if (drag) { e.stopPropagation(); drag = null; } };
-    c.addEventListener('pointerup', end);
+    c.addEventListener('pointerup', (e) => {
+      const at = e.button === 2 ? menuAt : null;
+      menuAt = null;
+      end(e);
+      if (at) this.onMenu?.(e.clientX, e.clientY);   // a right-click that didn't move anything
+    });
     c.addEventListener('pointercancel', end);
     c.addEventListener('wheel', (e) => {
       e.preventDefault(); e.stopPropagation();

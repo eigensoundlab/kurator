@@ -280,7 +280,7 @@ fn run_start(app: &AppHandle) {
 }
 
 /// Lets Kurator's page (and only it) use what the app adds: native drops, dragging files out, the
-/// system's menus, the clipboard and the Open dialog.
+/// system's menus, the clipboard (text, pictures) and the Open dialog.
 fn grant(app: &AppHandle, port: u16) {
     let shell = app.state::<Shell>();
     let mut granted = shell.granted.lock().unwrap();
@@ -296,6 +296,7 @@ fn grant(app: &AppHandle, port: u16) {
         .permission("core:resources:default")
         .permission("drag:allow-start-drag")
         .permission("clipboard-manager:allow-write-text")
+        .permission("clipboard-manager:allow-write-image")
         .permission("dialog:allow-open")
         .permission("allow-selftest-report");
     if let Err(e) = app.add_capability(cap) {
@@ -338,10 +339,12 @@ fn stop_server(app: &AppHandle) {
 // ------------------------------------------------------------------ links
 
 /// Pages the window may show: its own start page and Kurator. Anything else opens in the browser.
+/// Once Kurator shows, Back doesn't leave it for the start page.
 fn allowed(app: &AppHandle, url: &Url) -> bool {
+    let start_page = || app.state::<Shell>().status.lock().unwrap().phase != "ready";
     match (url.scheme(), url.host_str()) {
-        ("tauri" | "about" | "data" | "blob", _) => true,
-        ("http" | "https", Some("tauri.localhost")) => true,
+        ("about" | "data" | "blob", _) => true,
+        ("tauri", _) | ("http" | "https", Some("tauri.localhost")) => start_page(),
         ("http", Some("127.0.0.1")) => url.port().is_some_and(|p| app.state::<Shell>().granted.lock().unwrap().contains(&p)),
         _ => false,
     }
@@ -360,6 +363,16 @@ fn open_outside(app: &AppHandle, url: &Url) {
 #[tauri::command]
 fn get_status(shell: tauri::State<'_, Shell>) -> Status {
     shell.status.lock().unwrap().clone()
+}
+
+/// The start page, when it finds Kurator running: show it (a navigation of the app's own, which
+/// Kurator accepts; one the start page made would come from another site).
+#[tauri::command]
+fn show_kurator(app: AppHandle) {
+    let url = app.state::<Shell>().status.lock().unwrap().url.clone();
+    if let (Ok(url), Some(w)) = (Url::parse(&url), app.get_webview_window("main")) {
+        let _ = w.navigate(url);
+    }
 }
 
 #[tauri::command]
@@ -444,7 +457,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
         .manage(Shell { selftest, ..Default::default() })
-        .invoke_handler(tauri::generate_handler![get_status, retry, pick_home, open_logs, open_help, selftest_report])
+        .invoke_handler(tauri::generate_handler![get_status, show_kurator, retry, pick_home, open_logs, open_help, selftest_report])
         .setup(move |app| {
             let h = app.handle().clone();
             let nav = h.clone();

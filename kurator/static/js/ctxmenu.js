@@ -4,9 +4,12 @@
 
 import { api } from './api.js';
 import { openAppsDialog } from './appsdlg.js';
+import { LIGHTS, MATCAPS, VIEW_MODES } from './meshview.js';
+import { openRegionDialog } from './regiondlg.js';
 import { openSendMenu } from './senddlg.js';
-import { inShell, nativeMenu, writeClipboard } from './shell.js';
+import { inShell, nativeMenu, writeClipboard, writeClipboardImage } from './shell.js';
 import { el, extOf, fmtNum } from './util.js';
+import { BGS } from './viewer.js';
 
 const UA = navigator.userAgent;
 export const REVEAL = /Windows/.test(UA) ? 'Show in Explorer' : /Mac/.test(UA) ? 'Show in Finder' : 'Show in the file manager';
@@ -26,31 +29,117 @@ async function copyText(app, text, what) {
   try { await writeClipboard(text); app.toast(`Copied ${what}`); } catch (e) { app.toast(`Could not copy: ${e.message}`); }
 }
 
-// ------------------------------------------------------------------ items
-async function fileItems(app, ids) {
-  const n = ids.length;
+/** The picture itself, full size (any kind Kurator reads: PSD, EXR, Krita...), for pasting elsewhere. */
+async function copyImage(app, id) {
+  app.toast('Copying the picture…', 20000);
+  try { await writeClipboardImage(id); app.toast('Copied the picture'); } catch (e) { app.toast(`Could not copy the picture: ${e.message}`, 4000); }
+}
+
+async function remake(app, ids) {
+  try {
+    const r = await api.remake(ids);
+    app.toast(r.queued ? `Making ${r.queued === 1 ? 'the preview' : `${fmtNum(r.queued)} previews`} again…` : 'Nothing to make again (not indexed yet?)');
+    app.refreshState();
+  } catch (e) { app.toast(e.message); }
+}
+
+/** Open with: the programs that open every one of these files. */
+async function openWithItems(app, ids) {
   const idx = app.allItems ? app.allIndex() : new Map();
-  const names = ids.map((id) => app.allItems?.n?.[idx.get(id)]).filter(Boolean);
+  const names = ids.map((id) => app.allItems?.n?.[idx.get(id)] ?? app.items.n[app.indexOf(id)]).filter(Boolean);
   const { apps, ext_kind: kindOf } = await programs();
   const exts = new Set(names.map((nm) => `.${extOf(nm)}`));
   const kinds = new Set([...exts].map((e) => kindOf[e]));
   const fits = (a) => !a.hidden && !a.missing && [...kinds].every((k) => a.kinds.includes(k)) && (!a.exts || [...exts].every((e) => a.exts.includes(e)));
-  const withApps = apps.filter(fits).map((a) => ({ label: a.name, run: () => openWith(app, a, ids) }));
-  const images = [...kinds].includes('image');
+  const list = apps.filter(fits).map((a) => ({ label: a.name, run: () => openWith(app, a, ids) }));
+  return { items: [...list, ...(list.length ? ['-'] : []), { label: 'Programs…', run: () => openAppsDialog(app) }], kinds };
+}
+
+// ------------------------------------------------------------------ items
+async function fileItems(app, ids) {
+  const n = ids.length;
+  const ow = await openWithItems(app, ids);
+  const images = ow.kinds.has('image');
   const s = n === 1 ? '' : ` ${fmtNum(n)} files`;
   return [
     { label: n === 1 ? 'Open' : `Open${s}`, key: 'O', disabled: n > 20, run: () => openAll(app, ids) },
-    { label: 'Open with', items: [...withApps, ...(withApps.length ? ['-'] : []), { label: 'Programs…', run: () => openAppsDialog(app) }] },
+    { label: 'Open with', items: ow.items },
     { label: REVEAL, run: () => api.reveal(ids[0]).catch((e) => app.toast(e.message)) },
     { label: n === 1 ? 'Copy path' : `Copy ${fmtNum(n)} paths`, run: async () => copyText(app, (await api.paths(ids)).paths.join('\n'), n === 1 ? 'the path' : plural(n, 'path')) },
+    ...(n === 1 && images ? [{ label: 'Copy picture', run: () => copyImage(app, ids[0]) }] : []),
     '-',
     { label: 'Copy to…', key: 'K', run: () => app.copyDialog() },
     { label: 'Move to…', key: 'M', run: () => app.moveDialog() },
     { label: 'Send to a quick destination…', key: 'D', run: () => openSendMenu(app) },
     { label: 'Rename…', key: 'F2', run: () => app.renameDialog() },
     { label: 'Resample…', key: 'I', disabled: !images, run: () => app.resampleDialog() },
+    { label: n === 1 ? 'Regenerate preview' : `Regenerate ${fmtNum(n)} previews`, run: () => remake(app, ids) },
     '-',
     { label: n === 1 ? 'Delete…' : `Delete${s}…`, key: 'Del', run: () => app.deleteDialog() },
+  ];
+}
+
+/** Right-click in the viewer: what fits the file shown (picture, SVG, PDF, 3D, video, sound), then
+ * the usual file commands - for this file only, whatever else is selected. */
+async function viewerItems(app, x, y) {
+  const v = app.viewer, it = v.items, i = v.i, id = it.ids[i], name = it.n[i], ext = extOf(name);
+  const one = [id];
+  const ow = await openWithItems(app, one);
+  const own = [];
+  if (v.is3d && v.mv?.n) {
+    const mv = v.mv;
+    own.push(
+      { label: 'Reset the view', key: '0', run: () => mv.reset() },
+      { label: 'Shading', items: VIEW_MODES.map(([k, t]) => ({ label: t, checked: mv.mode === k && mv.showMap == null, run: () => mv.set({ mode: k }) })) },
+      { label: 'Matcap', items: Object.entries(MATCAPS).map(([k, m]) => ({ label: m.name, checked: mv.mode === 'matcap' && mv.matcap === k, run: () => mv.set({ matcap: k }) })) },
+      { label: 'Lights', items: Object.entries(LIGHTS).map(([k, l]) => ({ label: l.name, checked: mv.lights === k, run: () => mv.set({ lights: k }) })) },
+      { label: 'Cavity', key: 'C', checked: mv.cavity, run: () => mv.set({ cavity: !mv.cavity }) },
+      { label: 'Smooth shading', checked: !!mv.smooth, run: () => mv.set({ smooth: !mv.smooth }) });
+  } else if (v.isVideo && v.video) {
+    const vid = v.video;
+    own.push(
+      { label: vid.paused ? 'Play' : 'Pause', key: 'Space', run: () => (vid.paused ? vid.play() : vid.pause()) },
+      { label: '5 seconds back', key: 'Shift+←', run: () => { vid.currentTime -= 5; } },
+      { label: '5 seconds on', key: 'Shift+→', run: () => { vid.currentTime += 5; } },
+      { label: 'Save this frame as a picture', run: () => v.saveFrame() });
+  } else if (v.isSound) {
+    own.push({ label: 'Play / pause', key: 'Space', run: () => v.onKey({ key: ' ', shiftKey: false, ctrlKey: false }) });
+    if (v.wave?.sel) own.push({ label: 'Export the selection…', key: 'E', run: () => openRegionDialog(app, v.wave.id, v.wave.sel) });
+  } else {
+    const hex = v.colourAt(x, y);
+    if (hex) own.push({ label: `Copy colour ${hex}`, run: () => copyText(app, hex, hex) });
+    own.push(
+      { label: v.fitted ? '100 %' : 'Fit to the window', key: v.fitted ? 'Z' : '0', run: () => (v.fitted ? v.zoomTo(1) : v.fitView()) },
+      { label: 'Background', items: BGS.map((b) => ({ label: b[0].toUpperCase() + b.slice(1), checked: v.bg === b, run: () => v.setBg(b) })) },
+      { label: 'Pixel-art zoom', key: 'N', checked: !!v.pixel, run: () => v.togglePixel() });
+    if (v.root.classList.contains('has-maps')) own.push({ label: 'Lit preview', key: 'L', checked: !!v.litOn, run: () => v.toggleLit() });
+    if (v.inksOk) own.push({ label: 'Inks', key: 'I', checked: !!v.inksOn, run: () => v.toggleInks() });
+    if (/^svgz?$/.test(ext)) {
+      const all = v.svgAll ?? !!app.state?.svg_all;
+      own.push({ label: 'Show what is outside the page', checked: all, run: () => v.setSvgAll(!all) });
+    }
+    if (v.pdf?.count > 1) own.push({ label: 'Previous page', key: '[', run: () => v.gotoPage(v.page - 1) }, { label: 'Next page', key: ']', run: () => v.gotoPage(v.page + 1) });
+  }
+  const close = (fn) => () => { v.close(); fn(); };   // moving, renaming, deleting: back in the grid first
+  return [
+    ...own, ...(own.length ? ['-'] : []),
+    { label: 'Open', key: 'O', run: () => openAll(app, one) },
+    { label: 'Open with', items: ow.items },
+    { label: REVEAL, run: () => api.reveal(id).catch((e) => app.toast(e.message)) },
+    { label: 'Copy path', run: async () => copyText(app, (await api.paths(one)).paths.join('\n'), 'the path') },
+    ...(ow.kinds.has('image') ? [{ label: 'Copy picture', run: () => copyImage(app, id) }] : []),
+    '-',
+    { label: 'Copy to…', run: () => app.copyDialog(one) },
+    { label: 'Move to…', run: close(() => app.moveDialog(one)) },
+    { label: 'Rename…', run: close(() => app.renameDialog(one)) },
+    ...(ow.kinds.has('image') ? [{ label: 'Resample…', run: () => app.resampleDialog(one) }] : []),
+    { label: 'Regenerate preview', run: () => remake(app, one) },
+    { label: 'Delete…', run: close(() => app.deleteDialog(one)) },
+    '-',
+    { label: 'Selected', key: 'X', checked: app.selected.has(id), run: () => v.toggleSel() },
+    { label: 'Previous', key: '←', disabled: i === 0, run: () => v.step(-1) },
+    { label: 'Next', key: '→', disabled: i >= it.ids.length - 1, run: () => v.step(1) },
+    { label: 'Back to the grid', key: 'Esc', run: () => v.close() },
   ];
 }
 
@@ -135,11 +224,14 @@ function place(menu, x, y, alt) {
 
 function pageMenu(items, x, y, level = 0) {
   for (const m of stack.splice(level)) m.remove();
-  const menu = el('div', { class: 'popmenu ctxmenu', role: 'menu' });
+  const ticks = items.some((it) => it !== '-' && it.checked !== undefined);
+  const menu = el('div', { class: 'popmenu ctxmenu' + (ticks ? ' ticks' : ''), role: 'menu' });
   for (const it of items) {
     if (it === '-') { menu.append(el('div', { class: 'pm-sep' })); continue; }
     const sub = !!it.items;
-    const row = el('button', { type: 'button', class: 'pm-row' + (sub ? ' sub' : ''), role: 'menuitem', disabled: !!it.disabled || (sub && !it.items.length) },
+    const row = el('button', { type: 'button', class: 'pm-row' + (sub ? ' sub' : ''), role: it.checked !== undefined ? 'menuitemcheckbox' : 'menuitem',
+      'aria-checked': it.checked !== undefined ? String(!!it.checked) : null, disabled: !!it.disabled || (sub && !it.items.length) },
+      ticks ? el('span', { class: 'pm-tick', text: it.checked ? '✓' : '' }) : null,
       el('span', { class: 'grow', text: it.label }), it.key ? el('kbd', { text: it.key }) : null, sub ? el('span', { class: 'pm-arrow', text: '›' }) : null);
     const openSub = () => { const r = row.getBoundingClientRect(); pageMenu(it.items, r.right - 2, r.top - 5, level + 1); stack[level + 1].dataset.from = it.label; };
     row.addEventListener('pointerenter', () => {
@@ -193,11 +285,19 @@ export async function showMenu(items, x, y) {
 // ----------------------------------------------------------------- hook
 export function installContextMenu(app) {
   app.onAppsChanged = forgetApps;
+  app.viewerMenu = async (x, y) => showMenu(await viewerItems(app, x, y), x, y);
   document.addEventListener('contextmenu', async (e) => {
     const t = e.target;
     if (t.closest?.('input, textarea, select, [contenteditable]')) return;       // copy / paste as usual
     if (t.closest?.('.dlg-wrap, .popmenu')) { if (inShell()) e.preventDefault(); return; }
     let make = null;
+    if (app.viewer.isOpen && app.viewer.root.contains(t)) {
+      if (t.closest?.('.meshview')) return;           // the 3D view: right-drag moves; a right-click asks itself
+      if (t.closest?.('.v-bar, .mv-controls, .v-pages')) { if (inShell()) e.preventDefault(); return; }
+      e.preventDefault();
+      app.viewerMenu(e.clientX, e.clientY);
+      return;
+    }
     const tagEl = t.closest?.('[data-tag-id]');
     const folderEl = t.closest?.('[data-folder]');
     if (tagEl && app.tags.byId.has(+tagEl.dataset.tagId)) {

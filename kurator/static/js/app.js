@@ -104,6 +104,7 @@ class App {
     this.bindKeys();
     installDrop(this);   // files dropped from Explorer / Finder
     installContextMenu(this);   // right-click: thumbnails, folders, tags, the grid
+    this.installHistory();      // Back / Forward: the viewer, then the folders and tags you visited
     this.tags.refresh();
     this.projects.refresh();
     this.refreshState().then(async () => {
@@ -120,6 +121,7 @@ class App {
   indexOf(id) { const i = this.idIndex.get(id); return i === undefined ? -1 : i; }
 
   async reload({ keepScroll = true } = {}) {
+    this.navRecord();
     if (this.reloadCtrl) this.reloadCtrl.abort();
     this.reloadCtrl = new AbortController();
     const q = { ...this.query, recursive: this.query.recursive ? 1 : 0, guessed: this.query.guessed ? 1 : 0 };
@@ -321,7 +323,14 @@ class App {
   }
 
   openSavedView(v) {
-    const q = v.query || {};
+    this.activeView = v.id;
+    this.activeViewKey = null;   // taken from the first path-bar render after applying
+    this.applyViewQuery(v.query || {});
+    this.sidebar.renderViews();
+  }
+
+  /** Show a remembered view: a saved one, or one Back / Forward returns to. */
+  applyViewQuery(q, ai = null) {
     Object.assign(this.query, { folder: q.folder || null, recursive: q.recursive ?? this.query.recursive, q: q.q || '', ext: q.ext || '',
       sort: q.sort || this.query.sort, order: q.order || this.query.order, guessed: !!q.guessed, tag: q.tag || '', exclude: q.exclude || '',
       missing: q.missing || '', dupes: !!q.dupes, similar: +q.similar || 0, untagged: false, suggested: false,
@@ -332,14 +341,79 @@ class App {
     this.typeFilter.setSelected?.(this.query.ext);
     const s = $('#search');
     if (s) s.value = this.query.q;
-    this.activeView = v.id;
-    this.activeViewKey = null;   // taken from the first path-bar render after applying
+    this.aiView = ai;
     if ((q.project || null) !== (this.projects.active || null)) {
       if (q.project) this.projects.activate(+q.project, { keepFilters: true }); else this.projects.leave();
     } else {
       this.sidebar.render(); this.sidebar.renderFs(); this.onFilterChanged();
     }
-    this.sidebar.renderViews();
+  }
+
+  // ------------------------------------------------------- back / forward
+  // Every change of view (folder, tag, project, search, filters) is a step in the history, and so is
+  // opening the viewer: Back (the mouse's back button, Alt+Left) closes the viewer, then goes back
+  // through the folders and tags you visited; Forward returns.
+
+  /** What Back returns to: the view's filters (the sort order stays as it is). */
+  navSnapshot() {
+    const q = this.viewQuery();
+    delete q.sort;
+    delete q.order;
+    return JSON.parse(JSON.stringify({ ...q, ai: this.aiView || null }));
+  }
+
+  navRecord() {
+    const snap = this.navSnapshot();
+    const st = history.state?.kurator ? history.state : null;
+    const kind = st?.kurator === 'viewer' ? st : { kurator: 'view' };
+    if (!st || this.navRestoring) {   // the first view, or the one Back / Forward just went to
+      this.navRestoring = false;
+      history.replaceState({ ...kind, view: snap }, '');
+      return;
+    }
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    if (same(st.view, snap)) return;
+    // typing a search: one step for the search, not one per letter
+    const searchOnly = same({ ...st.view, q: '' }, { ...snap, q: '' }) && st.view.q !== '';
+    if (searchOnly || st.kurator === 'viewer') history.replaceState({ ...kind, view: snap }, '');
+    else history.pushState({ kurator: 'view', view: snap }, '');
+  }
+
+  installHistory() {
+    addEventListener('popstate', (e) => {
+      const st = e.state;
+      if (!st?.kurator) return;
+      this.navPopping = true;
+      try {
+        if (st.kurator === 'viewer') {   // Forward into the viewer again
+          const i = this.indexOf(st.id);
+          if (i >= 0 && !this.viewer.isOpen) this.viewer.open(i);
+          return;
+        }
+        if (this.viewer.isOpen) this.viewer.close();
+        if (JSON.stringify(st.view) !== JSON.stringify(this.navSnapshot())) {
+          this.navRestoring = true;
+          this.applyViewQuery(st.view, st.view.ai || null);
+        }
+      } finally { this.navPopping = false; }
+    });
+    // the desktop app on macOS and Linux: WebKit leaves the mouse's back / forward buttons alone
+    if (inShell() && !window.chrome) {
+      addEventListener('mouseup', (e) => {
+        if (e.button === 3) { e.preventDefault(); history.back(); } else if (e.button === 4) { e.preventDefault(); history.forward(); }
+      });
+    }
+  }
+
+  /** The viewer opened (not a quick look): a step Back closes it again. */
+  navViewerOpened(id) {
+    if (this.navPopping) return;
+    history.pushState({ kurator: 'viewer', view: this.navSnapshot(), id }, '');
+  }
+
+  navViewerClosed() {
+    if (this.navPopping || history.state?.kurator !== 'viewer') return;
+    history.back();   // its step goes; the view under it stays as it is
   }
 
   /** Similar images: groups of near-identical pictures (dist = how many of 64 bits may differ). */
@@ -556,9 +630,9 @@ class App {
   }
 
   // --------------------------------------------------------------- moves
-  moveDialog() { openMoveDialog(this, this.tagTargets()); }
-  copyDialog() { openCopyDialog(this, this.tagTargets()); }
-  resampleDialog() { openResampleDialog(this); }
+  moveDialog(ids = this.tagTargets()) { openMoveDialog(this, ids); }
+  copyDialog(ids = this.tagTargets()) { openCopyDialog(this, ids); }
+  resampleDialog(ids = null) { openResampleDialog(this, ids); }
 
   onCopied(r) {
     const extra = r.failed.length ? ` · ${r.failed.length} failed` : '';
@@ -570,7 +644,7 @@ class App {
     if (r.indexed) { this.reload(); this.refreshState(); this.tags.refreshSoon(); }
   }
 
-  renameDialog() { openRenameDialog(this); }
+  renameDialog(ids = null) { openRenameDialog(this, ids); }
 
   onRenamed(r) {
     this.toast(`Renamed ${fmtNum(r.renamed)} file${r.renamed === 1 ? '' : 's'}${r.failed.length ? ` · ${r.failed.length} failed` : ''} · Ctrl+Z to undo`, 3500);
@@ -1084,6 +1158,7 @@ class App {
   }
 
   onViewerClosed(i) {
+    this.navViewerClosed();
     if (i != null && i >= 0) { this.setFocus(i, { scroll: true }); }
     this.grid.el.focus({ preventScroll: true });
   }
@@ -1171,6 +1246,10 @@ class App {
       spaceDown = 0;
       // Hold Space to peek, release to return. A short tap keeps the viewer open.
       if (this.viewer.isOpen && this.viewer.quick && held > 300) this.viewer.close();
+      else if (this.viewer.isOpen && !this.viewer.navStep) {   // a tap: it stays open, and Back closes it
+        this.viewer.navStep = true;
+        this.navViewerOpened(this.items.ids[this.viewer.i]);
+      }
     });
   }
 
@@ -1298,7 +1377,11 @@ class App {
 
   updateScanStatus(s) {
     if (s.phase === 'walking') this.stScan.textContent = `Scanning folders… ${fmtNum(s.found)} files found`;
-    else if (s.phase === 'processing') this.stScan.textContent = `Indexing ${fmtNum(s.processed)} / ${fmtNum(s.pending)}${s.rate ? ` · ${s.rate}/s` : ''}${s.errors ? ` · ${s.errors} unreadable` : ''}`;
+    else if (s.phase === 'processing') {
+      const slow = s.slow ? ` · working on ${s.slow.name} (${s.slow.secs >= 60 ? `${Math.floor(s.slow.secs / 60)} min ` : ''}${s.slow.secs % 60} s)` : '';
+      this.stScan.textContent = `Indexing ${fmtNum(s.processed)} / ${fmtNum(s.pending)}${s.rate ? ` · ${s.rate}/s` : ''}${s.errors ? ` · ${s.errors} unreadable` : ''}${slow}`;
+      this.stScan.title = s.slow ? 'Big videos, 3D models and layered files can take a while; the count moves on when they are done' : '';
+    }
     else if (s.phase === 'error') this.stScan.textContent = `Indexing error: ${s.error}`;
     else this.stScan.textContent = s.errors ? `${s.errors} unreadable files` : '';
     this.stScan.classList.toggle('busy', s.phase === 'walking' || s.phase === 'processing');

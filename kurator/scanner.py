@@ -277,6 +277,7 @@ class Scanner:
         """Process paths; returns the ones not finished (empty unless stopped)."""
         pending = list(reversed(paths))
         in_flight: dict = {}
+        started: dict = {}   # future -> when it was first seen being worked on
         batch: list[dict] = []
         last_flush = time.time()
 
@@ -297,8 +298,10 @@ class Scanner:
                     p = pending.pop()
                     in_flight[pool.submit(process_file, p, (GRID_SIZE,))] = p
                 done, _ = wait(list(in_flight), timeout=0.5, return_when=FIRST_COMPLETED)
+                self._note_slow(in_flight, started)
                 for f in done:
                     p = in_flight.pop(f)
+                    started.pop(f, None)
                     try:
                         r = f.result()
                     except BrokenProcessPool:
@@ -318,4 +321,18 @@ class Scanner:
             self._leftover = pending + list(in_flight.values())
             raise BrokenProcessPool(f"{len(self._leftover)} files left") from None
         flush()
+        self._set(slow=None)
         return pending + list(in_flight.values())
+
+    def _note_slow(self, in_flight: dict, started: dict) -> None:
+        """The file that has taken longest so far, once it takes a while: the status line names it
+        (a big video or model can keep the count still for minutes)."""
+        now = time.time()
+        for f in in_flight:
+            if f not in started and f.running():
+                started[f] = now
+        worst = min(((t, f) for f, t in started.items() if f in in_flight), default=None, key=lambda x: x[0])
+        if worst and now - worst[0] >= 10:
+            self._set(slow={"name": os.path.basename(in_flight[worst[1]]), "secs": int(now - worst[0])})
+        elif self.state.get("slow"):
+            self._set(slow=None)

@@ -19,6 +19,10 @@ The browser still works the same: the app is optional.
   Copy to…, Move to…, Rename…, Resample…, Delete… (on folders: copy or move the selected files
   there, pin, add to or remove from the library; on tags and projects: add to or remove from the
   selection, edit). The browser has the same menu, drawn by the page.
+- **Back and Forward** (the mouse's buttons, Alt+← / Alt+→) close the viewer, then go back
+  through the folders, tags and projects you visited - never out of Kurator to the start page.
+- **Copy picture** (right-click) puts the picture on the clipboard full size, also from PSD, EXR,
+  Krita or SVG files, ready to paste into another program.
 - **Links** open in your default browser; files the page saves (markers for REAPER / Audacity) go to
   Downloads.
 - **One window:** starting the app again brings the open window to the front. Its size and place
@@ -89,7 +93,7 @@ starts Kurator, loads its page, checks that the page can use the app, then quits
 - `desktop/ui/` is the start page shown while Kurator starts (or when it can't be found).
 - The window shows only the start page and Kurator; any other page opens in your browser.
 - Kurator's page is allowed exactly these: file drop events, dragging files out, the system's menu,
-  writing to the clipboard and the system's Open dialog. They are granted at run time for
+  writing text and pictures to the clipboard and the system's Open dialog. They are granted at run time for
   `http://127.0.0.1:<port>` only. In the page, `kurator/static/js/shell.js` uses them when it runs
   in the app and falls back to the browser's way otherwise.
 

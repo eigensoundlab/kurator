@@ -4,8 +4,13 @@ const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const $ = (id) => document.getElementById(id);
 let busy = false;
 
+let showing = false;
+
 function paint(s) {
-  if (s.phase === 'ready' && s.url) { location.replace(s.url); return; }
+  if (s.phase === 'ready' && s.url) {   // Kurator runs: the app shows it; still here a moment later, ask again
+    if (!showing) { showing = true; setTimeout(() => invoke('show_kurator').catch(() => { showing = false; }), 1500); }
+    return;
+  }
   $('msg').textContent = s.message || 'Starting…';
   const d = $('detail');
   d.textContent = s.detail || '';

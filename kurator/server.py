@@ -75,6 +75,7 @@ MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".jfif": "image/jpeg", ".jp
 
 class RootIn(BaseModel):
     path: str
+    create: bool = False   # make the folder first (where dropped files are to go)
 
 
 class PinsIn(BaseModel):
@@ -241,7 +242,10 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             origin = request.headers.get("origin")
             if origin not in allowed_origins:
                 return JSONResponse({"detail": "forbidden origin"}, status_code=403)
-        if request.headers.get("sec-fetch-site") == "cross-site":
+        if request.headers.get("sec-fetch-site") == "cross-site" and not (
+                # opening Kurator's page itself from elsewhere (a bookmark, the desktop app's start
+                # page) is harmless: it changes nothing, and everything it then asks is same-site
+                request.method == "GET" and request.url.path == "/" and request.headers.get("sec-fetch-mode") == "navigate"):
             return JSONResponse({"detail": "cross-site request blocked"}, status_code=403)
         resp = await call_next(request)
         if request.url.path.startswith("/static/"):
@@ -309,6 +313,11 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.post("/api/roots")
     def add_root(body: RootIn):
         p = _norm_path(body.path)
+        if body.create and not os.path.exists(p):
+            try:
+                os.makedirs(p)
+            except OSError as e:
+                raise HTTPException(400, f"Can't make {p}: {e.strerror or e}") from None
         if not os.path.isdir(p):
             raise HTTPException(400, f"Not a folder: {p}")
         inside = db.root_for(p, "library")
@@ -476,8 +485,10 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             else:
                 where.append("dir = ?")
                 args.append(f)
-        else:  # "All library items": browsed (temporary) folders are not part of the library
+        elif not (tag and tag.strip(",")) and not project:  # "All library items": browsed (temporary) folders are not part of the library
             where.append("root_id IN (SELECT id FROM roots WHERE kind = 'library')")
+        # a tag or project shows all of its files - also those in a folder you only browsed: you
+        # tagged them, and the tag's count includes them
         if q:
             from . import fileinfo
             for term in q.split():
@@ -1855,6 +1866,36 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             found.update(db.cat.execute(f"SELECT id, path FROM files WHERE id IN ({q})", chunk).fetchall())
         return _json({"paths": [found[i] for i in ids if i in found]})
 
+    @app.get("/api/items/{item_id}/png")
+    def item_png(item_id: int, file: int = 0):
+        """The picture as PNG, full size (Copy picture). ?file=1: written to a file in Kurator's cache,
+        and its path returned - the desktop app puts that on the clipboard."""
+        from .processing import render_png
+        row = db.cat.execute("SELECT path FROM files WHERE id = ?", (item_id,)).fetchone()
+        if not row:
+            raise HTTPException(404)
+        if not os.path.isfile(row[0]):
+            raise HTTPException(404, "The file is missing on disk")
+        try:
+            png = render_png(row[0])
+        except (ValueError, OSError) as e:
+            raise HTTPException(422, str(e)) from None
+        if not file:
+            return Response(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+        out = os.path.join(db.data_dir, "cache", "clipboard.png")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, "wb") as f:
+            f.write(png)
+        return _json({"path": out})
+
+    @app.post("/api/remake")
+    def remake(body: dict):
+        """{ids}: make their previews again (after a renderer got better, or a file looks wrong)."""
+        n = db.remake_files([int(i) for i in (body.get("ids") or [])][:20000])
+        if n:
+            scanner.request_process()
+        return _json({"queued": n})
+
     @app.get("/api/apps")
     def list_apps():
         """Programs for Open with: found ones and those added in Settings."""
@@ -1990,7 +2031,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         return entry
 
     @app.get("/f/{item_id}")
-    def original(item_id: int):
+    def original(item_id: int, all: int | None = None):   # noqa: A002 - ?all=1|0: an SVG's content beyond its page
         row = db.cat.execute("SELECT path, ext FROM files WHERE id = ?", (item_id,)).fetchone()
         if not row:
             raise HTTPException(404)
@@ -2004,7 +2045,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             from .handlers.vector import svg_for_view
             try:
                 with open(row[0], "rb") as f:
-                    fixed = svg_for_view(f.read(60 * 1024 * 1024))
+                    fixed = svg_for_view(f.read(60 * 1024 * 1024), None if all is None else bool(all))
             except (OSError, ValueError):
                 fixed = None
             if fixed is not None:   # a page without size, or "show all objects": the page made to fit everything

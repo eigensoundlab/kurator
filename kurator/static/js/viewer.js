@@ -8,7 +8,7 @@ import { openRegionDialog } from './regiondlg.js';
 import { WaveView } from './waveview.js';
 import { AUDIO, digitKey, el, extOf, fmtBytes, fmtDate, fmtNum, MESHES, prefs, VIDEO, VIEWABLE } from './util.js';
 
-const BGS = ['dark', 'gray', 'light', 'checker'];
+export const BGS = ['dark', 'gray', 'light', 'checker'];
 
 export class Viewer {
   constructor(app) {
@@ -70,6 +70,8 @@ export class Viewer {
     this.root.classList.add('open');
     this.root.classList.toggle('quick', quick);
     this.show(i);
+    this.navStep = !quick;   // a step in the history (Back closes it); a held quick look gets none
+    if (!quick) this.app.navViewerOpened(this.items.ids[i]);
   }
 
   close() {
@@ -102,8 +104,11 @@ export class Viewer {
     // Animated GIF/WebP/APNG: load the original so the animation plays. Otherwise the 1600px preview.
     const isVideo = VIDEO.has(ext);
     const animated = !isVideo && this.viewable && (it.f?.[i] || ext === 'gif');
-    const src = animated ? originalUrl(it, i) : thumbUrl(it, i, 1600);
-    this.full = !!animated;
+    // an SVG with the viewer's own page / everything choice: the SVG itself, sized when it arrives
+    const svgOwn = /^svgz?$/.test(ext) && it.v[i] !== 'e' && this.svgAll != null;
+    this.svgSized = svgOwn && this.svgAll;
+    const src = svgOwn ? `/f/${it.ids[i]}?all=${this.svgAll ? 1 : 0}` : animated ? originalUrl(it, i) : thumbUrl(it, i, 1600);
+    this.full = !!animated || svgOwn;
     this.img.classList.remove('ready');
     this.img.src = src;
     this.show3d(MESHES.has(ext) && it.v[i] !== 'e' ? it.ids[i] : null);
@@ -345,6 +350,7 @@ export class Viewer {
     if (!this.is3d) { this.mv?.clear(); this.setLoading(null); return; }
     if (!this.mv) {
       this.mv = new MeshView(this.stage);
+      this.mv.onMenu = (x, y) => this.app.viewerMenu(x, y);   // a right-click that didn't move the model
       this.mvBox = this.mv.controls();
       this.root.append(this.mvBox);
     }
@@ -375,6 +381,11 @@ export class Viewer {
   }
 
   onLoad() {
+    if (this.svgSized && this.img.naturalWidth) {   // everything drawn: its own size, not the page's
+      this.svgSized = false;
+      this.w = this.img.naturalWidth; this.h = this.img.naturalHeight;
+      this.fitView();
+    }
     if (!this.w || !this.h) { // dimensions unknown yet (not indexed): use what we got
       this.w = this.img.naturalWidth; this.h = this.img.naturalHeight;
       this.fitView();
@@ -483,10 +494,57 @@ export class Viewer {
     });
   }
 
-  cycleBg() {
-    this.bg = BGS[(BGS.indexOf(this.bg) + 1) % BGS.length];
+  cycleBg() { this.setBg(BGS[(BGS.indexOf(this.bg) + 1) % BGS.length]); }
+
+  setBg(b) {
+    this.bg = b;
     prefs.set('viewer.bg', this.bg);
     this.applyBg();
+  }
+
+  /** SVG: show only the page, or everything drawn (also beyond the page) - for this session. */
+  setSvgAll(on) {
+    this.svgAll = on;
+    if (this.isOpen) this.show(this.i);
+  }
+
+  /** The colour of the picture under a point of the window, as #rrggbb (null: outside it). */
+  colourAt(x, y) {
+    const im = this.img, r = this.stage.getBoundingClientRect();
+    if (!im.naturalWidth || !this.w || this.is3d || this.isVideo || this.isSound) return null;
+    const ix = (x - r.left - this.tx) / this.s, iy = (y - r.top - this.ty) / this.s;
+    if (ix < 0 || iy < 0 || ix >= this.w || iy >= this.h) return null;
+    const c = el('canvas', { width: 1, height: 1 });
+    const g = c.getContext('2d', { willReadFrequently: true });
+    const kx = im.naturalWidth / this.w, ky = im.naturalHeight / this.h;
+    try {
+      g.drawImage(im, Math.floor(ix * kx), Math.floor(iy * ky), 1, 1, 0, 0, 1, 1);
+      const [R, G, B, A] = g.getImageData(0, 0, 1, 1).data;
+      if (A === 0) return null;
+      return '#' + [R, G, B].map((v) => v.toString(16).padStart(2, '0')).join('');
+    } catch { return null; }
+  }
+
+  /** The video's current frame as a PNG next to the video (indexed, Ctrl+Z deletes it). */
+  async saveFrame() {
+    const v = this.video, id = this.items.ids[this.i], name = this.items.n[this.i];
+    if (!v?.videoWidth) { this.app.toast('No frame to save yet'); return; }
+    const c = el('canvas', { width: v.videoWidth, height: v.videoHeight });
+    c.getContext('2d').drawImage(v, 0, 0);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+    const t = v.currentTime, mm = Math.floor(t / 60), ss = (t % 60).toFixed(t % 1 ? 2 : 0).padStart(2, '0');
+    const stem = name.replace(/\.[^.]+$/, '');
+    const file = new File([blob], `${stem} ${mm}m${ss}s.png`, { type: 'image/png', lastModified: Date.now() });
+    try {
+      const [path] = (await api.paths([id])).paths;
+      const dir = path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')));
+      const batch = `frame-${Date.now()}`;
+      const got = await api.dropFile(batch, dir, file);
+      const done = await api.dropDone(batch);
+      if (done.op_id) this.app.pushHistory({ kind: 'drop', opId: done.op_id, changes: [] });
+      this.app.toast(`Saved ${got.path.split(/[\\/]/).pop()}${done.indexed ? '' : ' (outside the library)'} · Ctrl+Z to undo`, 4000);
+      this.app.reload();
+    } catch (e) { this.app.toast(e.message, 4000); }
   }
 
   applyBg() {
@@ -530,6 +588,8 @@ export class Viewer {
     if (k === 'x' || k === 'X' || (k === ' ' && e.ctrlKey)) { this.toggleSel(); return true; }
     if (k === 'b' || k === 'B') { this.cycleBg(); return true; }
     if ((k === 'l' || k === 'L') && this.is3d && this.mv?.n) { this.app.toast(`Light: ${this.mv.cycleLights()}`); return true; }
+    if ((k === 'c' || k === 'C') && this.is3d && this.mv?.n) { this.mv.set({ cavity: !this.mv.cavity }); this.app.toast(`Cavity ${this.mv.cavity ? 'on' : 'off'}`); return true; }
+    if ((k === 'm' || k === 'M') && this.is3d && this.mv?.n) { this.app.toast(`Matcap: ${this.mv.nextMatcap()}`); return true; }
     if ((k === 'l' || k === 'L') && !this.is3d && !this.isVideo && !this.isSound) { this.toggleLit(); return true; }
     if ((k === 'i' || k === 'I') && !this.is3d && !this.isVideo && !this.isSound) { this.toggleInks(); return true; }
     if (k === 'n' || k === 'N') { this.togglePixel(); return true; }

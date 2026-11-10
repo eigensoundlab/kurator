@@ -133,9 +133,8 @@ function confirmDrop(app, known, fresh, folders, tagIds, onTag) {
   const files = [...known, ...fresh];
   const newFolders = folders.filter((f) => f.path && !f.in_library);
   const pp = projPrefs(app);
-  const here = app.query.folder && app.isLibraryPath(app.query.folder) ? app.query.folder : '';
-  const dest0 = pp.get('drop.dest', '') || here;
-  if (!prefs.get('drop.ask', true) && !newFolders.length && (!fresh.length || dest0) && (tagIds.length || fresh.length)) {
+  const dest0 = dropDest(app, onTag, pp.get('drop.dest', ''));
+  if (!prefs.get('drop.ask', true) && !newFolders.length && (!fresh.length || app.isLibraryPath(dest0)) && (tagIds.length || fresh.length)) {
     run(app, known, fresh, tagIds, dest0, true, folders.filter((f) => !f.path).length, []);
     return;
   }
@@ -144,6 +143,19 @@ function confirmDrop(app, known, fresh, folders, tagIds, onTag) {
   const copy = el('input', { type: 'checkbox' }); copy.checked = true;
   const never = el('input', { type: 'checkbox' });
   const addFolders = el('input', { type: 'checkbox' }); addFolders.checked = true;
+  // new files show in Kurator (indexed, tagged) only inside the library: say so, and offer to add the folder
+  const addDest = el('input', { type: 'checkbox' }); addDest.checked = true;
+  const where = el('div', { class: 'small drop-where' });
+  const paintWhere = () => {
+    const p = dest.value.trim();
+    if (!p) setKids(where);
+    else if (app.isLibraryPath(p)) setKids(where, el('span', { class: 'muted', text: 'In the library: they are indexed, tagged and shown.' }));
+    else setKids(where, el('label', { class: 'chk', title: 'Unticked, they are only copied there: Kurator doesn\'t show or tag them' }, addDest,
+      el('span', { text: 'Add this folder to the library, so Kurator shows them with their tags' })));
+  };
+  dest.addEventListener('input', paintWhere);
+  dest.addEventListener('change', paintWhere);
+  paintWhere();
   const names = (list) => el('div', { class: 'muted small', text: list.slice(0, 6).map((x) => (x.f || x).name).join(', ') + (list.length > 6 ? ` … +${fmtNum(list.length - 6)}` : '') });
   const msg = el('div');
   const d = openDialog({
@@ -155,9 +167,9 @@ function confirmDrop(app, known, fresh, folders, tagIds, onTag) {
       known.length ? el('div', { class: 'drop-part' }, el('b', { text: `${fmtNum(known.length)} already in your library` }), checks.length ? ' get the ticked tags.' : ' - nothing to do without a tag.', names(known)) : null,
       fresh.length ? el('div', { class: 'drop-part' },
         el('label', { class: 'chk' }, copy, el('span', {}, el('b', { text: `${fmtNum(fresh.length)} new` }), ': copy into this folder (they keep their date), then tag')),
-        destField(app, dest, { title: 'Copy the dropped files into…' }), names(fresh),
-        el('div', { class: 'p-hint small', text: inShell() ? 'Copied from where they are. Inside the library they are indexed and tagged; elsewhere only copied.'
-          : 'A page can\'t see where dropped files are, so new ones are copied. Inside the library they are indexed and tagged; elsewhere only copied.' })) : null,
+        destField(app, dest, { title: 'Copy the dropped files into…', onPick: paintWhere }), where, names(fresh),
+        el('div', { class: 'p-hint small', text: inShell() ? 'Copied from where they are.'
+          : 'A page can\'t see where dropped files are, so new ones are copied.' })) : null,
       newFolders.length ? el('div', { class: 'drop-part' },
         el('label', { class: 'chk' }, addFolders, el('span', {}, el('b', { text: `${fmtNum(newFolders.length)} folder${newFolders.length === 1 ? '' : 's'}` }), ': add to the library (indexed with all subfolders)')),
         el('div', { class: 'muted small', text: newFolders.map((f) => f.path).join(', ') })) : null,
@@ -172,18 +184,32 @@ function confirmDrop(app, known, fresh, folders, tagIds, onTag) {
       const add = addFolders.checked ? newFolders.map((f) => f.path) : [];
       if (doCopy && !dest.value.trim()) { setKids(msg, el('div', { class: 'err', text: 'Choose a folder for the new files' })); dest.focus(); return; }
       if (!tags.length && !doCopy && !add.length) { setKids(msg, el('div', { class: 'err', text: 'Nothing to do: tick a tag, or copy the new files' })); return; }
-      if (doCopy) pp.set('drop.dest', dest.value.trim());
+      const target = dest.value.trim();
+      if (doCopy) pp.set('drop.dest', target);
       if (never.checked) prefs.set('drop.ask', false);
       close();
-      run(app, known, fresh, tags, dest.value.trim(), doCopy, folders.filter((f) => !f.path).length, add);
+      run(app, known, fresh, tags, target, doCopy, folders.filter((f) => !f.path).length, add,
+        doCopy && addDest.checked && !app.isLibraryPath(target));
     } }],
   });
   return d;
 }
 
-async function run(app, known, fresh, tagIds, dest, doCopy, folders, addFolders) {
+/** Where new files go: the library folder open in the grid (dropped onto the grid), else the last
+ * folder used in this project, else a folder Inbox in the first library folder. */
+function dropDest(app, onTag, saved) {
+  const here = app.query.folder && app.isLibraryPath(app.query.folder) ? app.query.folder : '';
+  if (here && !onTag) return here;
+  if (saved) return saved;
+  if (here) return here;
+  const root = (app.state?.roots || []).find((r) => r.kind !== 'browse');
+  return root ? `${root.path.replace(/[\\/]+$/, '')}${app.state?.sep || '/'}Inbox` : '';
+}
+
+async function run(app, known, fresh, tagIds, dest, doCopy, folders, addFolders, addDest = false) {
   let got = null;
   const failed = [];
+  if (addDest && !(await app.sidebar.addRoot(dest, { create: true }))) return;   // it said why
   if (doCopy && fresh.length) {
     const batch = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let k = 0;

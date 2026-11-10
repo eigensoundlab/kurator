@@ -182,3 +182,94 @@ def test_quits_when_stdin_closes(tmp_path):
         if p.poll() is None:
             p.kill()
             p.wait()
+
+
+# --------------------------------------------- after trying the desktop app (0.19.0)
+def test_tagged_files_in_a_browsed_folder_show_in_the_tag(env):
+    """A tag (or project) shows all its files - also those in a folder only browsed - as its count says."""
+    c, db, sc, lib, tmp = env
+    other = tmp / "elsewhere"
+    other.mkdir()
+    Image.new("RGB", (20, 10), "pink").save(other / "outside.png")
+    c.post("/api/browse", json={"path": str(other)}, headers=H)
+    wait(sc)
+    out_id = c.get("/api/items", params={"folder": str(other)}).json()["ids"][0]
+    in_id = ids_by_name(c)["shot0.png"]
+    t = c.post("/api/tags", json={"name": "Eryxian Music"}, headers=H).json()
+    c.post(f"/api/tags/{t['id']}/apply", json={"ids": [out_id, in_id], "op": "add"}, headers=H)
+    assert sorted(c.get("/api/items", params={"tag": str(t["id"])}).json()["ids"]) == sorted([out_id, in_id])
+    assert out_id not in c.get("/api/items").json()["ids"]                     # "All library items": the library only
+    assert next(x for x in c.get("/api/tags").json()["tags"] if x["id"] == t["id"])["count"] == 2
+
+
+def test_add_library_folder_that_doesnt_exist_yet(env):
+    c, db, sc, lib, tmp = env
+    new = tmp / "drops" / "Inbox"
+    assert c.post("/api/roots", json={"path": str(new)}, headers=H).status_code == 400
+    r = c.post("/api/roots", json={"path": str(new), "create": True}, headers=H).json()
+    assert new.is_dir() and r["path"] == str(new)
+
+
+def test_regenerate_previews(env):
+    c, db, sc, lib, tmp = env
+    ids = ids_by_name(c)
+    i = ids["shot1.png"]
+    h = db.cat.execute("SELECT hash FROM files WHERE id = ?", (i,)).fetchone()[0]
+    assert c.get(f"/t/{i}", params={"s": 1600}).status_code == 200 and db.has_thumb(h, 1600)
+    tver = c.get(f"/api/items/{i}").json().get("tver")
+    assert c.post("/api/remake", json={"ids": [i, 99999]}, headers=H).json() == {"queued": 1}
+    assert not db.has_thumb(h, 1600)
+    wait(sc)
+    assert db.cat.execute("SELECT status FROM files WHERE id = ?", (i,)).fetchone()[0] == 1 and db.has_thumb(h, 256)
+    assert tver is None or c.get(f"/api/items/{i}").json().get("tver") != tver
+
+
+def test_picture_as_png_for_the_clipboard(env, tmp_path):
+    c, db, sc, lib, tmp = env
+    i = ids_by_name(c)["shot1.png"]
+    r = c.get(f"/api/items/{i}/png")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    import io
+    assert Image.open(io.BytesIO(r.content)).size == (41, 30)
+    p = c.get(f"/api/items/{i}/png", params={"file": 1}).json()["path"]
+    assert os.path.isfile(p) and Image.open(p).size == (41, 30)
+    assert c.get("/api/items/424242/png").status_code == 404
+
+
+def test_svg_page_or_everything_in_the_viewer(env):
+    c, db, sc, lib, tmp = env
+    (lib / "a" / "page.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">'
+                                        '<rect x="10" y="10" width="50" height="50" fill="red"/><rect x="150" y="20" width="40" height="40" fill="blue"/></svg>')
+    sc.request_scan()
+    wait(sc)
+    i = ids_by_name(c)["page.svg"]
+    page = c.get(f"/f/{i}", params={"all": 0}).text
+    everything = c.get(f"/f/{i}", params={"all": 1}).text
+    assert 'viewBox="0 0 100 100"' in page and 'viewBox="0 0 100 100"' not in everything
+    assert 'viewBox="0 0 190' in everything.replace("190.0", "190")
+
+
+def test_opening_the_page_from_another_site(env):
+    """The desktop app's start page (another origin) may open Kurator; nothing else cross-site."""
+    c, *_ = env
+    nav = {"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"}
+    assert c.get("/", headers=nav).status_code == 200
+    assert c.get("/api/state", headers=nav).status_code == 403
+    assert c.get("/", headers={"sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors"}).status_code == 403
+
+
+def test_slow_file_named_while_indexing():
+    from kurator.scanner import Scanner as S
+
+    class F:
+        def __init__(self, run): self.run = run
+        def running(self): return self.run
+
+    s = S.__new__(S)
+    s.state = {"slow": None}
+    a, b = F(True), F(False)
+    started = {a: time.time() - 30}
+    s._note_slow({a: "/x/big.blend", b: "/x/small.png"}, started)
+    assert s.state["slow"]["name"] == "big.blend" and s.state["slow"]["secs"] >= 30 and b not in started
+    s._note_slow({b: "/x/small.png"}, {})
+    assert s.state["slow"] is None

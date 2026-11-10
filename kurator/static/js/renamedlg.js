@@ -12,8 +12,8 @@ const PARTS = [['{name}', 'the current name'], ['{n}', 'counter (padding below, 
 const PRESETS = [['{name}', 'Keep (find / replace, case)'], ['{date}_{name}', 'Date first'], ['{folder}_{n}', 'Folder + number'],
   ['{tag}_{n}', 'Tag + number'], ['{project}_{tag}_{n}', 'Project, tag, number'], ['{date:%Y%m%d}_{n}', 'Date + number']];
 
-export function openRenameDialog(app) {
-  const ids = app.selected.size ? app.items.ids.filter((id) => app.selected.has(id)) : app.tagTargets();   // grid order
+export function openRenameDialog(app, only = null) {
+  const ids = only || (app.selected.size ? app.items.ids.filter((id) => app.selected.has(id)) : app.tagTargets());   // grid order
   if (!ids.length) { app.toast('Select files to rename first'); return; }
   const pp = projPrefs(app);
   const P = pp.get('rename', {});

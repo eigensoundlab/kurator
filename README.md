@@ -153,7 +153,8 @@ Nothing ticked means all types. The choice is remembered.
 - SVG files are shown sandboxed (no scripts), even in the viewer.
 - SVG sizes in mm, cm, in or pt (Inkscape's default) render correctly. A drawing whose page has no
   size (width 0) shows everything it contains. **⚙ Settings → SVG: show all objects** grows the
-  page of every drawing to take in objects lying outside it, in previews and in the viewer.
+  page of every drawing to take in objects lying outside it, in previews and in the viewer. In the
+  viewer, right-click → *Show what is outside the page* switches between the two for the session.
 
 ### Sound files
 
@@ -381,8 +382,11 @@ group of the type filter.
     embedded ones). PNG, JPEG, WebP, TGA, DDS, TIFF, BMP, PSD, KTX2 (also Basis Universal, glTF
     `KHR_texture_basisu`), EXR and HDR textures work. The
     geometry shows first, the textures follow.
-  - **View:** *Lit*, *Base colour*, *Clay* (no textures), *Normals*, *UV checker*. Click a map in
-    the list to see only that map on the model.
+  - **View:** *Lit*, *Base colour (flat)*, *Clay* (no textures), *Matcap*, *Random colours* (one per
+    part), *Normals*, *UV checker*. Click a map in the list to see only that map on the model.
+  - **Matcaps** (Clay, Studio grey, Red wax, Jade, Skin, Chrome, Toon; **M** goes through them) and
+    **Cavity** (**C**: ridges lighter, hollows darker, from the surface's curvature) - as in
+    Blender's solid view. A right-click that doesn't move the model opens the menu with all of these.
   - **Lights:** Studio, Sun and sky, Rim light, Headlight, Soft. **Alt+drag** turns the lights,
     **L** switches to the next preset. *Smooth* uses the file's normals; *DirectX normals* flips
     the green channel of normal maps made for DirectX/Unreal.
@@ -772,6 +776,12 @@ Drag files from Explorer, Finder or another app onto Kurator:
   choose - remembered per project - keeping their modified time, then indexed and tagged.
 - One confirmation shows both groups; **Don't ask again** skips it (⚙ Settings → *Dropping files*
   brings it back). **Ctrl+Z** takes the tags off and deletes the copied files.
+- **New files go where you look:** dropped onto the grid of a library folder, into that folder;
+  otherwise the folder used last in the project, else *Inbox* in your first library folder. A
+  folder outside the library gets a ticked *Add this folder to the library*, so the files show,
+  tagged - unticked they are only copied there.
+- **A tag or project shows all its files**, also those in a folder you only browsed (*Open…*):
+  its count already included them.
 - Folders are left out: add them with *Add…* in the sidebar.
 - **In the desktop app** the paths are known: library files are found by path, new files are
   copied from where they are (nothing is uploaded), and **dropped folders can be added to the
@@ -781,8 +791,14 @@ Drag files from Explorer, Finder or another app onto Kurator:
 ### Right-click menu and Open with
 
 Right-click a **thumbnail** for Open, **Open with** (a submenu of programs), Show in Explorer /
-Finder, Copy path, Copy to…, Move to…, Send to a quick destination…, Rename…, Resample… and
-Delete… - for the right-clicked file, or for the selection if it is part of it. On a **folder**
+Finder, Copy path, **Copy picture** (full size, also from PSD, EXR, Krita, SVG…), Copy to…, Move
+to…, Send to a quick destination…, Rename…, Resample…, **Regenerate preview** and Delete… - for the
+right-clicked file, or for the selection if it is part of it. **In the viewer** the menu fits the
+shown file: on a picture *Copy colour #rrggbb* (under the pointer), fit / 100 %, background,
+pixel-art zoom, lit preview, inks, an SVG's content beyond its page, PDF pages; on a 3D model
+shading, matcap, lights, cavity, smooth shading; on a video play / pause, 5 seconds back or on,
+**Save this frame as a picture** (next to the video, Ctrl+Z deletes it); on a sound play / pause
+and export the selection - then the file commands for this file only. On a **folder**
 (sidebar, path bar): Open, Show in Explorer / Finder, Copy path, Pin, copy or move the selected
 files there, add it to or remove it from the library. On a **tag or project**: show it, narrow the
 view to it, hide its files, add it to or remove it from the selected items, edit it. On the empty
@@ -977,9 +993,12 @@ by filter"*.
 | Backspace | parent folder |
 | Space | quick look: tap to open, **hold to peek** and release to return (on a sound: play/stop) |
 | Enter / double-click | viewer |
+| Mouse back / forward, Alt+← / Alt+→ | back: closes the viewer, then the folders, tags and projects you visited · forward |
+| Right-click | a menu for thumbnails, folders, tags, the grid - and in the viewer for the shown file |
 | Ctrl+wheel, + / − | thumbnail size |
 | / | search (start with `?` to search by description with AI) |
 | **Viewer:** ← → · X · 1…9 / T / Q · wheel/drag · 0 / Z · B · N | prev/next · toggle selection · tag the shown image (Q: last tag) · zoom/pan · fit / toggle 100% · background (dark/gray/light/checker) · pixel-art zoom |
+| **3D viewer:** L · M · C | next light · matcap (next one) · cavity |
 
 *Show only selected* in the status bar works as a temporary basket view.
 

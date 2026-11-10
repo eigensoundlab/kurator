@@ -16,8 +16,8 @@ const PRESETS = [
   ['Pixel art ×2', { mode: 'percent', value: 200, filter: 'nearest', enlarge: true }], ['Pixel art ×4', { mode: 'percent', value: 400, filter: 'nearest', enlarge: true }],
 ];
 
-export function openResampleDialog(app) {
-  const ids = app.selected.size ? app.items.ids.filter((id) => app.selected.has(id)) : app.tagTargets();
+export function openResampleDialog(app, only = null) {
+  const ids = only || (app.selected.size ? app.items.ids.filter((id) => app.selected.has(id)) : app.tagTargets());
   if (!ids.length) { app.toast('Select some pictures first'); return; }
   const pp = projPrefs(app);
   const P = pp.get('resample', {});

@@ -20,6 +20,25 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
 - Yes/no questions (remove a library folder, delete a tag, a backup set, a tag pool, empty the trash
   folder) are asked in the page instead of the browser's box, which the macOS app doesn't have.
 - `--quit-on-stdin-close`: Kurator quits when its standard input closes (how the app runs it).
+- **Back / Forward** (mouse buttons, Alt+← →): Back closes the viewer, then returns through the
+  folders, tags, projects and searches you visited. In the app, Back no longer leaves Kurator for
+  a page saying *cross-site request blocked*.
+- **The viewer's right-click menu** fits the file: *Copy colour #rrggbb* under the pointer, fit /
+  100 %, background, pixel-art zoom, lit preview, inks, an SVG's content beyond its page, PDF pages;
+  3D shading, matcap, lights, cavity; video play / pause, 5 s back or on, **Save this frame as a
+  picture**; sound play / pause, export the selection - then Open, Open with, Copy path, Copy to,
+  Move to, Rename, Resample, Delete for the shown file only.
+- **Copy picture** (thumbnails, viewer): the picture full size on the clipboard, from any kind of
+  picture Kurator reads. **Regenerate preview** makes thumbnails and previews again.
+- **3D viewer like Blender's solid view:** *Matcap* (Clay, Studio grey, Red wax, Jade, Skin, Chrome,
+  Toon; **M**), *Random colours* per part, *Base colour (flat)*, and **Cavity** (**C**): ridges
+  lighter, hollows darker, from each vertex's curvature.
+- **Drops land in the library:** onto the grid of a library folder they go into that folder; else
+  the project's last folder, else *Inbox* in the first library folder. A folder outside the library
+  gets a ticked *Add this folder to the library*, so the files show with their tags.
+- **A tag or project shows all its files**, also those in folders you only browsed (its count
+  already included them).
+- While indexing, the status line names a file that takes long (*working on big.blend (2 min 10 s)*).
 - **CI:** the desktop app is built for Windows, macOS (Apple silicon + Intel) and Linux on every
   change to it, started against Kurator (`--selftest`), and attached to published releases; macOS is
   signed and notarized once the Apple secrets are set.

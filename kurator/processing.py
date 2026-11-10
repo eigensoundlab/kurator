@@ -159,6 +159,31 @@ def colour_info(img: Image.Image) -> tuple[int, list]:
     return mask, pal
 
 
+def render_png(path: str, max_side: int = 8192) -> bytes:
+    """A file's picture as PNG, as large as the file has it (up to max_side): Copy picture. Works for
+    every kind of picture Kurator reads - layered files, EXR, Krita, SVG..."""
+    handler = handler_for(os.path.splitext(path)[1].lower())
+    if handler is None or handler.kind != "image":
+        raise ValueError("Only pictures can be copied")
+    with open(path, "rb") as f:
+        data = f.read()
+    loaded = handler.load(data, path, max_side)
+    img = loaded.image
+    if img is None or loaded.meta.get("placeholder"):
+        raise ValueError("Kurator can't read the picture in this file")
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    img.load()
+    img = _normalise_mode(img)
+    if max(img.size) > max_side:
+        img.thumbnail((max_side, max_side), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "PNG", compress_level=1)
+    return buf.getvalue()
+
+
 def process_file(path: str, sizes: tuple[int, ...] = (GRID_SIZE,)) -> dict:
     """Return a result dict; never raises (errors are reported in result['error'])."""
     out: dict = {"path": path}

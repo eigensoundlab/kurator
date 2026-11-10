@@ -133,12 +133,12 @@ def _union(a: tuple, b: tuple) -> tuple:
     return x0, y0, max(a[0] + a[2], b[0] + b[2]) - x0, max(a[1] + a[3], b[1] + b[3]) - y0
 
 
-def svg_for_view(data: bytes) -> bytes | None:
-    """For the viewer: the SVG with its page set around all of its content (show-all setting, or a
-    page of zero size). None when the original is fine as it is."""
+def svg_for_view(data: bytes, everything: bool | None = None) -> bytes | None:
+    """For the viewer: the SVG with its page set around all of its content (show-all setting - or
+    `everything`, the viewer's own switch - or a page of zero size). None when the original is fine."""
     text = _svg_text(data)
     page = _page_box(text[:4000])
-    if page is not None and not show_all():
+    if page is not None and not (show_all() if everything is None else everything):
         return None
     box = content_box(text, page)
     if box is None:

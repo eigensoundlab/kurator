@@ -36,7 +36,7 @@ export const api = {
     return req('GET', '/api/items?' + q, undefined, signal);
   },
   item: (id, signal) => req('GET', `/api/items/${id}`, undefined, signal),
-  addRoot: (path) => req('POST', '/api/roots', { path }),
+  addRoot: (path, create = false) => req('POST', '/api/roots', { path, create }),
   removeRoot: (id) => req('DELETE', `/api/roots/${id}`),
   scan: () => req('POST', '/api/scan', {}),
   // browsing & pins
@@ -115,6 +115,7 @@ export const api = {
   apps: () => req('GET', '/api/apps'),
   saveApps: (custom, hidden) => req('PUT', '/api/apps', { custom, hidden }),
   openWith: (app, ids) => req('POST', '/api/open-with', { app, ids }),
+  remake: (ids) => req('POST', '/api/remake', { ids }),
   sendSlots: () => req('GET', '/api/send-slots'),
   setSendSlots: (scope, slots) => req('PUT', '/api/send-slots', { scope, slots }),
   undoOp: (id) => req('POST', `/api/operations/${id}/undo`, {}),

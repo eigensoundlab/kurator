@@ -215,12 +215,12 @@ export class Sidebar {
     this.renderLibrary();
   }
 
-  async addRoot(path) {
+  async addRoot(path, { create = false } = {}) {
     const p = (path ?? this.input.value).trim();
     if (!p) return;
     this.msg.textContent = '';
     try {
-      const r = await api.addRoot(p);
+      const r = await api.addRoot(p, create);
       this.input.value = '';
       this.paintFieldButtons();
       await this.app.refreshState();

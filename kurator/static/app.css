@@ -681,3 +681,5 @@ details.delivery label.chk { white-space: normal; }
 .apps-own { display: flex; flex-direction: column; gap: 6px; }
 .apps-row input[type="text"]:first-child { width: 150px; flex: none; }
 .apps-row .grow { flex: 1; min-width: 0; }
+.ctxmenu.ticks .pm-tick { width: 14px; flex: none; color: var(--accent, #7aa2ff); }
+.drop-where { margin: 4px 0 2px; }

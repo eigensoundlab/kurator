@@ -40,7 +40,8 @@ export async function nativeMenu(items) {
   if (!M?.Menu) return false;
   const conv = (list, keys) => list.map((it) => (it === '-' ? { item: 'Separator' }
     : it.items ? { text: it.label, enabled: !it.disabled && it.items.length > 0, items: conv(it.items, keys) }
-      : { text: it.label, enabled: !it.disabled, accelerator: keys ? accel(it.key) : undefined, action: () => it.run?.() }));
+      : { text: it.label, enabled: !it.disabled, accelerator: keys ? accel(it.key) : undefined, action: () => it.run?.(),
+        ...(it.checked !== undefined ? { checked: !!it.checked } : {}) }));
   try { last?.close?.().catch(() => {}); } catch { /* already gone */ }
   last = null;
   for (const keys of [true, false]) {   // shortcuts shown beside the items; without them if the system objects
@@ -71,4 +72,21 @@ export async function pickFile(title) {
     const r = await T().core.invoke('plugin:dialog|open', { options: { title, multiple: false, directory: false } });
     return typeof r === 'string' ? r : r?.path || null;
   } catch (e) { console.warn('Kurator desktop: no Open dialog', e); return null; }
+}
+
+/** A catalog file's picture to the clipboard, full size. The desktop app takes it from a PNG Kurator
+ * writes; a browser from the PNG itself (it allows that right after a click only). */
+export async function writeClipboardImage(id) {
+  if (inShell()) {
+    const r = await fetch(`/api/items/${id}/png?file=1`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    await T().core.invoke('plugin:clipboard-manager|write_image', { image: (await r.json()).path });
+    return;
+  }
+  // the PNG as a promise: the clipboard call itself must come straight after the click
+  const png = fetch(`/api/items/${id}/png`).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    return r.blob();
+  });
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
 }

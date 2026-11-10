@@ -398,6 +398,21 @@ class Database:
             c.execute("DELETE FROM roots WHERE id = ?", (root_id,))
             c.execute("COMMIT")
 
+    def remake_files(self, ids: list[int]) -> int:
+        """Make these files' previews again (Regenerate preview): they are processed on the next pass
+        and their cached pictures - thumbnails, the large preview, a video's strip - are dropped."""
+        n = 0
+        with self.write_lock:
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                q = ",".join("?" * len(chunk))
+                hashes = [r[0] for r in self.cat.execute(f"SELECT DISTINCT hash FROM files WHERE id IN ({q}) AND hash IS NOT NULL", chunk)]
+                n += self.cat.execute(f"UPDATE files SET status = 0, tver = tver + 1 WHERE id IN ({q}) AND status IN (1, 2)", chunk).rowcount
+                for j in range(0, len(hashes), 900):
+                    hs = hashes[j:j + 900]
+                    self.thm.execute(f"DELETE FROM thumbs WHERE hash IN ({','.join('?' * len(hs))})", hs)
+        return n
+
     def remake_previews(self, where: str, args: tuple = ()) -> int:
         """Process matching files again (their previews could be better now) on the next scan."""
         with self.write_lock:

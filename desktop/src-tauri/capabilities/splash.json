@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-get-status",
+    "allow-show-kurator",
     "allow-retry",
     "allow-pick-home",
     "allow-open-logs",
