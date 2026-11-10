@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import __version__, apps, assets, backup, dates, fileops, playhead_index, projects, rclone, rules, tags, xmp
+from . import __version__, apps, assets, backup, dates, fileops, playhead_index, projects, rclone, rules, sfxlink, tags, xmp
 from . import similar as similar_mod
 from .sheets import SheetError
 from . import stacks as stacks_mod
@@ -160,6 +160,7 @@ class SettingsIn(BaseModel):
     proof_profile: str | None = None
     rclone_path: str | None = None
     update_check: bool | None = None   # ask GitHub once a day whether there is a newer Kurator
+    sfx_url: str | None = None         # where SFX Workbench is ("": the web app)
 
 
 class ConnectIn(BaseModel):
@@ -240,6 +241,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         host = request.headers.get("host", "")
         if host not in allowed_hosts:
             return JSONResponse({"detail": "forbidden host"}, status_code=403)
+        if request.url.path.startswith("/api/sfx/link/"):
+            return await _sfx_cors(request, call_next)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("origin")
             if origin not in allowed_origins:
@@ -264,6 +267,24 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         )
         return resp
 
+    async def _sfx_cors(request: Request, call_next):
+        """The SFX Workbench link: pages from SFX Workbench's address only (another site, even one
+        with the token, gets nothing), and what the link allows is checked by its token."""
+        origin = request.headers.get("origin")
+        if not sfxlink.origin_ok(db, origin):
+            return JSONResponse({"detail": "Only SFX Workbench can use this link (its address is in Settings)"}, status_code=403)
+        cors = {"Access-Control-Allow-Origin": origin, "Vary": "Origin", "Access-Control-Expose-Headers": "Content-Length",
+                "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers={**cors, "Access-Control-Allow-Methods": "GET, POST",
+                                                      "Access-Control-Allow-Headers": "Content-Type",
+                                                      "Access-Control-Allow-Private-Network": "true",
+                                                      "Access-Control-Max-Age": "600"})
+        resp = await call_next(request)
+        for k, v in cors.items():
+            resp.headers[k] = v
+        return resp
+
     inflight: dict[tuple[int, int], object] = {}
     inflight_lock = threading.Lock()
 
@@ -272,6 +293,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.exception_handler(OpError)
     @app.exception_handler(apps.AppError)
+    @app.exception_handler(sfxlink.LinkError)
     @app.exception_handler(TagError)
     @app.exception_handler(RuleError)
     @app.exception_handler(BackupError)
@@ -307,6 +329,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             "sep": os.sep,
             "proof_profile": bool(db.get_setting("proof_profile", None)),
             "backup_due": backup.due(db),
+            "sfx": sfxlink.inbox(),
         })
 
     def _norm_path(p: str) -> str:
@@ -766,7 +789,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                       "svg_all": db.get_setting("svg_all", False), "data_dir": db.data_dir,
                       "proof_profile": db.get_setting("proof_profile", None),
                       "rclone_path": db.get_setting("rclone_path", None),
-                      "update_check": db.get_setting("update_check", True)})
+                      "update_check": db.get_setting("update_check", True),
+                      "sfx_url": sfxlink.address(db), "sfx_default": sfxlink.DEFAULT_URL,
+                      "sfx_links": len(sfxlink.active(db))})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
@@ -795,6 +820,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                 scanner.request_scan()
         if body.update_check is not None:
             db.set_setting("update_check", body.update_check)
+        if body.sfx_url is not None:
+            u = sfxlink.check_address(body.sfx_url)
+            db.set_setting("sfx_url", None if u in ("", sfxlink.DEFAULT_URL) else u)
         if body.rclone_path is not None:
             p = body.rclone_path.strip().strip('"')
             if p and not os.path.isfile(p):
@@ -1945,6 +1973,68 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             raise HTTPException(400, "The files are missing on disk")
         name = apps.open_with(db, str(body.get("app") or ""), paths, layout, durations)
         return _json({"app": name, "files": len(paths), "layout": layout})
+
+    # -- SFX Workbench: sounds there, results back (see sfxlink.py) -----------------------
+    @app.post("/api/sfx/share")
+    def sfx_share(body: dict):
+        """{ids: [sounds] (none: new sounds), dest: folder for the results, tags: [ids], label} -> {url, ...}"""
+        return _json(sfxlink.create(db, f"http://127.0.0.1:{port}", list(body.get("ids") or []),
+                                    str(body.get("dest") or ""), [int(t) for t in body.get("tags") or []],
+                                    str(body.get("label") or "")))
+
+    @app.get("/api/sfx/links")
+    def sfx_links():
+        return _json({"links": sfxlink.active(db)})
+
+    @app.delete("/api/sfx/links")
+    def sfx_end_links():
+        return _json({"ended": sfxlink.end_all(db)})
+
+    def _link(token: str) -> dict:
+        link = sfxlink.find(db, token)
+        if link is None:
+            raise HTTPException(404, "This link has ended. Send the sounds from Kurator again.")
+        return link
+
+    @app.get("/api/sfx/link/{token}")
+    def sfx_manifest(token: str):
+        return _json(sfxlink.manifest(db, _link(token)))
+
+    @app.get("/api/sfx/link/{token}/file/{n}")
+    def sfx_file(token: str, n: int):
+        path = sfxlink.file_path(db, _link(token), n)
+        return FileResponse(path, media_type=mimetypes.guess_type(path)[0] or "application/octet-stream",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/sfx/link/{token}/save")
+    async def sfx_save(request: Request, token: str, name: str, src: str = ""):
+        """One result (the request body, a WAV): a new file in the link's folder, never over another."""
+        import uuid
+        link = _link(token)
+        if not sfxlink.accepts(name):
+            raise HTTPException(400, f"{os.path.basename(name)}: send sounds (WAV, FLAC, OGG...)")
+        if not os.path.isdir(link["dest"]):
+            try:
+                os.makedirs(link["dest"], exist_ok=True)
+            except OSError as e:
+                raise HTTPException(400, f"Can't use {link['dest']}: {e.strerror or e}") from None
+        tmp = os.path.join(link["dest"], f".kurator-sfx-{uuid.uuid4().hex}.part")
+        size = 0
+        try:
+            with open(tmp, "wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > sfxlink.MAX_BYTES:
+                        raise HTTPException(413, "That sound is too large to send (2 GB at most)")
+                    f.write(chunk)
+            if not size:
+                raise HTTPException(400, "The sound arrived empty")
+            from_ = [int(x) for x in src.split(",") if x.strip().lstrip("-").isdigit()]
+            res = await run_in_threadpool(sfxlink.received, db, scanner, token, link, tmp, name, from_)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        return _json(res)
 
     @app.get("/api/update")
     def update_info(force: int = 0):

@@ -820,6 +820,25 @@ GIMP, MyPaint): one OpenRaster file with a layer per picture, the first on top -
 opening each file and copying it over. The project or picture is written to Kurator's cache (kept a
 week): save it from the program where you want it.
 
+### SFX Workbench: sounds out, results back
+
+[SFX Workbench](https://eigensoundlab.github.io/SFXWorkbench/) is a web app for game sound effects
+(stretch, re-pitch, vary, morph, layer, generate). Right-click sounds → **Send to SFX Workbench…**:
+they open there, from any folder, tag or project. Whatever you save there (the output, the source,
+variations, slices, loops) comes back **as new files**: into the folder you choose (by default next
+to the first sound), never over another file, tagged **SFX Workbench** (Source group) plus the open
+project and the tags the view is filtered by, with the sound it was made from as its *source*. On a
+folder, tag, project or the empty grid, **New sounds in SFX Workbench…** opens it empty, for
+generated sounds. Kurator shows *From SFX Workbench: …* when something arrives.
+
+Kurator gives SFX Workbench a private link: a random key in the part of the address after `#`,
+which browsers never send to the web server. Only pages from SFX Workbench's address can use it,
+only for those sounds and that one folder; it ends a day after its last use (⚙ Settings → *SFX
+Workbench* → *End all links*), and Kurator keeps only its hash. Chrome and Edge ask once whether
+SFX Workbench may *connect to apps on this device*: allow it. Firefox works too; Safari does not
+let web pages reach apps on the computer. Your own copy of SFX Workbench works as well (⚙ Settings
+→ *SFX Workbench* → *Address*: its web address or the path of `sfx-workbench.html`).
+
 ### Quick destinations (D, then 1–9)
 
 Folders with a number that copy or move the selection at once, without a dialog:

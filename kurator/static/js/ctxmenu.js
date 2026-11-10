@@ -7,6 +7,7 @@ import { openAppsDialog } from './appsdlg.js';
 import { LIGHTS, MATCAPS, VIEW_MODES } from './meshview.js';
 import { openRegionDialog } from './regiondlg.js';
 import { openSendMenu } from './senddlg.js';
+import { sendToSfx } from './sfxdlg.js';
 import { inShell, nativeMenu, writeClipboard, writeClipboardImage } from './shell.js';
 import { el, extOf, fmtNum } from './util.js';
 import { BGS } from './viewer.js';
@@ -70,10 +71,12 @@ async function fileItems(app, ids) {
   const n = ids.length;
   const ow = await openWithItems(app, ids);
   const images = ow.kinds.has('image');
+  const sounds = ow.kinds.size === 1 && ow.kinds.has('audio');
   const s = n === 1 ? '' : ` ${fmtNum(n)} files`;
   return [
     { label: n === 1 ? 'Open' : `Open${s}`, key: 'O', disabled: n > 20, run: () => openAll(app, ids) },
     { label: 'Open with', items: ow.items },
+    ...(sounds ? [{ label: n === 1 ? 'Send to SFX Workbench…' : `Send ${fmtNum(n)} sounds to SFX Workbench…`, disabled: n > 200, run: () => sendToSfx(app, ids) }] : []),
     { label: REVEAL, run: () => api.reveal(ids[0]).catch((e) => app.toast(e.message)) },
     { label: n === 1 ? 'Copy path' : `Copy ${fmtNum(n)} paths`, run: async () => copyText(app, (await api.paths(ids)).paths.join('\n'), n === 1 ? 'the path' : plural(n, 'path')) },
     ...(n === 1 && images ? [{ label: 'Copy picture', run: () => copyImage(app, ids[0]) }] : []),
@@ -135,6 +138,7 @@ async function viewerItems(app, x, y) {
     ...own, ...(own.length ? ['-'] : []),
     { label: 'Open', key: 'O', run: () => openAll(app, one) },
     { label: 'Open with', items: ow.items },
+    ...(ow.kinds.has('audio') ? [{ label: 'Send to SFX Workbench…', run: () => sendToSfx(app, one) }] : []),
     { label: REVEAL, run: () => api.reveal(id).catch((e) => app.toast(e.message)) },
     { label: 'Copy path', run: async () => copyText(app, (await api.paths(one)).paths.join('\n'), 'the path') },
     ...(ow.kinds.has('image') ? [{ label: 'Copy picture', run: () => copyImage(app, id) }] : []),
@@ -183,6 +187,7 @@ function folderItems(app, path) {
     '-',
     { label: `Copy ${here} here`, disabled: !n, run: async () => { try { app.onCopied(await api.copy({ ids: sel, dest: path, keep_tags: true })); } catch (e) { app.toast(e.message); } } },
     { label: `Move ${here} here`, disabled: !n, run: async () => { try { app.onMoved(await api.move({ ids: sel, dest: path })); } catch (e) { app.toast(e.message); } } },
+    ...(inLib ? [{ label: 'New sounds in SFX Workbench…', run: () => sendToSfx(app, [], { dest: path }) }] : []),
     '-',
     isRoot ? { label: 'Remove from library…', run: () => app.sidebar.removeRoot(path) }
       : inLib ? { label: 'In the library', disabled: true } : { label: 'Add to library', run: () => app.sidebar.addRoot(path) },
@@ -201,6 +206,7 @@ function tagItems(app, t) {
     '-',
     { label: n ? `Add to ${plural(n, 'item')}` : 'Add to the selected items', disabled: !n, run: () => app.applyTag(t.id, { op: 'add' }) },
     { label: n ? `Remove from ${plural(n, 'item')}` : 'Remove from the selected items', disabled: !n, run: () => app.applyTag(t.id, { op: 'remove' }) },
+    { label: 'New sounds in SFX Workbench…', run: () => sendToSfx(app, [], { tags: [...new Set([...(app.projects.active && app.projects.active !== t.id ? [app.projects.active] : []), t.id])] }) },
     '-',
     { label: project ? 'Edit project…' : 'Edit tag…', run: () => app.tags.editDialog(t) },
   ];
@@ -211,6 +217,8 @@ function gridItems(app) {
   return [
     { label: 'Select all', key: 'Ctrl+A', run: () => app.selectAll() },
     { label: 'Invert selection', run: () => app.invertSelection() },
+    '-',
+    { label: 'New sounds in SFX Workbench…', run: () => sendToSfx(app, []) },
     ...(f ? ['-', { label: `${REVEAL}: this folder`, run: () => api.revealFolder(f).catch((e) => app.toast(e.message)) }] : []),
   ];
 }

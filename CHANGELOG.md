@@ -8,6 +8,12 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
   it again). Kurator asks GitHub once a day; ⚙ Settings → *Updates* turns it off or looks now.
 - **Open with, in one piece:** sounds → *REAPER: one track each* (a project with a track per
   sound); pictures → *Krita: as layers of one picture* (also GIMP, MyPaint; an OpenRaster file).
+- **SFX Workbench link:** right-click sounds → *Send to SFX Workbench…* opens them in the web app;
+  what is saved there comes back as new files (never over another), tagged *SFX Workbench* plus
+  the project / view tags, with the sound it was made from as its source. *New sounds in SFX
+  Workbench…* on folders, tags and the grid. A private, origin-locked link that ends a day after
+  its last use; ⚙ Settings → *SFX Workbench* (address, end all links). Needs SFX Workbench with
+  the Kurator link (its next version).
 - The status line keeps refreshing even if painting it fails once, and catches up as soon as the
   window is back in view. Errors in the page go to Kurator's log (`[page] …`); the desktop app has
   developer tools (Ctrl+Shift+I).

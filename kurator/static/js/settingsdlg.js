@@ -54,6 +54,22 @@ export async function openSettingsDialog(app) {
     try { await api.saveSettings({ update_check: upd.checked }); app.toast(upd.checked ? 'Kurator looks for a newer version once a day' : 'No more looking for new versions'); }
     catch (e) { app.toast(e.message); upd.checked = !upd.checked; }
   };
+  // SFX Workbench: where it is, ask before sending, the links Kurator has given it
+  const sfxUrl = el('input', { type: 'text', value: st.sfx_url || '', spellcheck: 'false', placeholder: st.sfx_default || '' });
+  sfxUrl.onchange = async () => {
+    try { const r = await api.saveSettings({ sfx_url: sfxUrl.value.trim() }); sfxUrl.value = r.sfx_url; app.toast('SFX Workbench address saved'); }
+    catch (e) { app.toast(e.message, 5000); }
+  };
+  const sfxAsk = el('input', { type: 'checkbox' });
+  sfxAsk.checked = prefs.get('sfx.ask', true);
+  sfxAsk.onchange = () => prefs.set('sfx.ask', sfxAsk.checked);
+  const sfxLinks = el('span', { class: 'p-hint small', text: st.sfx_links ? `${fmtNum(st.sfx_links)} link${st.sfx_links === 1 ? '' : 's'} open` : 'No links open' });
+  const sfxEnd = el('button', { class: 'btn small', type: 'button', text: 'End all links', disabled: !st.sfx_links,
+    title: 'SFX Workbench can then neither read the sounds sent to it nor send anything back, until you send sounds again',
+    onclick: async () => {
+      try { const r = await api.sfxEndLinks(); sfxLinks.textContent = 'No links open'; sfxEnd.disabled = true; app.toast(`Ended ${fmtNum(r.ended)} link${r.ended === 1 ? '' : 's'}`); }
+      catch (e) { app.toast(e.message); }
+    } });
   const svgAll = el('input', { type: 'checkbox' });
   svgAll.checked = !!st.svg_all;
   svgAll.onchange = async () => {
@@ -182,6 +198,12 @@ export async function openSettingsDialog(app) {
       el('h3', { text: 'Open with' }),
       el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Programs…', onclick: () => openAppsDialog(app) }),
         el('span', { class: 'p-hint small', text: 'Right-click a thumbnail → Open with: Krita, Photoshop, Blender, Audacity… found on this computer, and any you add.' })),
+      el('h3', { text: 'SFX Workbench' }),
+      el('div', { class: 'p-hint small', text: 'Right-click sounds → Send to SFX Workbench: they open there, and "Send to Kurator" brings what you make back here as new files, tagged SFX Workbench. Right-click a folder or tag → New sounds in SFX Workbench. Kurator gives it a private link for those sounds only; it ends a day after its last use.' }),
+      el('label', {}, 'Address', sfxUrl),
+      el('div', { class: 'p-hint small', text: 'Leave empty for the web app. Your own copy works too: its web address, or the path of the offline file sfx-workbench.html.' }),
+      el('label', { class: 'chk' }, sfxAsk, 'Ask where results go before opening SFX Workbench'),
+      el('div', { class: 'row' }, sfxEnd, sfxLinks),
       el('h3', { text: 'Dropping files' }),
       el('label', { class: 'chk' }, dropAsk, 'Ask before adding files dropped from Explorer / Finder'),
       el('div', { class: 'p-hint small', text: 'Files already in the library get the tag or project they are dropped onto; new ones are copied into a folder (remembered per project). Without asking, the last folder and the tags of the drop are used.' }),

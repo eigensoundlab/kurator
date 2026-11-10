@@ -25,6 +25,7 @@ import { openResampleDialog } from './resampledlg.js';
 import { openRulesDialog } from './rulesdlg.js';
 import { openSendMenu, openSlotEditor } from './senddlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
+import { noteArrivals } from './sfxdlg.js';
 import { openSheetsDialog } from './sheetsdlg.js';
 import { dragOut, inShell } from './shell.js';
 import { installErrorLog, reportError } from './errlog.js';
@@ -208,6 +209,7 @@ class App {
       this.stJob.textContent = `${j.kind === 'ai' ? 'AI' : j.kind === 'restore' ? 'Restoring' : 'Backing up'} ${pct}% · ${fmtNum(j.files_done)}/${fmtNum(j.files_total)}`;
     } else this.stJob.textContent = '';
     this.paintBackupDue(st.backup_due || [], j.running);
+    noteArrivals(this, st.sfx);
   }
 
   /** "Backup due" reminder in the status bar (sets with a schedule, see Backup → set → When). */
