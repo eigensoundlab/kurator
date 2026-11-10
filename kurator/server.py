@@ -8,6 +8,7 @@ import math
 import mimetypes
 import os
 import threading
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -158,6 +159,7 @@ class SettingsIn(BaseModel):
     svg_all: bool | None = None
     proof_profile: str | None = None
     rclone_path: str | None = None
+    update_check: bool | None = None   # ask GitHub once a day whether there is a newer Kurator
 
 
 class ConnectIn(BaseModel):
@@ -763,7 +765,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                       "delete_mode": trash.mode(db), "trash_days": trash.keep_days(db), "system_trash": trash.system_available(),
                       "svg_all": db.get_setting("svg_all", False), "data_dir": db.data_dir,
                       "proof_profile": db.get_setting("proof_profile", None),
-                      "rclone_path": db.get_setting("rclone_path", None)})
+                      "rclone_path": db.get_setting("rclone_path", None),
+                      "update_check": db.get_setting("update_check", True)})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
@@ -790,6 +793,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             os.environ["KURATOR_SVG_ALL"] = "1" if body.svg_all else "0"   # read by the SVG renderer (also in workers)
             if db.remake_previews("ext IN ('.svg', '.svgz')"):
                 scanner.request_scan()
+        if body.update_check is not None:
+            db.set_setting("update_check", body.update_check)
         if body.rclone_path is not None:
             p = body.rclone_path.strip().strip('"')
             if p and not os.path.isfile(p):
@@ -1888,6 +1893,19 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             f.write(png)
         return _json({"path": out})
 
+    client_log = {"n": 0, "t": 0.0}
+
+    @app.post("/api/client-log")
+    def page_error(body: dict):
+        """An error in the page, written to Kurator's log (at most 30 a minute)."""
+        now = time.time()
+        if now - client_log["t"] > 60:
+            client_log.update(n=0, t=now)
+        client_log["n"] += 1
+        if client_log["n"] <= 30:
+            print(f"[page] {str(body.get('text') or '')[:2000]}", file=sys.stderr, flush=True)
+        return _json({"ok": True})
+
     @app.post("/api/remake")
     def remake(body: dict):
         """{ids}: make their previews again (after a renderer got better, or a file looks wrong)."""
@@ -1908,16 +1926,36 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
 
     @app.post("/api/open-with")
     def open_with(body: dict):
-        """{app: id from /api/apps, ids: [catalog ids]}"""
-        ids = [int(i) for i in (body.get("ids") or [])][:apps.MAX_FILES]
-        paths = []
+        """{app: id from /api/apps, ids: [catalog ids], layout: null | "tracks" | "layers"}: layout puts
+        the files together first - sounds as tracks of a REAPER project, pictures as layers of one picture."""
+        layout = body.get("layout") or None
+        if layout not in (None, "tracks", "layers"):
+            raise HTTPException(400, "layout: tracks or layers")
+        ids = [int(i) for i in (body.get("ids") or [])][:200 if layout else apps.MAX_FILES]
+        paths, durations = [], []
         for i in ids:
-            row = db.cat.execute("SELECT path FROM files WHERE id = ?", (i,)).fetchone()
+            row = db.cat.execute("SELECT path, meta FROM files WHERE id = ?", (i,)).fetchone()
             if row and os.path.exists(row[0]):
                 paths.append(row[0])
+                try:
+                    durations.append(json.loads(row[1] or "{}").get("duration"))
+                except ValueError:
+                    durations.append(None)
         if not paths:
             raise HTTPException(400, "The files are missing on disk")
-        return _json({"app": apps.open_with(db, str(body.get("app") or ""), paths), "files": len(paths)})
+        name = apps.open_with(db, str(body.get("app") or ""), paths, layout, durations)
+        return _json({"app": name, "files": len(paths), "layout": layout})
+
+    @app.get("/api/update")
+    def update_info(force: int = 0):
+        """Is there a newer Kurator (GitHub's latest release, asked at most once a day)?"""
+        from . import updates
+        return _json(updates.check(db, bool(force)))
+
+    @app.post("/api/update/skip")
+    def update_skip(body: dict):
+        db.set_setting("update_skip", str(body.get("version") or "") or None)
+        return _json({"ok": True})
 
     # -- thumbnails / originals --------------------------------------------
     def _generate(item_id: int, path: str, size: int, need_full: bool) -> dict:

@@ -90,3 +90,13 @@ export async function writeClipboardImage(id) {
   });
   await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
 }
+
+/** The desktop app's own version (null in a browser). */
+export async function appVersion() {
+  try { return inShell() ? await T().core.invoke('plugin:app|version') : null; } catch { return null; }
+}
+
+/** The desktop app: stop Kurator, run its update script, start it again (the start page shows meanwhile). */
+export async function updateKurator() {
+  await T().core.invoke('update_kurator');
+}

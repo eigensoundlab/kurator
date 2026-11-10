@@ -683,3 +683,4 @@ details.delivery label.chk { white-space: normal; }
 .apps-row .grow { flex: 1; min-width: 0; }
 .ctxmenu.ticks .pm-tick { width: 14px; flex: none; color: var(--accent, #7aa2ff); }
 .drop-where { margin: 4px 0 2px; }
+.st-update { color: var(--accent, #7aa2ff); }

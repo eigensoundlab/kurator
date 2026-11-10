@@ -2,6 +2,18 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## Unreleased (0.19.1)
+- **Updates:** *⬆ Kurator x.y.z* in the status bar when a newer version is out - what is new, how to
+  update; in the desktop app **Update now** (stops Kurator, runs `update.bat` / `update.sh`, starts
+  it again). Kurator asks GitHub once a day; ⚙ Settings → *Updates* turns it off or looks now.
+- **Open with, in one piece:** sounds → *REAPER: one track each* (a project with a track per
+  sound); pictures → *Krita: as layers of one picture* (also GIMP, MyPaint; an OpenRaster file).
+- The status line keeps refreshing even if painting it fails once, and catches up as soon as the
+  window is back in view. Errors in the page go to Kurator's log (`[page] …`); the desktop app has
+  developer tools (Ctrl+Shift+I).
+- Desktop CI: release tags `v0.19.0`, `0.19.0` and `v.0.19.0` are all understood; *Run workflow*
+  can attach the installers to an existing release.
+
 ## 0.19.0 – Desktop app, right-click menu, Open with
 - **Desktop app** (optional, `desktop/`, Tauri 2, app id `com.eigensound.kurator`): Kurator in its
   own window. It finds your Kurator folder (or asks once), starts Kurator without a console window -

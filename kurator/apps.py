@@ -50,6 +50,17 @@ KNOWN = [
 ]
 
 
+# several files in one piece: sounds as tracks of a project, pictures as layers of one picture
+LAYOUTS = {"reaper": "tracks", "krita": "layers", "gimp": "layers", "mypaint": "layers"}
+
+
+def layout_of(app_id: str, path: str) -> str | None:
+    if app_id in LAYOUTS:
+        return LAYOUTS[app_id]
+    base = os.path.basename(path).lower()
+    return next((v for k, v in LAYOUTS.items() if k in base), None)
+
+
 def _program_dirs() -> list[str]:
     dirs = [os.environ.get(k) for k in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")]
     local = os.environ.get("LOCALAPPDATA")
@@ -119,10 +130,12 @@ def list_apps(db: Database) -> list[dict]:
         path = _find(win, mac, cmds)
         if path:
             out.append({"id": app_id, "name": name, "kinds": list(kinds), "exts": list(exts) if exts else None,
-                        "path": path, "custom": False, "hidden": app_id in hidden})
+                        "path": path, "custom": False, "hidden": app_id in hidden, "layout": layout_of(app_id, path)})
     for c in s["custom"]:
-        out.append({"id": _custom_id(c["path"]), "name": c["name"], "kinds": list(c.get("kinds") or KINDS), "exts": None,
-                    "path": c["path"], "custom": True, "hidden": False, "missing": not os.path.exists(c["path"])})
+        cid = _custom_id(c["path"])
+        out.append({"id": cid, "name": c["name"], "kinds": list(c.get("kinds") or KINDS), "exts": None,
+                    "path": c["path"], "custom": True, "hidden": False, "missing": not os.path.exists(c["path"]),
+                    "layout": layout_of(cid, c["path"])})
     return out
 
 
@@ -152,13 +165,27 @@ def command(path: str, files: list[str]) -> list[str]:
     return [path, *files]
 
 
-def open_with(db: Database, app_id: str, files: list[str]) -> str:
-    """Start the app with the files; returns its name."""
+def open_with(db: Database, app_id: str, files: list[str], layout: str | None = None,
+              durations: list[float | None] | None = None) -> str:
+    """Start the app with the files - or, with layout, with one project of them (tracks: a REAPER
+    project; layers: an OpenRaster picture). Returns the app's name."""
     app = next((a for a in list_apps(db) if a["id"] == app_id), None)
     if app is None:
         raise AppError("That program is no longer installed - see Settings → Open with")
     if not os.path.exists(app["path"]):
         raise AppError(f"{app['name']}: {app['path']} is missing")
+    if layout:
+        from . import handoff
+        if layout != app.get("layout"):
+            raise AppError(f"{app['name']} can't open files as {layout}")
+        out = handoff.folder(db.data_dir)
+        try:
+            if layout == "tracks":
+                files = [handoff.reaper_project(list(zip(files[:200], durations or [None] * len(files))), out)]
+            else:
+                files = [handoff.openraster(files[:64], out)]
+        except (OSError, ValueError) as e:
+            raise AppError(f"Could not put the files together: {e}") from None
     files = files[:MAX_FILES]
     kw: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL,
                 "close_fds": True}

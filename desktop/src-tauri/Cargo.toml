@@ -15,7 +15,7 @@ path = "src/main.rs"
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2.12", features = ["image-png"] }
+tauri = { version = "2.12", features = ["image-png", "devtools"] }
 tauri-plugin-clipboard-manager = "2.5"
 tauri-plugin-dialog = "2.8"
 tauri-plugin-drag = "2.1"

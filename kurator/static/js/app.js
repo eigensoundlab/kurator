@@ -27,6 +27,8 @@ import { openSendMenu, openSlotEditor } from './senddlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
 import { openSheetsDialog } from './sheetsdlg.js';
 import { dragOut, inShell } from './shell.js';
+import { installErrorLog, reportError } from './errlog.js';
+import { checkForUpdate, openUpdateDialog } from './updatedlg.js';
 import { Sidebar } from './sidebar.js';
 import { Tags } from './tags.js';
 import { TypeFilter } from './typefilter.js';
@@ -103,8 +105,11 @@ class App {
     this.bindGridPointer();
     this.bindKeys();
     installDrop(this);   // files dropped from Explorer / Finder
+    installErrorLog();          // errors in the page go to Kurator's log as well
     installContextMenu(this);   // right-click: thumbnails, folders, tags, the grid
     this.installHistory();      // Back / Forward: the viewer, then the folders and tags you visited
+    this.installWakeUp();       // the status line catches up when the window comes back
+    setTimeout(() => checkForUpdate(this), 15000);   // a newer Kurator? (asks GitHub once a day; Settings → off)
     this.tags.refresh();
     this.projects.refresh();
     this.refreshState().then(async () => {
@@ -218,7 +223,18 @@ class App {
 
   poll() {
     const busy = this.state && (this.state.scan.phase !== 'idle' || this.state.job?.running || this.state.ai_job?.running);
-    setTimeout(async () => { await this.refreshState(); this.poll(); }, busy ? 1000 : 4000);
+    clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(async () => {
+      // an error while painting the state must not end the polling: the status line would freeze
+      try { await this.refreshState(); } catch (e) { reportError('status', e); } finally { this.poll(); }
+    }, busy ? 1000 : 4000);
+  }
+
+  /** Back to the window (it may have been hidden, and its timers slowed down): the state now. */
+  installWakeUp() {
+    const wake = () => { if (document.visibilityState === 'visible') { this.refreshState().catch((e) => reportError('status', e)); this.poll(); } };
+    document.addEventListener('visibilitychange', wake);
+    addEventListener('focus', wake);
   }
 
   setFolder(path) {
@@ -1338,11 +1354,12 @@ class App {
     this.stSel = el('span', { class: 'st-sel' });
     this.stJob = el('span', { class: 'st-job', title: 'Open Backup', onclick: () => openBackupDialog(this) });
     this.stDue = el('button', { class: 'btn small st-due', style: { display: 'none' }, onclick: () => openBackupDialog(this) });
+    this.stUpdate = el('button', { class: 'btn small st-update', style: { display: 'none' }, onclick: () => openUpdateDialog(this) });
     this.autoPlayBtn = el('button', { class: 'btn small', title: 'Play sounds when you click them or move onto them with the arrow keys (P)',
       onclick: () => this.setAutoPlay(!this.autoPlay) });
     this.showSelBtn = el('button', { class: 'btn small', text: 'Show only selected', title: 'Temporarily show only the selected items',
       onclick: () => { this.showSel = !this.showSel; this.showSelBtn.classList.toggle('on', this.showSel); this.applyView({ keepScroll: false }); } });
-    bar.append(this.stCount, this.stScan, this.stJob, this.stDue, el('div', { class: 'spacer' }), this.autoPlayBtn, this.stSel,
+    bar.append(this.stCount, this.stScan, this.stJob, this.stDue, this.stUpdate, el('div', { class: 'spacer' }), this.autoPlayBtn, this.stSel,
       el('button', { class: 'btn small', text: 'All', title: 'Select all (Ctrl+A)', onclick: () => this.selectAll() }),
       el('button', { class: 'btn small', text: 'Invert', title: 'Invert selection (Ctrl+I)', onclick: () => this.invertSelection() }),
       el('button', { class: 'btn small', text: 'Clear', title: 'Clear selection (Esc)', onclick: () => this.clearSelection() }),

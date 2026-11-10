@@ -2,6 +2,7 @@
 
 import { api } from './api.js';
 import { openAppsDialog } from './appsdlg.js';
+import { openUpdateDialog } from './updatedlg.js';
 import { PH_HOME, PH_PAPER, phEnabled, phGridPref, phLib, phSetEnabled, phSetGridPref } from './playhead.js';
 import { ask, openDialog } from './dialog.js';
 import { openPhLibraryDialog } from './phlibdlg.js';
@@ -46,6 +47,12 @@ export async function openSettingsDialog(app) {
     phRow.style.display = ph.checked ? '' : 'none';
     if (ph.checked) fillLooks();
     app.toast(ph.checked ? 'Playhead analysis is on: choose it in the waveform\'s style menu' : 'Playhead analysis is off');
+  };
+  const upd = el('input', { type: 'checkbox' });
+  upd.checked = st.update_check !== false;
+  upd.onchange = async () => {
+    try { await api.saveSettings({ update_check: upd.checked }); app.toast(upd.checked ? 'Kurator looks for a newer version once a day' : 'No more looking for new versions'); }
+    catch (e) { app.toast(e.message); upd.checked = !upd.checked; }
   };
   const svgAll = el('input', { type: 'checkbox' });
   svgAll.checked = !!st.svg_all;
@@ -169,6 +176,9 @@ export async function openSettingsDialog(app) {
       st.system_trash === false ? el('div', { class: 'warn small', text: 'The system trash needs the Send2Trash package: run update.bat / update.sh once.' }) : null,
       el('div', { class: 'p-hint small', text: "Either way Ctrl+Z brings files back, with their tags. From the system trash you can also restore files yourself - Kurator gives them their tags back. Kurator's trash folder is its data folder when that is on the same disk, else a hidden .kurator-trash folder at the top of the disk: deleting is instant and keeps everything until it is emptied." }),
       daysRow,
+      el('h3', { text: 'Updates' }),
+      el('div', { class: 'row' }, el('label', { class: 'chk', title: 'Asks GitHub for the latest release; nothing else is sent' }, upd, 'Look for a newer Kurator once a day'),
+        el('button', { class: 'btn small', type: 'button', text: 'Look now', onclick: () => openUpdateDialog(app) })),
       el('h3', { text: 'Open with' }),
       el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Programs…', onclick: () => openAppsDialog(app) }),
         el('span', { class: 'p-hint small', text: 'Right-click a thumbnail → Open with: Krita, Photoshop, Blender, Audacity… found on this computer, and any you add.' })),

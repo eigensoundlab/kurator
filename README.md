@@ -43,7 +43,10 @@ packages are never touched.
   runs [`pip-audit`](https://pypi.org/project/pip-audit/) to check them for known vulnerabilities
   (`tools/audit_deps.py`: every installed package except Kurator itself, which isn't on PyPI).
 - **Update** does `git pull` (if you cloned the repository) and then the same upgrade + audit. Once
-  the AI features are installed, updates keep them.
+  the AI features are installed, updates keep them. **Kurator tells you when a newer version is
+  out** (*⬆ Kurator 0.20.0* in the status bar: what is new, how to update; the desktop app updates
+  with one button). It asks GitHub once a day - the only request it makes on its own; ⚙ Settings
+  → *Updates* turns it off.
 - **`ai`** adds PyTorch and open_clip (2–3 GB). On Windows with an NVIDIA card, the script installs
   the CUDA build of PyTorch (the default one from PyPI is CPU-only there) and checks that the GPU
   works. On Linux the default PyTorch already includes CUDA; on Apple Silicon it uses Metal.
@@ -811,6 +814,12 @@ REAPER, VLC - for the kinds of files they open. *Open with → Programs…* (or 
 with*) hides found ones and adds any other program: its `.exe`, `.app` or command, and which files
 it is offered for. Only programs on this list can be started.
 
+Several files **in one piece**: selected sounds → *REAPER: one track each* (a REAPER project with a
+track per sound, all starting at 0); selected pictures → *Krita: as layers of one picture* (also
+GIMP, MyPaint): one OpenRaster file with a layer per picture, the first on top - quicker than
+opening each file and copying it over. The project or picture is written to Kurator's cache (kept a
+week): save it from the program where you want it.
+
 ### Quick destinations (D, then 1–9)
 
 Folders with a number that copy or move the selection at once, without a dialog:
@@ -1143,6 +1152,9 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
   (a fuzz test feeds it damaged files). The optional `basisu` tool runs as a separate process
   with a time limit, on a temporary copy. The frontend has
   **zero** third-party dependencies.
+- **Updates:** Kurator asks `api.github.com` for the latest release once a day (nothing is sent but
+  the request); ⚙ Settings → *Updates* turns it off. Errors in the page are written to Kurator's own
+  log (the console, or `kurator-server.log` in the desktop app), nowhere else.
 - **Desktop app:** its window shows only its start page and Kurator; other pages open in your
   browser. Kurator's page may use only file drops, dragging files out, the system's menu, the
   clipboard and the Open dialog, granted for `http://127.0.0.1:<port>` alone. Open with starts only

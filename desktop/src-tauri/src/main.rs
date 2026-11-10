@@ -34,7 +34,7 @@ const START_FLAG: &str = "--quit-on-stdin-close";
 
 #[derive(Clone, Serialize, Default)]
 struct Status {
-    /// starting | need-home | error | ready
+    /// starting | updating | need-home | error | ready
     phase: String,
     message: String,
     detail: String,
@@ -52,6 +52,9 @@ struct Shell {
     starting: AtomicBool,
     granted: Mutex<Vec<u16>>,
     selftest: bool,
+    /// the Kurator folder in use, and the start page's address (shown again while Kurator updates)
+    home: Mutex<Option<PathBuf>>,
+    start_page: Mutex<Option<Url>>,
 }
 
 // ------------------------------------------------------------------ logs
@@ -239,6 +242,7 @@ fn run_start(app: &AppHandle) {
         return set_status(app, "error", "No free port for Kurator", format!("Ports {PORT}-{} are all in use.", PORT + 49));
     };
     let shell = app.state::<Shell>();
+    *shell.home.lock().unwrap() = Some(home.clone());
     let mut graceful = true;
     loop {
         set_status(app, "starting", "Starting Kurator…", home.display().to_string());
@@ -298,6 +302,8 @@ fn grant(app: &AppHandle, port: u16) {
         .permission("clipboard-manager:allow-write-text")
         .permission("clipboard-manager:allow-write-image")
         .permission("dialog:allow-open")
+        .permission("core:app:allow-version")
+        .permission("allow-update-kurator")
         .permission("allow-selftest-report");
     if let Err(e) = app.add_capability(cap) {
         log(app, &format!("capability for the page: {e}"));   // the page still shows, as in a browser
@@ -372,6 +378,56 @@ fn show_kurator(app: AppHandle) {
     let url = app.state::<Shell>().status.lock().unwrap().url.clone();
     if let (Ok(url), Some(w)) = (Url::parse(&url), app.get_webview_window("main")) {
         let _ = w.navigate(url);
+    }
+}
+
+/// Kurator's page, "Update now": stop Kurator, run update.bat / update.sh in its folder (the newest
+/// code and packages), start it again. The start page shows meanwhile.
+#[tauri::command]
+fn update_kurator(app: AppHandle) -> Result<(), String> {
+    let shell = app.state::<Shell>();
+    if shell.child.lock().unwrap().is_none() {
+        return Err("This Kurator was started outside the app (kurator.bat): close it, run update.bat (update.sh) in the Kurator folder, then start it again.".into());
+    }
+    let Some(home) = shell.home.lock().unwrap().clone() else { return Err("No Kurator folder".into()) };
+    thread::spawn(move || run_update(&app, &home));
+    Ok(())
+}
+
+fn run_update(app: &AppHandle, home: &Path) {
+    set_status(app, "updating", "Updating Kurator…", "The newest version and its packages - this takes a minute or two.");
+    if let (Some(url), Some(w)) = (app.state::<Shell>().start_page.lock().unwrap().clone(), app.get_webview_window("main")) {
+        let _ = w.navigate(url);
+    }
+    stop_server(app);
+    let log_path = log_dir(app).join("update.log");
+    let result = (|| -> std::io::Result<std::process::ExitStatus> {
+        let out = fs::File::create(&log_path)?;
+        let err = out.try_clone()?;
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "update.bat", "nopause"]);
+            c
+        } else {
+            let mut c = Command::new("bash");
+            c.arg("update.sh");
+            c
+        };
+        cmd.current_dir(home).stdin(Stdio::null()).stdout(out).stderr(err);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
+        cmd.status()
+    })();
+    match result {
+        Ok(st) if st.success() => {
+            log(app, "update done");
+            start(app.clone());
+        }
+        Ok(st) => set_status(app, "error", format!("The update stopped ({st})"), tail(&log_path, 30)),
+        Err(e) => set_status(app, "error", "The update did not start", e.to_string()),
     }
 }
 
@@ -457,7 +513,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_drag::init())
         .manage(Shell { selftest, ..Default::default() })
-        .invoke_handler(tauri::generate_handler![get_status, show_kurator, retry, pick_home, open_logs, open_help, selftest_report])
+        .invoke_handler(tauri::generate_handler![get_status, show_kurator, update_kurator, retry, pick_home, open_logs, open_help, selftest_report])
         .setup(move |app| {
             let h = app.handle().clone();
             let nav = h.clone();
@@ -485,6 +541,9 @@ fn main() {
                     }
                 })
                 .build()?;
+            if let Some(w) = app.get_webview_window("main") {
+                *app.state::<Shell>().start_page.lock().unwrap() = w.url().ok();
+            }
             if selftest {
                 let h2 = h.clone();
                 thread::spawn(move || {

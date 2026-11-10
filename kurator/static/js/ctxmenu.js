@@ -51,7 +51,17 @@ async function openWithItems(app, ids) {
   const exts = new Set(names.map((nm) => `.${extOf(nm)}`));
   const kinds = new Set([...exts].map((e) => kindOf[e]));
   const fits = (a) => !a.hidden && !a.missing && [...kinds].every((k) => a.kinds.includes(k)) && (!a.exts || [...exts].every((e) => a.exts.includes(e)));
-  const list = apps.filter(fits).map((a) => ({ label: a.name, run: () => openWith(app, a, ids) }));
+  const list = [];
+  for (const a of apps.filter(fits)) {
+    list.push({ label: a.name, run: () => openWith(app, a, ids) });
+    // several sounds as tracks of one REAPER project; several pictures as layers of one picture
+    if (ids.length > 1 && a.layout === 'tracks' && [...kinds].every((k) => k === 'audio')) {
+      list.push({ label: `${a.name}: one track each`, run: () => openWith(app, a, ids, 'tracks') });
+    }
+    if (ids.length > 1 && a.layout === 'layers' && [...kinds].every((k) => k === 'image')) {
+      list.push({ label: `${a.name}: as layers of one picture`, run: () => openWith(app, a, ids, 'layers') });
+    }
+  }
   return { items: [...list, ...(list.length ? ['-'] : []), { label: 'Programs…', run: () => openAppsDialog(app) }], kinds };
 }
 
@@ -149,11 +159,13 @@ async function openAll(app, ids) {
   }
 }
 
-async function openWith(app, a, ids) {
+async function openWith(app, a, ids, layout = null) {
+  if (layout) app.toast(layout === 'tracks' ? `Making a REAPER project of ${plural(ids.length, 'sound')}…` : `Putting ${plural(ids.length, 'picture')} together as layers…`, 30000);
   try {
-    const r = await api.openWith(a.id, ids);
-    app.toast(`Opening ${plural(r.files, 'file')} in ${r.app}${ids.length > r.files ? ` (the first ${fmtNum(r.files)})` : ''}`);
-  } catch (e) { app.toast(e.message, 4000); }
+    const r = await api.openWith(a.id, ids, layout);
+    app.toast(layout ? `Opening ${plural(r.files, 'file')} in ${r.app} as ${layout === 'tracks' ? 'tracks of one project' : 'layers of one picture'} - save it from there`
+      : `Opening ${plural(r.files, 'file')} in ${r.app}${ids.length > r.files ? ` (the first ${fmtNum(r.files)})` : ''}`, 5000);
+  } catch (e) { app.toast(e.message, 5000); }
 }
 
 function folderItems(app, path) {

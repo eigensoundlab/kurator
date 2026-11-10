@@ -25,6 +25,9 @@ The browser still works the same: the app is optional.
   Krita or SVG files, ready to paste into another program.
 - **Links** open in your default browser; files the page saves (markers for REAPER / Audacity) go to
   Downloads.
+- **Update now:** when a newer Kurator is out (*⬆ Kurator x.y.z* in the status bar), the app stops
+  Kurator, runs `update.bat` / `update.sh` in its folder and starts it again. The app itself is
+  updated by installing the new version from the release page.
 - **One window:** starting the app again brings the open window to the front. Its size and place
   are remembered.
 
@@ -64,7 +67,9 @@ Set these as environment variables before starting the app:
 The app's logs (`desktop.log`, and `kurator-server.log` with Kurator's own output) are in
 `%LOCALAPPDATA%\com.eigensound.kurator\logs`, `~/Library/Logs/com.eigensound.kurator` or
 `~/.local/share/com.eigensound.kurator/logs`. When Kurator doesn't start, the window shows the end
-of its log and a button to open the folder.
+of its log and a button to open the folder. Errors in Kurator's page are written to
+`kurator-server.log` as well (lines starting with `[page]`), and **Ctrl+Shift+I** (macOS: ⌥⌘I) opens
+the developer tools of the window - its *Console* shows them as they happen.
 
 ## Building it yourself
 
@@ -165,6 +170,9 @@ Until then SmartScreen asks before the first start (see above).
 1. Set the version in `pyproject.toml`, `kurator/__init__.py`, `desktop/package.json`,
    `desktop/src-tauri/Cargo.toml` and `desktop/src-tauri/tauri.conf.json` (the tests check that the
    desktop files agree).
-2. Publish the GitHub release with the tag `v<version>`. The *Desktop app* workflow builds the three
+2. Publish the GitHub release with the tag `v<version>` - `v0.19.0`, no dot after the v (the
+   workflow also accepts `0.19.0`). The *Desktop app* workflow builds the three
    systems, checks the tag against the app's version and attaches the installers to the release
    (about 20 minutes).
+3. If that went wrong: fix the cause, then Actions → *Desktop app* → *Run workflow* with the
+   release's tag in *Attach the installers to this existing release*.

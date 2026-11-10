@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import socket
 import subprocess
@@ -130,7 +131,7 @@ def test_open_with_programs(env, monkeypatch):
     started = []
     monkeypatch.setattr(apps.subprocess, "Popen", lambda cmd, **k: started.append((cmd, k)))
     res = c.post("/api/open-with", json={"app": saved[0]["id"], "ids": [ids["shot0.png"], ids["shot1.png"]]}, headers=H).json()
-    assert res == {"app": "paint", "files": 2}
+    assert res == {"app": "paint", "files": 2, "layout": None}
     cmd, kw = started[0]
     assert cmd == [str(prog), str(lib / "a" / "shot0.png"), str(lib / "a" / "shot1.png")]
     assert kw["stdin"] == subprocess.DEVNULL
@@ -273,3 +274,74 @@ def test_slow_file_named_while_indexing():
     assert s.state["slow"]["name"] == "big.blend" and s.state["slow"]["secs"] >= 30 and b not in started
     s._note_slow({b: "/x/small.png"}, {})
     assert s.state["slow"] is None
+
+
+# ---------------------------------------- updates, REAPER tracks, layers, page errors
+def test_update_check(env, monkeypatch):
+    from kurator import __version__, updates
+    c, db, sc, lib, tmp = env
+    calls = []
+
+    def fake(timeout=6):
+        calls.append(1)
+        return {"latest": "v99.0.0", "name": "Kurator 99", "url": "https://github.com/eigensoundlab/kurator/releases/tag/v99.0.0", "published": "2027-01-01"}
+    monkeypatch.setattr(updates, "_fetch", fake)
+    u = c.get("/api/update").json()
+    assert u["newer"] and u["latest"] == "v99.0.0" and u["current"] == __version__ and not u["skipped"]
+    c.get("/api/update")
+    assert len(calls) == 1                                                     # once a day
+    c.get("/api/update", params={"force": 1})
+    assert len(calls) == 2
+    c.post("/api/update/skip", json={"version": "v99.0.0"}, headers=H)
+    assert c.get("/api/update").json()["skipped"]
+    c.put("/api/settings", json={"update_check": False}, headers=H)
+    assert c.get("/api/update").json() ["enabled"] is False and len(calls) == 2
+    assert updates.version_tuple("v.0.19.0") == updates.version_tuple("0.19.0") == (0, 19, 0) < updates.version_tuple("v0.19.1")
+
+    def offline(timeout=6):
+        raise OSError("no network")
+    monkeypatch.setattr(updates, "_fetch", offline)
+    u = c.get("/api/update", params={"force": 1}).json()
+    assert u["error"] and u["latest"] == "v99.0.0"                               # what we knew stays
+
+
+def test_reaper_tracks_and_krita_layers(env, monkeypatch):
+    import wave
+    import zipfile
+    from kurator import apps
+    c, db, sc, lib, tmp = env
+    for n, secs in (("gravel", 1.5), ("wind", 0.25)):
+        with wave.open(str(lib / "a" / f"{n}.wav"), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000); w.writeframes(b"\0\0" * int(8000 * secs))
+    Image.new("RGBA", (30, 20), (255, 0, 0, 128)).save(lib / "a" / "top.png")
+    sc.request_scan()
+    wait(sc)
+    ids = ids_by_name(c)
+    reaper, krita = tmp / "reaper.exe", tmp / "krita.exe"
+    reaper.write_text(""); krita.write_text("")
+    monkeypatch.setattr(apps, "_find", lambda *a: None)
+    saved = {a["name"]: a for a in c.put("/api/apps", json={"custom": [{"name": "REAPER", "path": str(reaper)}, {"name": "Krita", "path": str(krita)}], "hidden": []}, headers=H).json()["apps"]}
+    assert saved["REAPER"]["layout"] == "tracks" and saved["Krita"]["layout"] == "layers"
+    started = []
+    monkeypatch.setattr(apps.subprocess, "Popen", lambda cmd, **k: started.append(cmd))
+    r = c.post("/api/open-with", json={"app": saved["REAPER"]["id"], "ids": [ids["gravel.wav"], ids["wind.wav"]], "layout": "tracks"}, headers=H).json()
+    assert r["layout"] == "tracks"
+    rpp = started[-1][-1]
+    text = open(rpp, encoding="utf-8").read()
+    assert rpp.endswith(".rpp") and text.count("<TRACK") == 2 and 'NAME "gravel"' in text and "LENGTH 1.500000" in text
+    assert f'FILE "{lib / "a" / "wind.wav"}"' in text and "<SOURCE WAVE" in text
+    c.post("/api/open-with", json={"app": saved["Krita"]["id"], "ids": [ids["top.png"], ids["shot1.png"]], "layout": "layers"}, headers=H)
+    ora = started[-1][-1]
+    with zipfile.ZipFile(ora) as z:
+        assert z.namelist()[0] == "mimetype" and z.read("mimetype") == b"image/openraster"
+        assert z.getinfo("mimetype").compress_type == zipfile.ZIP_STORED
+        stack = z.read("stack.xml").decode()
+        assert '<image w="41" h="30"' in stack and stack.index('name="top"') < stack.index('name="shot1"')
+        assert Image.open(io.BytesIO(z.read("data/layer0.png"))).size == (30, 20)
+    assert c.post("/api/open-with", json={"app": saved["REAPER"]["id"], "ids": [ids["top.png"]], "layout": "layers"}, headers=H).status_code == 400
+
+
+def test_page_errors_go_to_the_log(env, capsys):
+    c, *_ = env
+    assert c.post("/api/client-log", json={"text": "status: TypeError: x is undefined"}, headers=H).json()["ok"]
+    assert "[page] status: TypeError" in capsys.readouterr().err

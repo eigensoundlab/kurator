@@ -15,6 +15,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Attach the installers to this existing release (its tag, e.g. v0.19.0); empty: artifacts only"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -46,13 +51,30 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: The release is this version of the app
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release != ''
         shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.release }}
         run: |
           v=$(python3 -c "import json; print(json.load(open('desktop/src-tauri/tauri.conf.json'))['version'])")
-          if [ "${{ github.event.release.tag_name }}" != "v$v" ]; then
-            echo "::error::The release is ${{ github.event.release.tag_name }} but the desktop app says $v (desktop/src-tauri/tauri.conf.json, Cargo.toml, package.json)"
+          t="${TAG#v}"; t="${t#.}"          # v0.19.0, 0.19.0 and v.0.19.0 all mean 0.19.0
+          if [ "$t" != "$v" ]; then
+            echo "::error::The release's tag is $TAG but the desktop app is $v (desktop/src-tauri/tauri.conf.json, Cargo.toml, package.json). Tag releases v$v."
             exit 1
+          fi
+
+      - name: The release to attach the installers to
+        id: rel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release }}
+        run: |
+          if [ "${{ github.event_name }}" = release ]; then
+            echo "id=${{ github.event.release.id }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$TAG" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id) || { echo "::error::No release with the tag $TAG"; exit 1; }
+            echo "id=$id" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/setup-node@v7
@@ -120,7 +142,7 @@ jobs:
         with:
           projectPath: desktop
           args: ${{ matrix.args }} ${{ env.EXTRA_ARGS }}
-          releaseId: ${{ github.event_name == 'release' && github.event.release.id || '' }}
+          releaseId: ${{ steps.rel.outputs.id }}
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: "kurator-desktop-[platform]-[arch]-[bundle]"
 
