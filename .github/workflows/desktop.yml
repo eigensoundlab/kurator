@@ -156,7 +156,7 @@ jobs:
           python -m venv .venv
           if [ "$RUNNER_OS" = Windows ]; then PY=.venv/Scripts/python.exe; else PY=.venv/bin/python; fi
           "$PY" -m pip install -q --upgrade pip
-          "$PY" -m pip install -q -e .
+          "$PY" -m pip install -q -e ".[formats]"
 
       - name: Self-test (the app starts Kurator, shows its page, and the page can use the app)
         shell: bash

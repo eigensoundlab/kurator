@@ -19,7 +19,10 @@ class PageError(ValueError):
 
 
 def _open(path: str):
-    import pypdfium2 as pdfium
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        raise PageError("pages need pypdfium2, which has no build for this system (the installer said so)") from None
     if not os.path.isfile(path):
         raise PageError("the file is missing on disk")
     with open(path, "rb") as f:

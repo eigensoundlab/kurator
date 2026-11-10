@@ -11,6 +11,7 @@ from PIL import ExifTags, Image, features
 
 from .. import dates
 from . import Handler, Loaded, register
+from .common import mac_convert, mac_has
 
 # Artists have big canvases; allow up to ~400 MP, refuse beyond (protects memory).
 Image.MAX_IMAGE_PIXELS = 400_000_000
@@ -151,7 +152,13 @@ def _detect_generation(texts: dict, exif: dict | None) -> dict | None:
 
 
 def load(data: bytes, path: str, target: int | None) -> Loaded:
-    img = Image.open(io.BytesIO(data))
+    if _MAC_HEIF and path.lower().endswith((".heic", ".heif")):
+        img = mac_convert(path)
+        if img is None:
+            raise OSError("macOS could not decode this HEIC picture")
+        img.format = "HEIF"
+    else:
+        img = Image.open(io.BytesIO(data))
     meta: dict = {"format": img.format, "mode": img.mode}
     found: dict = {}
 
@@ -243,6 +250,8 @@ try:  # HEIC/HEIF (iPhone photos): decode-only build without GPL encoders
     _HEIF = True
 except Exception:
     _HEIF = False
+# Without pi-heif (no build for this Python yet), a Mac decodes HEIC itself (sips)
+_MAC_HEIF = not _HEIF and mac_has("sips")
 
 Image.init()
 _have = {e for e, fmt in Image.registered_extensions().items()}
@@ -256,6 +265,6 @@ _groups = {
     "texture": [".tga", ".dds", ".blp"],
 }
 for group, exts in _groups.items():
-    ok = [e for e in exts if e in _have or (e in (".heic", ".heif") and _HEIF)]
+    ok = [e for e in exts if e in _have or (e in (".heic", ".heif") and (_HEIF or _MAC_HEIF))]
     register(Handler("image", tuple(e for e in ok if e in _viewable), load, browser_viewable=True, group=group))
     register(Handler("image", tuple(e for e in ok if e not in _viewable), load, browser_viewable=False, group=group))

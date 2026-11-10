@@ -1,4 +1,4 @@
-"""Shared helpers for handlers: embedded previews, placeholder cards, Windows shell thumbnails."""
+"""Shared helpers for handlers: embedded previews, placeholder cards, Windows shell thumbnails, macOS converters."""
 
 from __future__ import annotations
 
@@ -6,6 +6,10 @@ import base64
 import io
 import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import zipfile
 
 from PIL import Image, ImageDraw, ImageFont
@@ -69,6 +73,60 @@ def placeholder(ext: str, note: str = "") -> Image.Image:
     if note:
         d.text((256, 460), note[:40], fill=(140, 150, 170), font=small, anchor="mm")
     return img
+
+
+# ---------------------------------------------------------------- macOS
+# macOS opens HEIC and PDF itself. When the packages Kurator uses for them have no build for this Python or
+# macOS version (see tools/install_extras.py), these built-in tools stand in.
+def mac_has(tool: str) -> bool:
+    return sys.platform == "darwin" and shutil.which(tool) is not None
+
+
+def mac_convert(path: str, timeout: float = 60) -> Image.Image | None:
+    """A picture macOS can open (HEIC, HEIF...) as JPEG made by sips, with its metadata (dates).
+    macOS only; None elsewhere or when sips can't."""
+    if not mac_has("sips"):
+        return None
+    fd, tmp = tempfile.mkstemp(suffix=".jpg", prefix="kurator-sips-")
+    os.close(fd)
+    try:
+        r = subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "best", path, "--out", tmp],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                           timeout=timeout, check=False)
+        if r.returncode or not os.path.getsize(tmp):
+            return None
+        with Image.open(tmp) as im:
+            im.load()
+            return im.copy()          # info (EXIF: the dates) comes along
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def quicklook_thumbnail(path: str, size: int = 1024, timeout: float = 60) -> Image.Image | None:
+    """The thumbnail Finder shows (Quick Look, qlmanage): for PDFs the first page. macOS only."""
+    if not mac_has("qlmanage"):
+        return None
+    with tempfile.TemporaryDirectory(prefix="kurator-ql-") as out:
+        try:
+            subprocess.run(["qlmanage", "-t", "-s", str(int(size)), "-o", out, path],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                           timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        made = [f for f in os.listdir(out) if f.lower().endswith(".png")]
+        if not made:
+            return None
+        try:
+            with Image.open(os.path.join(out, made[0])) as im:
+                im.load()
+                return im.copy()
+        except OSError:
+            return None
 
 
 # ---------------------------------------------------------------- Windows

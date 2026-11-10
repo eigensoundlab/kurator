@@ -29,9 +29,7 @@ dependencies = [
     "h11>=0.16.0",
     "watchdog>=7.0.0",
     "numpy>=2.0",
-    "pypdfium2>=5.14.0",   # PDF / Illustrator previews (Apache-2.0 / BSD-3)
     "resvg-py>=0.5.0",     # SVG rendering (MIT, resvg: Apache-2.0 / MIT)
-    "pi-heif>=1.4.0",      # HEIC/HEIF decoding only (BSD-3, no GPL encoders)
     "soundfile>=0.14.0",   # audio decoding (BSD-3, libsndfile LGPL - dynamically loaded)
     "tinytag>=2.3.2",      # audio tags (MIT)
     "zstandard>=0.25; python_version < '3.14'",   # compressed .blend files (BSD); built into Python 3.14+
@@ -39,10 +37,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Ready-made binary packages that are not built for every Python and system the day it comes out
+# (pi-heif for a brand-new Python, pypdfium2 for macOS older than 13). The installers add them one by
+# one, so one missing package never stops the install; Kurator works without them (on a Mac, macOS
+# itself decodes HEIC and renders PDF previews instead). tools/install_extras.py
+formats = [
+    "pi-heif>=1.4.0",      # HEIC/HEIF decoding only (BSD-3, no GPL encoders)
+    "pypdfium2>=5.14.0",   # PDF / Illustrator previews (Apache-2.0 / BSD-3)
+]
 audit = ["pip-audit>=2.10"]
 ai = ["torch>=2.6", "torchvision>=0.21", "open-clip-torch>=3.3", "transformers>=5.0"]   # optional AI features (install.bat ai): images + sounds (CLAP)
 3d = ["DracoPy>=2.2", "usd-core>=26.11", "texture2ddecoder>=1.0.6"]   # optional: Draco-compressed glTF, binary USD (install.bat 3d)
-dev = ["pytest>=8", "httpx2>=2.16", "pip-audit>=2.10"]
+dev = ["kurator[formats]", "pytest>=8", "httpx2>=2.16", "pip-audit>=2.10"]
 ui-tests = ["playwright>=1.50"]
 
 [project.urls]

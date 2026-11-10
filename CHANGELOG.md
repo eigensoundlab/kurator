@@ -21,6 +21,13 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
   view, with a neutral studio when it has no lights - and can be saved as a PNG next to it.
 - The viewer stays on its file when the list reloads while it is open (a saved video frame or
   render, indexing finishing).
+- **Installing never stops at one missing package.** HEIC (pi-heif) and PDF (pypdfium2) support moved
+  to a `formats` extra that the installers add one package at a time, ready-made builds only: on a
+  brand-new Python (3.15: no pi-heif yet) or macOS older than 13 (no pypdfium2) Kurator installs
+  without it and says what is missing, why and how to get it - instead of a compiler error. The
+  installers prefer Python 3.14…3.11 over a newer one (Windows: `py -3.14` before `py -3`); `fresh`
+  rebuilds `.venv`. On a Mac without those packages, macOS decodes HEIC (`sips`) and Quick Look
+  renders PDF and Illustrator previews.
 - The status line keeps refreshing even if painting it fails once, and catches up as soon as the
   window is back in view. Errors in the page go to Kurator's log (`[page] …`); the desktop app has
   developer tools (Ctrl+Shift+I).

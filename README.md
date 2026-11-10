@@ -38,10 +38,17 @@ packages are never touched.
 | Update | `update.bat` | `./update.sh` |
 | Add the optional AI features | `install.bat ai` | `./install.sh ai` |
 | Add the optional 3D add-on | `install.bat 3d` | `./install.sh 3d` |
+| Start over with another Python | `install.bat fresh` | `./install.sh fresh` |
 
 - **Install** creates `.venv`, installs the **newest compatible versions** of all dependencies, then
   runs [`pip-audit`](https://pypi.org/project/pip-audit/) to check them for known vulnerabilities
   (`tools/audit_deps.py`: every installed package except Kurator itself, which isn't on PyPI).
+- **HEIC and PDF support** (pi-heif, pypdfium2) and the add-ons are ready-made packages, added one
+  at a time: when one has no build for your Python or system yet - a brand-new Python (3.15 when it
+  came out), or pypdfium2 on macOS older than 13 - Kurator is installed without it and the end of the
+  install says what is missing, why, and how to get it. The installers pick the newest Python with
+  builds for everything (3.14 before 3.15). On a Mac, macOS stands in: it decodes HEIC itself (`sips`)
+  and Quick Look makes PDF previews (without page navigation).
 - **Update** does `git pull` (if you cloned the repository) and then the same upgrade + audit. Once
   the AI features are installed, updates keep them. **Kurator tells you when a newer version is
   out** (*⬆ Kurator 0.20.0* in the status bar: what is new, how to update; the desktop app updates

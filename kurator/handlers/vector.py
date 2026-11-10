@@ -2,7 +2,8 @@
 
   .svg/.svgz  rendered with resvg (no scripts, no network) - the browser shows the original crisp
   .pdf .ai    first page rendered with PDFium (pypdfium2, Apache-2.0/BSD) - modern .ai files are
-              PDF-compatible; otherwise the embedded XMP preview is used
+              PDF-compatible; otherwise the embedded XMP preview is used. Without pypdfium2 (no build
+              for an older macOS), a Mac's Quick Look makes the preview
   .eps        DOS-EPS TIFF preview -> XMP preview -> Ghostscript (only if you installed it)
   .indd       InDesign: embedded XMP preview
 """
@@ -18,7 +19,7 @@ import threading
 from PIL import Image
 
 from . import Handler, Loaded, register
-from .common import placeholder, shell_thumbnail, xmp_thumbnail
+from .common import placeholder, quicklook_thumbnail, shell_thumbnail, xmp_thumbnail
 
 MAX_SVG = 50 * 1024 * 1024
 _pdfium_lock = threading.Lock()  # PDFium is not thread-safe (on-demand thumbnails run in threads)
@@ -236,8 +237,33 @@ def _pdf_render(data: bytes, target: int | None) -> tuple[Image.Image, dict, tup
     return img, meta, (round(pw * 96 / 72), round(ph * 96 / 72))
 
 
+def _quicklook_pdf(data: bytes, path: str, target: int | None):
+    """Without pypdfium2 on a Mac: the first page as Quick Look shows it (an .ai goes as the PDF it is)."""
+    size = min(2048, max(256, int((target or 512) * 1.5)))
+    if path.lower().endswith(".pdf"):
+        return quicklook_thumbnail(path, size)
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix=".pdf", prefix="kurator-ql-")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        return quicklook_thumbnail(tmp, size)
+    finally:
+        os.remove(tmp)
+
+
+def _pdf_first_page(data: bytes, path: str, target: int | None) -> tuple[Image.Image, dict, tuple | None]:
+    try:
+        return _pdf_render(data, target)
+    except ImportError:
+        img = _quicklook_pdf(data, path, target)
+        if img is None:
+            raise OSError("PDF previews need pypdfium2, which has no build for this system - see the installer's note") from None
+        return img, {"preview": "Quick Look"}, None
+
+
 def load_pdf(data: bytes, path: str, target: int | None) -> Loaded:
-    img, meta, size = _pdf_render(data, target)
+    img, meta, size = _pdf_first_page(data, path, target)
     meta["format"] = "PDF"
     return Loaded(img, meta, {}, size)
 
@@ -246,7 +272,7 @@ def load_ai(data: bytes, path: str, target: int | None) -> Loaded:
     meta = {"format": "AI", "vector": True}
     if data.lstrip()[:5] == b"%PDF-":
         try:
-            img, m, size = _pdf_render(data, target)
+            img, m, size = _pdf_first_page(data, path, target)
             meta.update(m)
             return Loaded(img, meta, {}, size)
         except Exception:
