@@ -1,6 +1,6 @@
 [package]
 name = "kurator-desktop"
-version = "0.19.0"
+version = "0.19.1"
 description = "Kurator desktop app: a window around the local Kurator server"
 authors = ["sandner.art"]
 license = "Apache-2.0"

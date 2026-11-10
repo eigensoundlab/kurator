@@ -4,19 +4,21 @@ A fast, local asset manager for artists and game developers. Browse thousands of
 icons and textures, then tag, sort and move them comfortably. Every file keeps its **original date
 and metadata**.
 
-> Status: **v0.17 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
-> moving, move rules, XMP sidecars, live folder updates, backups to disks and to the cloud
-> (Google Drive and others via rclone), vector/document/art-app previews, sound files with a
-> **waveform view, loudness, tempo and key**, 3D models (previews and a 3D viewer), video, projects
-> you work inside, similar images, version stacks, colour and shape filters, a timeline,
-> sprite sheets and texture atlases, **textured 3D models with lights**, a **lit preview for 2D art
-> with normal/glow/depth maps**, **print previews (CMYK inks, ink limit, proofing, PDF boxes and
-> spot colours)**, **Unity sprite import settings**, **Basis Universal KTX2 and HDR (EXR) textures**,
-> **PDF page browsing**, **source / author / licence** per file, **training-dataset export**,
-> backup reminders, optional **Playhead analysis** of sounds (a view, filters by sound character,
-> grid strips), and optional local AI (search pictures *and sounds* by description, find
-> similar, tag suggestions from a pool you choose, Ollama or any OpenAI-compatible vision server)
-> work.
+> Status: **v0.19 (alpha).** Browsing, tagging with groups (subjects, projects, status, source), safe
+> moving, copying, renaming and deleting with undo, move rules, XMP sidecars, live folder updates,
+> backups to disks and to the cloud (Google Drive and others via rclone), vector/document/art-app
+> previews, sound files with a **waveform view, loudness, tempo and key**, 3D models (previews and a
+> 3D viewer with matcaps and cavity), **Blender files: material report and renders**, video,
+> projects you work inside, similar images, version stacks, colour and shape filters, a timeline,
+> sprite sheets and texture atlases, a **lit preview for 2D art with normal/glow/depth maps**, **print
+> previews (CMYK inks, ink limit, proofing, PDF boxes and spot colours)**, **Unity sprite import
+> settings**, **Basis Universal KTX2 and HDR (EXR) textures**, **PDF page browsing**, **source /
+> author / licence** per file, **training-dataset export**, a **right-click menu with Open with**
+> (also sounds as one REAPER project, pictures as layers in Krita), sounds to and from
+> **[SFX Workbench](https://eigensoundlab.github.io/SFXWorkbench/)**, a **desktop app** for Windows,
+> macOS and Linux that **installs Kurator by itself**, update notices, optional **Playhead analysis**
+> of sounds, and optional local AI (search pictures *and sounds* by description, find similar, tag
+> suggestions from a pool you choose, Ollama or any OpenAI-compatible vision server) work.
 > See the [Roadmap](#roadmap) and the [Changelog](CHANGELOG.md).
 
 **Author:** Daniel Sandner. See [eigensound.com](https://eigensound.com/) (sound research) and
@@ -24,6 +26,15 @@ and metadata**.
 **License:** [Apache 2.0](LICENSE). **Repository:** https://github.com/eigensoundlab/kurator
 
 ## Install and run
+
+**The easiest way: the desktop app.** Download the installer for your system from the
+[latest release](https://github.com/eigensoundlab/kurator/releases/latest) (*Assets*: Windows
+`…_x64-setup.exe`, macOS `…_universal.dmg`, Linux `….AppImage` or `.deb`), start it and click
+**Install Kurator**. The app gets its own Python and everything Kurator needs (about 80 MB, a few
+minutes) - no Python, Terminal or scripts. Later versions update with one button. See
+[docs/desktop.md](docs/desktop.md).
+
+**With Python, or from a clone of this repository:**
 
 You need **Python 3.11+** (3.12+ recommended; on Windows it's needed to read file creation dates).
 Python 3.10 reached its end of life in October 2026 and is no longer supported.
@@ -62,11 +73,12 @@ packages are never touched.
   Security). Meshopt-compressed glTF needs nothing extra.
 - Get the code with `git clone https://github.com/eigensoundlab/kurator` or download a release ZIP.
 
-**Desktop app (optional):** Kurator in its own window instead of a browser tab, with real file drops
-(also of folders), dragging files out into other programs and the system's right-click menu.
-**On a computer without Kurator it installs Kurator itself** (its own Python included - no Terminal
-needed); otherwise it starts and stops your installed Kurator. Installers for Windows, macOS (10.15
-and newer) and Linux are attached to the releases; see [docs/desktop.md](docs/desktop.md).
+**Desktop app:** Kurator in its own window instead of a browser tab, with real file drops (also of
+folders), dragging files out into other programs and the system's right-click menu. On a computer
+without Kurator it **installs Kurator itself** (its own Python included); otherwise it starts and
+stops the Kurator you installed with the scripts above. Installers for Windows, macOS (10.15 and
+newer) and Linux are attached to the releases; see [docs/desktop.md](docs/desktop.md). The browser
+works just as well - the app is optional.
 
 The browser opens at `http://127.0.0.1:8765/`. Library folders are remembered, and you can add more
 from the sidebar: type or paste a path and press *Add*, or press *Add…* with the field empty to
@@ -1087,6 +1099,9 @@ kurator/
   tags.py          tag hierarchy, hotkeys, apply/toggle
   fileops.py       safe moves, copies, renames + undo, Windows creation time, folder listing, reveal, drops
   apps.py          Open with: finds art, 3D and sound programs; programs added in Settings
+  handoff.py       several files in one piece: a REAPER project (a track per sound), an OpenRaster picture (layers)
+  sfxlink.py       the SFX Workbench link: a private, origin-locked token; sounds out, results back as new files
+  updates.py       is there a newer release (asks GitHub once a day), how this Kurator is updated
   trash.py         delete to the system trash or Kurator's trash folder, restore (undo)
   dupes.py         keep one copy of each duplicate
   delivery.py      copies for delivery: metadata cleaned / credited without re-encoding
@@ -1123,7 +1138,7 @@ kurator/
     model3d.py     3D: rendered previews, Blender thumbnails, embedded/Windows previews
     video.py       video: ffmpeg/ffprobe frames, hover strip, metadata; MP4 box reader
     placeholder.py formats without a readable preview (Windows thumbnail or a card)
-    common.py      embedded XMP/zip previews, Windows shell thumbnails, cards
+    common.py      embedded XMP/zip previews, Windows shell thumbnails, macOS sips / Quick Look, cards
   mesh3d/          3D geometry without a 3D library
     formats.py     readers: glTF/GLB, OBJ, FBX, STL, PLY, DAE, 3MF, 3DS, OFF, USDA, VOX
     render.py      numpy z-buffer rasteriser for thumbnails (textures sampled per pixel)
@@ -1138,6 +1153,9 @@ kurator/
     vlm.py         Ollama and OpenAI-compatible clients with a fixed-answer JSON schema
   static/          the UI: plain ES modules, no build step, no npm dependencies
     js/ctxmenu.js          the right-click menu (the page's, or the system's in the desktop app)
+    js/sfxdlg.js           Send to SFX Workbench, and the note when something comes back
+    js/blenddlg.js         a .blend file's materials, meshes and scene (read by Blender)
+    js/updatedlg.js        "a newer Kurator": what is new, Update now in the desktop app
     js/shell.js            what the desktop app adds: drops with paths, dragging out, native menus
     js/playhead.js         optional Playhead analysis: documents, worker queue, batches, grid strips
     js/playhead-worker.js  the analysis in a module worker
@@ -1145,9 +1163,11 @@ kurator/
     js/phmarkers.js        markers for REAPER / Audacity from a Playhead analysis
     js/vendor/             playhead-core.mjs (Playhead 0.3.0, unchanged; checksum in its README)
 tests/             pytest: dates, indexing, API + security, tags, moves, rules, sidecars, watching
-tools/             sample library generator, indexing benchmark, browser UI checks
+tools/             sample library generator, indexing benchmark, browser UI checks, install_extras.py
+                   (HEIC/PDF and add-ons one package at a time), pin_python.py (the desktop app's Python)
 install / update / kurator  (.bat for Windows, .sh for Linux/macOS)
-desktop/           the desktop app (Tauri 2, Rust): starts Kurator, shows it, stops it (docs/desktop.md)
+desktop/           the desktop app (Tauri 2, Rust): installs Kurator if needed (src/install.rs), starts
+                   it, shows it, stops it (docs/desktop.md)
 .github/           CI (tests on Windows/Linux/macOS + pip-audit, weekly; desktop builds) and Dependabot
 ```
 
@@ -1166,9 +1186,12 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
   and `frame-ancestors 'none'`. All file metadata is rendered as text, never as HTML.
 - Only files in the catalog can be served. Size limits protect against decompression bombs (Pillow,
   400 MP) and zip bombs (`.kra`).
-- **Dependencies:** FastAPI, Starlette, Uvicorn, Pillow (13.0+), h11, watchdog, numpy, pypdfium2,
-  resvg-py, pi-heif, soundfile, tinytag, zstandard and Send2Trash (plus PyTorch and open_clip for the AI add-on), at their
-  newest versions as of November 2026; `pip-audit` reports no known vulnerabilities.
+- **Dependencies:** FastAPI, Starlette, Uvicorn, Pillow (13.0+), h11, watchdog, numpy, resvg-py,
+  soundfile, tinytag, zstandard and Send2Trash; pypdfium2 and pi-heif when there is a ready-made
+  build for your system (plus PyTorch and open_clip for the AI add-on), at their newest versions as
+  of November 2026; `pip-audit` reports no known vulnerabilities. The installers never compile a
+  package. Without pypdfium2 / pi-heif a Mac uses its own `qlmanage` and `sips` (run as separate
+  processes with a time limit, on the file's path, output to a temporary folder).
 - Blender (optional) converts .blend files with `--factory-startup --disable-autoexec`: no add-ons,
   scripts or drivers from the file run.
 - The optional Draco (DracoPy) and USD (usd-core) decoders are native code, so they run in a
@@ -1200,6 +1223,17 @@ Blender-rendered previews for `.glb/.fbx/.obj`) will plug in the same way.
   clipboard and the Open dialog, granted for `http://127.0.0.1:<port>` alone. Open with starts only
   programs that were found or that you added, by their place on that list, never a path from a
   request.
+- **SFX Workbench link:** the only part of the API another site can use. Requests must come from
+  SFX Workbench's own address (CORS for that origin only, Local Network Access in Chrome) and carry a
+  random token Kurator made for chosen sounds; Kurator keeps only its hash. The token gives reading
+  those sounds and saving new sound files into one library folder - nothing else, never over another
+  file - and ends a day after its last use (⚙ Settings → *SFX Workbench* → *End all links*). It
+  travels in the address after `#`, which browsers don't send to the web server.
+- **Installing from the desktop app:** the Python it downloads is checked against SHA-256 checksums
+  built into the app (`desktop/src-tauri/python-runtime.json`); a different file is refused. The
+  Kurator code comes from this repository's release over HTTPS. Archives are unpacked only inside the
+  app's folder (no `..`, no links in the code download). Downloads use the system's certificates and
+  proxy settings.
 - **Staying current:** `update.bat` / `update.sh` upgrade every dependency to its newest compatible
   version and run `pip-audit`. On GitHub, CI runs the audit on every push and weekly, and Dependabot
   proposes updates. See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
@@ -1269,7 +1303,12 @@ cd desktop && npm ci && npm run tauri dev                            # the deskt
     batch rename, delete to the system trash or Kurator's trash folder with undo, duplicate
     clean-up, quick destinations, a folder picker with recent destinations, the last tag on 0 / Q,
     hotkeys and settings per project~~ ✅ 0.18
-21. **Desktop shell (Tauri):** native window, drag files out into Krita/Blender/Unity/Godot, installers.
+21. ~~Desktop app (Tauri): native window, drops with paths, drag files out, right-click menu, Open with,
+    installers~~ ✅ 0.19; ~~the app installs Kurator itself, update notices, SFX Workbench link, Blender
+    material report and renders~~ ✅ 0.19.1
+22. **Next:** an *Inspect* panel for 3D (UV layout over the texture with overlaps and flipped islands,
+    texel density, scale and mesh checks), HDRI environments in the 3D viewer, SFX Workbench in a
+    window of the desktop app.
 
 ## License
 
