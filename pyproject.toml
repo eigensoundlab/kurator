@@ -45,10 +45,10 @@ formats = [
     "pi-heif>=1.4.0",      # HEIC/HEIF decoding only (BSD-3, no GPL encoders)
     "pypdfium2>=5.14.0",   # PDF / Illustrator previews (Apache-2.0 / BSD-3)
 ]
-audit = ["pip-audit>=2.10"]
+audit = ["pip-audit>=2.10.1"]
 ai = ["torch>=2.6", "torchvision>=0.21", "open-clip-torch>=3.3", "transformers>=5.0"]   # optional AI features (install.bat ai): images + sounds (CLAP)
 3d = ["DracoPy>=2.2", "usd-core>=26.11", "texture2ddecoder>=1.0.6"]   # optional: Draco-compressed glTF, binary USD (install.bat 3d)
-dev = ["kurator[formats]", "pytest>=8", "httpx2>=2.16", "pip-audit>=2.10"]
+dev = ["kurator[formats]", "pytest>=8", "httpx2>=2.16", "pip-audit>=2.10.1"]
 ui-tests = ["playwright>=1.50"]
 
 [project.urls]
