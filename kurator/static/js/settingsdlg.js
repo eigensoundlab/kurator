@@ -6,6 +6,7 @@ import { openUpdateDialog } from './updatedlg.js';
 import { PH_HOME, PH_PAPER, phEnabled, phGridPref, phLib, phSetEnabled, phSetGridPref } from './playhead.js';
 import { ask, openDialog } from './dialog.js';
 import { openPhLibraryDialog } from './phlibdlg.js';
+import { openPlansDialog } from './plandlg.js';
 import { el, fmtBytes, fmtNum, prefs, setKids } from './util.js';
 
 export async function openSettingsDialog(app) {
@@ -59,6 +60,17 @@ export async function openSettingsDialog(app) {
   sfxUrl.onchange = async () => {
     try { const r = await api.saveSettings({ sfx_url: sfxUrl.value.trim() }); sfxUrl.value = r.sfx_url; app.toast('SFX Workbench address saved'); }
     catch (e) { app.toast(e.message, 5000); }
+  };
+  const sessUnpack = el('input', { type: 'checkbox' });
+  sessUnpack.checked = st.sessions_unpack !== false;
+  sessUnpack.onchange = async () => {
+    try { await api.saveSettings({ sessions_unpack: sessUnpack.checked }); app.toast(sessUnpack.checked ? 'Recording sessions are unpacked when they arrive' : 'Recording sessions stay zips'); }
+    catch (e) { app.toast(e.message); sessUnpack.checked = !sessUnpack.checked; }
+  };
+  const balUrl = el('input', { type: 'text', value: st.ballistic_url === st.ballistic_default ? '' : (st.ballistic_url || ''), spellcheck: 'false', placeholder: st.ballistic_default || '' });
+  balUrl.onchange = async () => {
+    try { await api.saveSettings({ ballistic_url: balUrl.value.trim() }); app.toast('Ballistic Foley Lab address saved'); }
+    catch (e) { app.toast(e.message); }
   };
   const sfxAsk = el('input', { type: 'checkbox' });
   sfxAsk.checked = prefs.get('sfx.ask', true);
@@ -204,6 +216,12 @@ export async function openSettingsDialog(app) {
       el('div', { class: 'p-hint small', text: 'Leave empty for the web app. Your own copy works too: its web address, or the path of the offline file sfx-workbench.html.' }),
       el('label', { class: 'chk' }, sfxAsk, 'Ask where results go before opening SFX Workbench'),
       el('div', { class: 'row' }, sfxEnd, sfxLinks),
+      el('h3', { text: 'Recording sessions (Ballistic Foley Lab)' }),
+      el('div', { class: 'p-hint small', text: 'A session saved in Ballistic Foley Lab\'s Record view is one zip: the takes, their sidecars and a list. Saved into a folder this computer syncs that is in the library, it is unpacked next to itself, tagged (subjects, project, source) and counted against its plan. Other zips are left alone.' }),
+      el('label', { class: 'chk' }, sessUnpack, 'Unpack recording sessions when they arrive in a library folder'),
+      el('label', {}, 'Ballistic Foley Lab address (for plan links)', balUrl),
+      el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Recording plans…', onclick: () => openPlansDialog(app) }),
+        el('span', { class: 'p-hint small', text: 'Shots to record for a project, sent to a phone as a link or QR code.' })),
       el('h3', { text: 'Dropping files' }),
       el('label', { class: 'chk' }, dropAsk, 'Ask before adding files dropped from Explorer / Finder'),
       el('div', { class: 'p-hint small', text: 'Files already in the library get the tag or project they are dropped onto; new ones are copied into a folder (remembered per project). Without asking, the last folder and the tags of the drop are used.' }),

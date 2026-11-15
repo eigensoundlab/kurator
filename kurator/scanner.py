@@ -65,6 +65,8 @@ class Scanner:
         # Held while walking a folder and while Kurator moves files, so they never interleave.
         self.fs_lock = threading.RLock()
         self._last_scan_id = 0
+        # Called with the .zip files a walk comes across (recording sessions, see sessions.py); must not block.
+        self.on_zips = None
         self.state = {"phase": "idle", "found": 0, "pending": 0, "processed": 0, "errors": 0,
                       "rate": 0.0, "started": None, "finished": None, "version": 0}
 
@@ -163,7 +165,7 @@ class Scanner:
         existing = {r[0]: (r[1], r[2]) for r in cat.execute(
             f"SELECT path, size, mtime_ns FROM files WHERE root_id = ? AND {scope}", (root_id, *scope_args))}
         data_dir = _norm(db.data_dir)
-        new_rows, changed_rows, seen = [], [], []
+        new_rows, changed_rows, seen, zips = [], [], [], []
 
         def flush():
             if not (new_rows or changed_rows or seen):
@@ -209,6 +211,8 @@ class Scanner:
                     ext = os.path.splitext(e.name)[1].lower()
                     h = handler_for(ext)
                     if h is None:
+                        if ext == ".zip" and self.on_zips is not None:
+                            zips.append(e.path)
                         continue
                     st = e.stat(follow_symlinks=False)
                 except OSError:
@@ -229,6 +233,11 @@ class Scanner:
         flush()
         if self._stop.is_set():
             return
+        if zips and self.on_zips is not None:
+            try:
+                self.on_zips(zips)
+            except Exception:  # noqa: BLE001 - a session that cannot be looked at must not stop a walk
+                pass
         # Files that disappeared leave the catalog. Their tags are parked by content hash and come
         # back automatically if the file shows up elsewhere (moved/renamed outside Kurator).
         fscope = scope.replace("dir", "f.dir")

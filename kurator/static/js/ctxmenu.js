@@ -4,6 +4,7 @@
 
 import { api } from './api.js';
 import { openAppsDialog } from './appsdlg.js';
+import { openPlansDialog } from './plandlg.js';
 import { LIGHTS, MATCAPS, VIEW_MODES } from './meshview.js';
 import { openRegionDialog } from './regiondlg.js';
 import { openSendMenu } from './senddlg.js';
@@ -224,6 +225,7 @@ function tagItems(app, t) {
     { label: n ? `Add to ${plural(n, 'item')}` : 'Add to the selected items', disabled: !n, run: () => app.applyTag(t.id, { op: 'add' }) },
     { label: n ? `Remove from ${plural(n, 'item')}` : 'Remove from the selected items', disabled: !n, run: () => app.applyTag(t.id, { op: 'remove' }) },
     { label: 'New sounds in SFX Workbench…', run: () => sendToSfx(app, [], { tags: [...new Set([...(app.projects.active && app.projects.active !== t.id ? [app.projects.active] : []), t.id])] }) },
+    ...(project ? [{ label: 'Recording plan…', run: () => openPlansDialog(app, { project: t.name }) }] : []),
     '-',
     { label: project ? 'Edit project…' : 'Edit tag…', run: () => app.tags.editDialog(t) },
   ];
@@ -236,6 +238,7 @@ function gridItems(app) {
     { label: 'Invert selection', run: () => app.invertSelection() },
     '-',
     { label: 'New sounds in SFX Workbench…', run: () => sendToSfx(app, []) },
+    { label: 'Recording plans…', run: () => openPlansDialog(app) },
     ...(f ? ['-', { label: `${REVEAL}: this folder`, run: () => api.revealFolder(f).catch((e) => app.toast(e.message)) }] : []),
   ];
 }

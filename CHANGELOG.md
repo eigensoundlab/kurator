@@ -2,6 +2,20 @@
 
 Full release notes for each version are in [`docs/releases`](docs/releases).
 
+## Unreleased
+- **Recording plans and sessions from a phone (Ballistic Foley Lab).** *Recording plan…* on a project
+  (or *Recording plans…* on the grid and in ⚙ Settings): shots to record, each with tags, takes and an
+  optional UCS category, sent to a phone as a QR code or link that opens Ballistic Foley Lab's Record
+  view (the plan travels after `#plan=`, never to a server). A session saved there as a zip into a
+  synced library folder is unpacked next to itself, each take gets its recording date and its keywords
+  as tags in the right groups, takes count against the plan's shots, and the zip goes to the system
+  trash. Only the files its list names, never over anything, each session once; other zips are left
+  alone. ⚙ Settings → *Recording sessions* turns it off.
+- **Keywords inside WAV files:** *Import keywords* also reads the XMP of WAV files (the `_PMX` chunk,
+  wherever it sits in the file).
+- **SFX Workbench results keep their recording's keywords:** subjects, project and status from the XMP
+  SFX Workbench now keeps; the source stays *SFX Workbench*.
+
 ## 0.19.1 – The desktop app installs Kurator, SFX Workbench link, Blender materials and renders
 - **The desktop app installs Kurator.** On a computer without Kurator, *Install Kurator* on its start
   page downloads its own Python (3.14, checksum-pinned) and the Kurator code of the app's version,

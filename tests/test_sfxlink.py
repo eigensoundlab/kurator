@@ -165,3 +165,23 @@ def test_address_setting(env):
     assert db.get_setting("sfx_url") is None
     assert sfxlink.origin_of("https://Example.org:443/x/") == "https://example.org"
     assert sfxlink.origin_of("http://[::1]:8080/") == "http://[::1]:8080"
+
+
+def test_results_keep_the_keywords_of_their_recording(env):
+    """A sound from Ballistic Foley Lab, edited in SFX Workbench, keeps its XMP; Kurator takes its subjects
+    and project from it, while its source stays SFX Workbench."""
+    c, db, sc, lib, ids = env
+    tok = token_of(share(c, ids=[], dest=str(lib / "foley")).json()["url"])
+    pmx = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF><rdf:Description rdf:about=""><lr:hierarchicalSubject><rdf:Bag>'
+           '<rdf:li>Nature|Birds</rdf:li><rdf:li>Projects|Forest walk</rdf:li><rdf:li>Source|Ballistic Foley Lab</rdf:li>'
+           '</rdf:Bag></lr:hierarchicalSubject></rdf:Description></rdf:RDF></x:xmpmeta>').encode()
+    raw = (lib / "foley" / "gravel.wav").read_bytes()
+    raw += b"_PMX" + struct.pack("<I", len(pmx)) + pmx + (b"\0" if len(pmx) & 1 else b"")
+    raw = raw[:4] + struct.pack("<I", len(raw) - 8) + raw[8:]
+    up = c.post(f"/api/sfx/link/{tok}/save", params={"name": "blackbird_fx.wav"}, content=raw, headers=X)
+    assert up.status_code == 200, up.text
+    fid = up.json()["id"]
+    got = {(r[0], r[1]) for r in db.cat.execute(
+        "SELECT t.facet, t.name FROM tags t JOIN file_tags ft ON ft.tag_id = t.id WHERE ft.file_id = ?", (fid,))}
+    assert ("subject", "Nature/Birds") in got and ("project", "Forest walk") in got
+    assert ("source", "SFX Workbench") in got and ("source", "Ballistic Foley Lab") not in got

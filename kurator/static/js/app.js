@@ -26,6 +26,7 @@ import { openRulesDialog } from './rulesdlg.js';
 import { openSendMenu, openSlotEditor } from './senddlg.js';
 import { openSettingsDialog } from './settingsdlg.js';
 import { noteArrivals } from './sfxdlg.js';
+import { noteSessions } from './plandlg.js';
 import { openSheetsDialog } from './sheetsdlg.js';
 import { dragOut, inShell } from './shell.js';
 import { installErrorLog, reportError } from './errlog.js';
@@ -211,6 +212,7 @@ class App {
     } else this.stJob.textContent = '';
     this.paintBackupDue(st.backup_due || [], j.running);
     noteArrivals(this, st.sfx);
+    noteSessions(this, st.sessions);
   }
 
   /** "Backup due" reminder in the status bar (sets with a schedule, see Backup → set → When). */
