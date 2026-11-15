@@ -707,3 +707,19 @@ details.delivery label.chk { white-space: normal; }
 .ctxmenu.ticks .pm-tick { width: 14px; flex: none; color: var(--accent, #7aa2ff); }
 .drop-where { margin: 4px 0 2px; }
 .st-update { color: var(--accent, #7aa2ff); }
+
+/* recording plans (plandlg.js) */
+.plan-dlg .row { align-items: end; }
+.plan-dlg label.grow { flex: 1; min-width: 0; }
+.plan-dlg select { width: 100%; }
+.plan-shots { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 6px; }
+.plan-shot { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.4fr) 64px 92px 64px 30px; gap: 6px; align-items: center; }
+.plan-shot.head span { font-size: 11px; color: var(--muted); }
+.plan-shot input { width: 100%; min-width: 0; }
+.plan-prog { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plan-prog.done { color: var(--accent2); }
+.plan-share { display: flex; gap: 16px; align-items: flex-start; margin: 10px 0; }
+.plan-qr { flex: none; width: 220px; }
+.plan-qr svg { display: block; width: 100%; height: auto; border-radius: 4px; }
+.plan-linkbox { flex: 1; min-width: 0; }
+@media (max-width: 720px) { .plan-share { flex-direction: column; } .plan-shot { grid-template-columns: 1fr 1fr 56px 70px; } .plan-shot .plan-prog, .plan-shot.head span:nth-child(5) { display: none; } }

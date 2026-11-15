@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import __version__, apps, assets, backup, dates, fileops, playhead_index, projects, rclone, rules, sfxlink, tags, xmp
+from . import __version__, apps, assets, backup, dates, fileops, playhead_index, plans, projects, rclone, rules, sessions, sfxlink, tags, xmp
 from . import similar as similar_mod
 from .sheets import SheetError
 from . import stacks as stacks_mod
@@ -161,6 +161,8 @@ class SettingsIn(BaseModel):
     rclone_path: str | None = None
     update_check: bool | None = None   # ask GitHub once a day whether there is a newer Kurator
     sfx_url: str | None = None         # where SFX Workbench is ("": the web app)
+    sessions_unpack: bool | None = None   # unpack recording sessions from Ballistic Foley Lab
+    ballistic_url: str | None = None   # where Ballistic Foley Lab is, for plan links ("": the web app)
 
 
 class ConnectIn(BaseModel):
@@ -225,6 +227,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         scanner.stop()
 
     jobs = backup.Jobs(db, scanner)
+    unpacker = sessions.Unpacker(db, scanner)         # recording sessions from Ballistic Foley Lab
+    scanner.on_zips = unpacker.offer
     ph_dir = os.path.join(db.data_dir, "cache", "playhead")   # Playhead documents (see playhead_index.py)
     ph_job = playhead_index.LibraryJob(db, ph_dir)
     rc = rclone.shared(db, os.path.join(db.data_dir, "logs"))
@@ -330,6 +334,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             "proof_profile": bool(db.get_setting("proof_profile", None)),
             "backup_due": backup.due(db),
             "sfx": sfxlink.inbox(),
+            "sessions": sessions.inbox(),
         })
 
     def _norm_path(p: str) -> str:
@@ -791,7 +796,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                       "rclone_path": db.get_setting("rclone_path", None),
                       "update_check": db.get_setting("update_check", True),
                       "sfx_url": sfxlink.address(db), "sfx_default": sfxlink.DEFAULT_URL,
-                      "sfx_links": len(sfxlink.active(db))})
+                      "sfx_links": len(sfxlink.active(db)),
+                      "sessions_unpack": sessions.enabled(db), "ballistic_url": plans.address(db), "ballistic_default": plans.DEFAULT_URL})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
@@ -823,6 +829,14 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         if body.sfx_url is not None:
             u = sfxlink.check_address(body.sfx_url)
             db.set_setting("sfx_url", None if u in ("", sfxlink.DEFAULT_URL) else u)
+        if body.sessions_unpack is not None:
+            db.set_setting("sessions_unpack", bool(body.sessions_unpack))
+        if body.ballistic_url is not None:
+            try:
+                u = sfxlink.check_address(body.ballistic_url) if body.ballistic_url.strip() else ""
+            except sfxlink.LinkError:
+                raise HTTPException(400, "Use the web address of Ballistic Foley Lab (https://...) or the path of its offline file") from None
+            db.set_setting("ballistic_url", None if u in ("", plans.DEFAULT_URL) else u)
         if body.rclone_path is not None:
             p = body.rclone_path.strip().strip('"')
             if p and not os.path.isfile(p):
@@ -1973,6 +1987,37 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             raise HTTPException(400, "The files are missing on disk")
         name = apps.open_with(db, str(body.get("app") or ""), paths, layout, durations)
         return _json({"app": name, "files": len(paths), "layout": layout})
+
+    # -- recording plans for Ballistic Foley Lab (see plans.py, sessions.py) ---------------
+    @app.get("/api/plans")
+    def plans_list():
+        return _json({"plans": plans.listing(db), "address": plans.address(db)})
+
+    @app.post("/api/plans")
+    def plans_save(body: dict):
+        try:
+            p = plans.save(db, body)
+        except plans.PlanError as e:
+            raise HTTPException(400, str(e)) from None
+        p["progress"] = plans.progress(db, p)
+        p["link"] = plans.link(db, p)
+        return _json(p)
+
+    @app.delete("/api/plans/{pid}")
+    def plans_delete(pid: str):
+        return _json({"deleted": plans.delete(db, pid)})
+
+    @app.post("/api/plans/from-link")
+    def plans_from_link(body: dict):
+        """A plan link made elsewhere (Ballistic on another device): {link} -> the plan, kept here."""
+        s = str(body.get("link") or "")
+        if "#plan=" not in s:
+            raise HTTPException(400, "Paste a plan link: it has #plan= in it")
+        try:
+            p = plans.save(db, plans.unpack(s.split("#plan=", 1)[1].split("&")[0].strip()))
+        except plans.PlanError as e:
+            raise HTTPException(400, str(e)) from None
+        return _json(p)
 
     # -- SFX Workbench: sounds there, results back (see sfxlink.py) -----------------------
     @app.post("/api/sfx/share")

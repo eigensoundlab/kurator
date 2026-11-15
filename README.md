@@ -872,6 +872,34 @@ SFX Workbench may *connect to apps on this device*: allow it. Firefox works too;
 let web pages reach apps on the computer. Your own copy of SFX Workbench works as well (⚙ Settings
 → *SFX Workbench* → *Address*: its web address or the path of `sfx-workbench.html`).
 
+SFX Workbench keeps a sound's metadata (Broadcast WAV, iXML, XMP) in what it makes from it, so a
+result that comes back also gets the keywords of its recording: its subjects, project and status as
+tags (its source stays *SFX Workbench*).
+
+### Recording plans and sessions from a phone (Ballistic Foley Lab)
+
+[Ballistic Foley Lab](https://eigensoundlab.github.io/ballistic/) has a **Record** view made for a
+phone: a plan's shots to tick off, quick tags, one big button. Each take is a WAV with its date,
+project, tags, notes, input device and, if asked for, its place inside (bext, iXML, XMP).
+
+- **Plans:** right-click a project → **Recording plan…**, or the empty grid → **Recording plans…**
+  (also ⚙ Settings → *Recording sessions*). A plan has a name, a project, quick tags and shots,
+  each with tags (from your subjects), how many takes, and an optional UCS category (the take's file
+  name then starts with it, which Kurator recognises). Scan the **QR code** with the phone, or send
+  it the **link**: the plan opens in Record. The plan travels in the part of the address after
+  `#plan=`, which browsers never send to the web server. Plans made on the phone come back with
+  their sessions; *Paste a link…* takes one from another device.
+- **Sessions:** *Save session* on the phone writes one zip (the takes, a `.xmp` sidecar each, and
+  `ballistic-session.json`). Save or share it into a folder this computer syncs - Syncthing, iCloud
+  Drive, Google Drive, OneDrive - that is in the library. Kurator notices it (folder watcher, or the
+  next scan), unpacks it next to itself into a folder of the same name, gives each take its
+  recording date as its modified time and its keywords as tags in the right groups (subjects,
+  *Projects*, *Status*, *Source*), counts the takes against the plan's shots (*Done* in the plan),
+  and moves the zip to the system trash. *Recording session unpacked: …* says so.
+- Only the files the session's list names are unpacked, by their plain names, never over anything,
+  and each session only once (where the zip cannot go to the trash, it stays). Other zips are left
+  alone. ⚙ Settings → *Recording sessions* turns it off and sets Ballistic's address for plan links.
+
 ### Quick destinations (D, then 1–9)
 
 Folders with a number that copy or move the selection at once, without a dialog:
@@ -948,7 +976,8 @@ Sort by tag in one step. For example:
 - **Dates survive copies:** when re-indexing a file whose own timestamps were lost (copy, cloud
   sync), its sidecar's date is used (badge: `IN FILE`, source "sidecar").
 - **Import keywords:** keywords already stored with your files become tags. This covers embedded XMP
-  (Photoshop, Lightroom…), **Windows Explorer tags**, and `.xmp` sidecars.
+  (Photoshop, Lightroom…; in WAV files the `_PMX` chunk, as Adobe apps, Ballistic Foley Lab and SFX
+  Workbench write it), **Windows Explorer tags**, and `.xmp` sidecars.
 
 ### Backup (B or the "Backup" button)
 
@@ -1101,6 +1130,8 @@ kurator/
   apps.py          Open with: finds art, 3D and sound programs; programs added in Settings
   handoff.py       several files in one piece: a REAPER project (a track per sound), an OpenRaster picture (layers)
   sfxlink.py       the SFX Workbench link: a private, origin-locked token; sounds out, results back as new files
+  plans.py         recording plans for Ballistic Foley Lab: stored, packed into #plan= links, takes per shot
+  sessions.py      recording sessions from Ballistic Foley Lab: zips in library folders unpacked and tagged
   updates.py       is there a newer release (asks GitHub once a day), how this Kurator is updated
   trash.py         delete to the system trash or Kurator's trash folder, restore (undo)
   dupes.py         keep one copy of each duplicate
@@ -1124,7 +1155,7 @@ kurator/
   audio_analysis.py  loudness (BS.1770), tempo, key, waveform data and spectrograms (whole or a part)
   playhead_index.py  Playhead documents: store, catalog summaries, filters / sorts, command-line job
   blender.py       optional: .blend -> glTF, material report, renders through an installed Blender (no auto-run scripts)
-  xmp.py           XMP sidecars (write), keyword import (XMP, Windows tags, sidecars)
+  xmp.py           XMP sidecars (write), keyword import (XMP incl. WAV _PMX, Windows tags, sidecars)
   watcher.py       live folder watching (watchdog), debounced re-check of changed folders
   backup.py        backup sets, planner (layouts, spreading over targets, space), runner, restore
   backup_targets.py  targets: local folders, cloud (rclone remote control API)

@@ -216,6 +216,13 @@ def received(db: Database, scanner, token: str, link: dict, tmp: str, name: str,
         source = "SFX Workbench" + (f", from {', '.join(from_names[:5])}" + (f" (+{len(from_names) - 5})" if len(from_names) > 5 else "")
                                     if from_names else "")
         fileinfo.set_many(db, [fid], {"source": source[:fileinfo.MAX_LEN]})
+        # keywords the sound carries from its recording (XMP kept by SFX Workbench): subjects, project,
+        # status - not its source, which is SFX Workbench here
+        from . import xmp
+        try:
+            xmp.import_keywords(db, [fid], skip_facets=("source",))
+        except Exception:  # noqa: BLE001 - the file is in; its keywords are a bonus
+            pass
         scanner.request_process()
     with _lock:
         links = _links(db)

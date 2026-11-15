@@ -12,7 +12,8 @@ are updated - and source/author/licence added where it has none - and everything
 (develop settings, ratings, history...) stays exactly as it was. Before the first change a copy
 goes to the data folder (xmp-backup).
 
-Reading: keywords from embedded XMP, Windows Explorer tags (EXIF XPKeywords) and sidecars can be
+Reading: keywords from embedded XMP (pictures; WAV files in their _PMX chunk, as Adobe apps, Ballistic
+Foley Lab and SFX Workbench write it), Windows Explorer tags (EXIF XPKeywords) and sidecars can be
 imported as tags. A Kurator sidecar's date is also used when indexing, so the date survives copies.
 """
 
@@ -23,6 +24,7 @@ import html
 import os
 import re
 import shutil
+import struct
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from xml.sax.saxutils import escape, quoteattr
@@ -296,8 +298,39 @@ def keywords_from_xmp(text: str) -> list[str]:
     return list(dict.fromkeys(k for k in out if k))
 
 
+WAV_EXTS = (".wav", ".wave", ".bwf")
+
+
+def wav_xmp(path: str) -> str:
+    """The XMP packet of a WAV file (its _PMX chunk), or "". Walks the chunk headers only, so a
+    chunk after the audio is found without reading the audio."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(12)
+            if len(head) < 12 or head[:4] not in (b"RIFF", b"RF64") or head[8:12] != b"WAVE":
+                return ""
+            end = os.fstat(f.fileno()).st_size
+            pos = 12
+            while pos + 8 <= end:
+                f.seek(pos)
+                h = f.read(8)
+                if len(h) < 8:
+                    break
+                cid, size = h[:4], struct.unpack("<I", h[4:8])[0]
+                if cid == b"_PMX":
+                    return f.read(min(size, MAX_SIDECAR)).decode("utf-8", "ignore") if size <= MAX_SIDECAR else ""
+                if size == 0xFFFFFFFF:
+                    break
+                pos += 8 + size + (size & 1)
+    except OSError:
+        pass
+    return ""
+
+
 def read_keywords(path: str) -> list[str]:
     found: list[str] = []
+    if path.lower().endswith(WAV_EXTS):
+        found += keywords_from_xmp(wav_xmp(path))
     try:
         with Image.open(path) as img:
             xmp = img.info.get("xmp")
@@ -320,8 +353,9 @@ def read_keywords(path: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def import_keywords(db: Database, ids: list[int]) -> dict:
-    """Turn keywords found in the files (and their sidecars) into Kurator tags."""
+def import_keywords(db: Database, ids: list[int], skip_facets: tuple = ()) -> dict:
+    """Turn keywords found in the files (and their sidecars) into Kurator tags. Keywords of the groups
+    in `skip_facets` are left out (a result from SFX Workbench has its own source, for example)."""
     res = {"files": 0, "with_keywords": 0, "tags_created": 0, "applied": 0}
     before = {r[0] for r in db.cat.execute("SELECT id FROM tags")}
     per_tag: dict[int, list[int]] = {}
@@ -340,6 +374,8 @@ def import_keywords(db: Database, ids: list[int]) -> dict:
                 root, _, rest = kw.partition("/")
                 if rest and root.lower() in tagmod.XMP_ROOTS:  # "Projects/Game A" -> project "Game A"
                     facet, kw = tagmod.XMP_ROOTS[root.lower()], rest
+                if facet in skip_facets:
+                    continue
                 try:
                     t = tagmod.create_tag(db, kw, hotkey=None, facet=facet)
                 except tagmod.TagError:
