@@ -723,3 +723,15 @@ details.delivery label.chk { white-space: normal; }
 .plan-qr svg { display: block; width: 100%; height: auto; border-radius: 4px; }
 .plan-linkbox { flex: 1; min-width: 0; }
 @media (max-width: 720px) { .plan-share { flex-direction: column; } .plan-shot { grid-template-columns: 1fr 1fr 56px 70px; } .plan-shot .plan-prog, .plan-shot.head span:nth-child(5) { display: none; } }
+
+/* /receive: sessions handed over by Ballistic Foley Lab on this computer */
+body.receive { display: block; overflow: auto; font-size: 14px; }
+.rcv { max-width: 640px; margin: 0 auto; padding: 32px 20px; }
+.rcv h1 { font-size: 20px; margin: 0 0 4px; }
+.rcv-lead { color: var(--muted); margin: 0 0 20px; }
+#rcv-status { font-size: 15px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); }
+#rcv-status.ok { border-color: var(--ok); }
+#rcv-status.err { border-color: var(--bad); color: var(--bad); }
+.rcv-list { list-style: none; padding: 0; margin: 16px 0; }
+.rcv-list li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.rcv-list li.err { color: var(--bad); }

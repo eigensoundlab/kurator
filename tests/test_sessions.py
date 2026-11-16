@@ -56,7 +56,7 @@ def wav_bytes(secs=0.2, sr=48000, chunks=()) -> bytes:
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
-def session_zip(path, files, plan=PLAN, extra=()):
+def session_zip(path, files, plan=PLAN, extra=(), session="", recorded_in=""):
     """files: [(name, keywords, date, shot)] as Ballistic's Save session writes them."""
     entries = []
     with zipfile.ZipFile(path, "w") as z:
@@ -64,10 +64,10 @@ def session_zip(path, files, plan=PLAN, extra=()):
             z.writestr(name, wav_bytes(chunks=[(b"_PMX", xmp_packet(kws, date).encode())]))
             z.writestr(name + ".xmp", xmp_packet(kws, date))
             entries.append({"file": name, "sidecar": name + ".xmp", "date": date, "tags": kws, "plan": plan["id"] if plan and shot else "",
-                            "shot": shot or "", "take": 1})
+                            "shot": shot or "", "take": 1, "session": recorded_in or session})
         for n, data in extra:
             z.writestr(n, data)
-        z.writestr("ballistic-session.json", json.dumps({"format": "ballistic-session", "version": 1, "plan": plan, "files": entries
+        z.writestr("ballistic-session.json", json.dumps({"format": "ballistic-session", "version": 1, "session": session, "plan": plan, "files": entries
                                                         + [{"file": "../evil.wav", "sidecar": "a/b.wav.xmp"}]}))
 
 
@@ -155,6 +155,75 @@ def test_the_watcher_unpacks_a_session_that_arrives(env):
         assert ("subject", "Objects/Pot") in file_tags(db, "Take 1.wav")
     finally:
         w.stop()
+
+
+def test_more_takes_of_a_session_join_its_folder(env):
+    db, sc, c, lib, trashed = env
+    t1 = ("Take 1.wav", ["Objects/Pot"], "2026-11-15T07:00:00+01:00", "s1")
+    t2 = ("Take 2.wav", ["Objects/Pot"], "2026-11-15T07:01:00+01:00", "s1")
+    session_zip(lib / "Phone" / "Kitchen 0700.zip", [t1], session="ses-k")
+    first = sessions.unpack(db, sc, str(lib / "Phone" / "Kitchen 0700.zip"))
+    assert first["files"] == 1 and not first["more"]
+    folder = lib / "Phone" / "Kitchen 0700"
+    # the same session saved again later, with one more take: only the new take is added, to the same folder
+    session_zip(lib / "Phone" / "Kitchen 0712.zip", [t1, t2], session="ses-k")
+    again = sessions.unpack(db, sc, str(lib / "Phone" / "Kitchen 0712.zip"))
+    assert again["folder"] == str(folder) and again["more"] and again["files"] == 1 and again["skipped"] == 1
+    assert not (lib / "Phone" / "Kitchen 0712").exists()
+    # a different take under a name already used keeps both (never over a file)
+    session_zip(lib / "Phone" / "Kitchen 0730.zip", [("Take 2.wav", ["Objects/Lid"], "2026-11-15T07:30:00+01:00", "s1")], session="ses-k")
+    sessions.unpack(db, sc, str(lib / "Phone" / "Kitchen 0730.zip"))
+    assert sorted(os.listdir(folder)) == ["Take 1.wav", "Take 1.wav.xmp", "Take 2 2.wav", "Take 2 2.wav.xmp", "Take 2.wav", "Take 2.wav.xmp",
+                                          "ballistic-session.json"]
+    assert plans.progress(db, plans.get(db, "plan-forest"))["s1"] == 3
+    # another session, even with the same file names, gets its own folder
+    session_zip(lib / "Phone" / "Kitchen 0800.zip", [t1], session="ses-other")
+    assert sessions.unpack(db, sc, str(lib / "Phone" / "Kitchen 0800.zip"))["folder"] == str(lib / "Phone" / "Kitchen 0800")
+    # Your sounds sent later (their own session; each file names the session it was recorded in): the takes
+    # already here are not added again, and no empty folder is made
+    session_zip(lib / "Phone" / "Sounds.zip", [t1, t2], session="sounds-1", recorded_in="ses-k", plan=None)
+    r = sessions.unpack(db, sc, str(lib / "Phone" / "Sounds.zip"))
+    assert r["files"] == 0 and r["skipped"] == 2 and r["folder"] == str(folder)
+    assert not (lib / "Phone" / "Sounds").exists()
+
+
+def test_ballistic_on_this_computer_sends_a_session_straight_to_kurator(env, tmp_path):
+    db, sc, c, lib, trashed = env
+    ballistic = "https://eigensoundlab.github.io"
+    info = c.get("/api/ballistic/receive").json()
+    assert info == {"origin": ballistic, "address": plans.DEFAULT_URL, "on": True, "folder": str(lib / "Ballistic Foley Lab")}
+    # the page Ballistic opens may be opened from its site; nothing else from there gets in
+    page = c.get("/receive", headers={"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"})
+    assert page.status_code == 200 and "receive.js" in page.text
+    zp = tmp_path / "s.zip"
+    session_zip(zp, [("BIRDSong_Blackbird 1.wav", ["Nature/Birds", "Projects/Forest walk"], "2026-11-15T05:42:10+01:00", "s1")], session="ses-f")
+    body = zp.read_bytes()
+    url = "/api/ballistic/receive?name=Forest%20walk%202026-11-15%200542.zip"
+    assert c.post(url, content=body, headers={"origin": ballistic}).status_code == 403
+    assert c.post(url, content=body, headers={"origin": BASE, "sec-fetch-site": "cross-site"}).status_code == 403
+    # from the /receive page (Kurator's own address)
+    r = c.post(url, content=body, headers={"origin": BASE, "content-type": "application/zip"})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    folder = lib / "Ballistic Foley Lab" / "Forest walk 2026-11-15 0542"
+    assert j["folder"] == str(folder) and j["files"] == 1 and not j["already"] and j["plan"] == PLAN["name"]
+    assert sorted(os.listdir(folder)) == ["BIRDSong_Blackbird 1.wav", "BIRDSong_Blackbird 1.wav.xmp", "ballistic-session.json"]
+    assert ("subject", "Nature/Birds") in file_tags(db, "BIRDSong_Blackbird 1.wav")
+    assert not trashed and not [p for p in os.listdir(tmp_path) if p.startswith("kurator-session-")]
+    assert c.get("/api/state").json()["sessions"]["last"] == "Forest walk 2026-11-15 0542"
+    # sent twice: nothing new
+    assert c.post(url, content=body, headers={"origin": BASE}).json()["already"] is True
+    # not a session; switched off; a folder outside the library
+    with zipfile.ZipFile(tmp_path / "plain.zip", "w") as z:
+        z.writestr("a.wav", wav_bytes())
+    r = c.post(url, content=(tmp_path / "plain.zip").read_bytes(), headers={"origin": BASE})
+    assert r.status_code == 400 and "not a recording session" in r.json()["detail"]
+    assert c.put("/api/settings", json={"ballistic_inbox": str(tmp_path)}, headers={"origin": BASE}).status_code == 400
+    (lib / "Takes").mkdir()
+    assert c.put("/api/settings", json={"ballistic_inbox": str(lib / "Takes")}, headers={"origin": BASE}).json()["ballistic_inbox"] == str(lib / "Takes")
+    assert c.put("/api/settings", json={"ballistic_receive": False}, headers={"origin": BASE}).status_code == 200
+    r = c.post(url, content=body, headers={"origin": BASE})
+    assert r.status_code == 400 and "Settings" in r.json()["detail"]
 
 
 def test_keywords_inside_a_wav_without_a_sidecar(tmp_path):

@@ -14,6 +14,16 @@ Drive, OneDrive) that is in the library, it is noticed by the folder watcher or 
   * the zip goes to the system trash. Where that is not possible it stays, and is not unpacked again:
     each session is remembered by the hash of its list.
 
+More takes of a session (a later zip with the same session id) go into the folder of its first zip,
+while that folder is still in the library: takes already there are skipped, a different file with a
+taken name gets a free one ("Take 1 2.wav").
+
+On the same computer Ballistic Foley Lab can hand a session straight to Kurator: it opens Kurator's
+/receive page and posts the zip to it (window to window, as it does with SFX Workbench), and that page
+- Kurator's own origin - uploads it here. receive() unpacks it into the folder chosen in Settings
+(default: "Ballistic Foley Lab" in the first library folder). Only pages from the Ballistic Foley Lab
+address in Settings get an answer from /receive.
+
 Any other zip is left alone. Settings → Recording sessions turns unpacking off.
 """
 
@@ -23,6 +33,9 @@ import hashlib
 import json
 import os
 import queue
+import re
+import shutil
+import tempfile
 import threading
 import time
 import zipfile
@@ -38,6 +51,13 @@ MAX_FILE = 2 << 30          # one take: 2 GB
 MAX_TOTAL = 16 << 30        # a session: 16 GB
 _inbox = {"n": 0, "last": None, "sounds": 0, "folder": None}
 _lock = threading.Lock()
+_unpacking = threading.Lock()   # the watcher's thread and a session sent from the page, one at a time
+INBOX_NAME = "Ballistic Foley Lab"
+_UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+class ReceiveError(ValueError):
+    pass
 
 
 def enabled(db: Database) -> bool:
@@ -86,6 +106,39 @@ def _free(folder: str) -> str:
     return out
 
 
+def _free_wav(path: str) -> str:
+    """A free name for a take ("Take 1 2.wav"), with a free sidecar name too."""
+    stem, k = path[:-4], 2
+    while True:
+        out = f"{stem} {k}.wav"
+        if not os.path.exists(out) and not os.path.exists(out + ".xmp"):
+            return out
+        k += 1
+
+
+def _same(path: str, z: zipfile.ZipFile, info: zipfile.ZipInfo) -> bool:
+    """Is the file at path the zip member, byte for byte?"""
+    try:
+        if os.path.getsize(path) != info.file_size:
+            return False
+        with open(path, "rb") as a, z.open(info) as b:
+            while True:
+                x, y = a.read(1 << 20), b.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def _copy_out(z: zipfile.ZipFile, info: zipfile.ZipInfo, dest: str) -> None:
+    tmp = dest + ".part"
+    with z.open(info) as src, open(tmp, "wb") as out:
+        shutil.copyfileobj(src, out, 1 << 20)
+    os.replace(tmp, dest)
+
+
 def _ts(iso) -> float | None:
     if not isinstance(iso, str) or not iso:
         return None
@@ -100,8 +153,32 @@ def _done(db: Database) -> dict:
     return v if isinstance(v, dict) else {}
 
 
-def unpack(db: Database, scanner, path: str) -> dict | None:
-    """Unpack one session zip; None when it is not one, or was unpacked before."""
+def _session_id(m: dict) -> str:
+    sid = m.get("session")
+    return sid if isinstance(sid, str) and 0 < len(sid) <= 100 else ""
+
+
+def _earlier_folder(db: Database, done: dict, sid: str) -> str | None:
+    """The folder an earlier zip of this session went into, while it is still there and in the library."""
+    if not sid:
+        return None
+    for v in sorted(done.values(), key=lambda v: v.get("at", 0), reverse=True):
+        f = v.get("folder")
+        if v.get("session") == sid and isinstance(f, str) and os.path.isdir(f) and db.root_for(os.path.normpath(f), "library"):
+            return f
+    return None
+
+
+def unpack(db: Database, scanner, path: str, into: str | None = None, discard: str | None = "trash") -> dict | None:
+    """Unpack one session zip; None when it is not one, or was unpacked before.
+
+    into: the folder to make the session's folder in (default: next to the zip). discard: what then
+    happens to the zip - "trash" (the system trash), "delete" (a copy Kurator made) or None (it stays)."""
+    with _unpacking:
+        return _unpack(db, scanner, path, into, discard)
+
+
+def _unpack(db: Database, scanner, path: str, into: str | None, discard: str | None) -> dict | None:
     try:
         z = zipfile.ZipFile(path)
     except (OSError, zipfile.BadZipFile):
@@ -116,35 +193,54 @@ def unpack(db: Database, scanner, path: str) -> dict | None:
         if key in done:
             return None
         names = {i.filename: i for i in z.infolist()}
-        wanted: list[tuple[str, zipfile.ZipInfo, dict]] = []
+        wanted: list[tuple[str, zipfile.ZipInfo, zipfile.ZipInfo | None, dict]] = []   # take, its sidecar, its entry
         total = 0
         for e in m["files"][:MAX_FILES]:
             if not isinstance(e, dict):
                 continue
-            for k in ("file", "sidecar"):
-                n = _plain(e.get(k))
-                if n and n in names and names[n].file_size <= MAX_FILE:
-                    total += names[n].file_size
-                    wanted.append((n, names[n], e))
+            n = _plain(e.get("file"))
+            if not (n and n.lower().endswith(".wav") and n in names and names[n].file_size <= MAX_FILE):
+                continue
+            sn = _plain(e.get("sidecar"))
+            side = names.get(sn) if sn and sn.lower().endswith(".xmp") and names.get(sn) and names[sn].file_size <= MAX_FILE else None
+            total += names[n].file_size + (side.file_size if side else 0)
+            wanted.append((n, names[n], side, e))
         if not wanted or total > MAX_TOTAL:
             return None
-        folder = _free(os.path.splitext(path)[0])
-        os.makedirs(folder)
+        sid = _session_id(m)
+        folder = _earlier_folder(db, done, sid)
+        more = folder is not None
+        if folder is None:                            # made with the first file written
+            stem = os.path.splitext(os.path.basename(path))[0]
+            folder = _free(os.path.join(into, stem) if into else os.path.splitext(path)[0])
         written: dict[str, dict] = {}
-        for n, info, e in wanted:
+        skipped = 0
+        seen_in: str | None = None                    # where skipped takes are, when not here
+        homes: dict[str, str | None] = {}
+        for n, info, side, e in wanted:
+            # a take already in Kurator from the session it was recorded in (sent from Your sounds later)
+            own = _session_id(e)
+            if own and own != sid:
+                if own not in homes:
+                    homes[own] = _earlier_folder(db, done, own)
+                home = homes[own]
+                if home and home != folder and os.path.exists(os.path.join(home, n)) and _same(os.path.join(home, n), z, info):
+                    skipped += 1
+                    seen_in = home
+                    continue
             dest = os.path.join(folder, n)
             if os.path.exists(dest):
-                continue
-            tmp = dest + ".part"
-            with z.open(info) as src, open(tmp, "wb") as out:
-                while True:
-                    b = src.read(1 << 20)
-                    if not b:
-                        break
-                    out.write(b)
-            os.replace(tmp, dest)
-            if n.lower().endswith(".wav"):
-                written[dest] = e
+                if _same(dest, z, info):
+                    skipped += 1                      # this take came with an earlier zip of the session
+                    continue
+                dest = _free_wav(dest)
+            elif side is not None and os.path.exists(dest + ".xmp"):
+                dest = _free_wav(dest)
+            os.makedirs(folder, exist_ok=True)
+            _copy_out(z, info, dest)
+            if side is not None:
+                _copy_out(z, side, dest + ".xmp")
+            written[dest] = e
         # the recording date as the modified time, so every app sees when it was made
         for dest, e in written.items():
             ts = _ts(e.get("date"))
@@ -156,12 +252,17 @@ def unpack(db: Database, scanner, path: str) -> dict | None:
                             os.utime(side, (ts, ts))
                 except OSError:
                     pass
-        try:
-            with open(os.path.join(folder, MANIFEST), "wb") as f:
+        made = os.path.isdir(folder)
+        try:                                          # the latest list of the session (Kurator's own file)
+            if not made:
+                raise OSError("nothing new: no folder")
+            tmp = os.path.join(folder, MANIFEST + ".part")
+            with open(tmp, "wb") as f:
                 f.write(raw)
+            os.replace(tmp, os.path.join(folder, MANIFEST))
         except OSError:
             pass
-    root = db.root_for(os.path.normpath(folder), "library")
+    root = db.root_for(os.path.normpath(folder), "library") if made else None
     ids: dict[str, int] = {}
     if root is not None:
         scanner.walk_folder(root["id"], folder, False)
@@ -186,23 +287,74 @@ def unpack(db: Database, scanner, path: str) -> dict | None:
             by_plan.setdefault(str(e["plan"]), {}).setdefault(str(e["shot"]), []).append(ids[dest])
     for pid, by_shot in by_plan.items():
         plans.add_takes(db, pid, by_shot)
-    # the zip itself: to the trash, remembered either way
+    # the zip itself: to the trash (or, Kurator's own copy, deleted), remembered either way
     trashed = False
     try:
-        from .trash import to_system_trash
-        to_system_trash(path)
-        trashed = True
+        if discard == "trash":
+            from .trash import to_system_trash
+            to_system_trash(path)
+            trashed = True
+        elif discard == "delete":
+            os.remove(path)
     except Exception:  # noqa: BLE001 - no Send2Trash, a removable drive...: it stays, and is not unpacked again
         pass
-    done[key] = {"zip": os.path.basename(path), "folder": folder, "files": len(written), "at": time.time(), "trashed": trashed}
+    done[key] = {"zip": os.path.basename(path), "folder": folder if made else "", "files": len(written), "at": time.time(),
+                 "trashed": trashed, "session": sid}
     if len(done) > 2000:
         for k in sorted(done, key=lambda k: done[k].get("at", 0))[: len(done) - 2000]:
             done.pop(k)
     db.set_setting("sessions_done", done)
-    with _lock:
-        _inbox.update(n=_inbox["n"] + 1, last=os.path.basename(folder), sounds=len(written), folder=folder)
-    return {"folder": folder, "files": len(written), "tagged": len(ids), "trashed": trashed,
+    shown = folder if made else (seen_in or folder)
+    if written:
+        with _lock:
+            _inbox.update(n=_inbox["n"] + 1, last=os.path.basename(shown), sounds=len(written), folder=shown)
+    return {"folder": shown, "files": len(written), "skipped": skipped, "more": more, "tagged": len(ids), "trashed": trashed,
             "plan": plan.get("name") if plan else None}
+
+
+# ---------------------------------------------------------------- straight from Ballistic Foley Lab
+def receiving(db: Database) -> bool:
+    return bool(db.get_setting("ballistic_receive", True))
+
+
+def inbox_folder(db: Database) -> str | None:
+    """Where sessions sent from Ballistic Foley Lab on this computer go: the folder in Settings while it
+    is in the library, else "Ballistic Foley Lab" in the first library folder (None without one)."""
+    p = db.get_setting("ballistic_inbox", None)
+    if isinstance(p, str) and p and db.root_for(os.path.normpath(p), "library") is not None:
+        return p
+    roots = db.roots("library")
+    return os.path.join(roots[0]["path"], INBOX_NAME) if roots else None
+
+
+def zip_stem(name: str) -> str:
+    base = os.path.basename(str(name or "").replace("\\", "/"))
+    if base.lower().endswith(".zip"):
+        base = base[:-4]
+    base = _UNSAFE.sub("-", base).strip().strip(".")[:100]
+    return base or "Ballistic session"
+
+
+def receive(db: Database, scanner, tmp: str, name: str) -> dict:
+    """A session zip sent from the page (in `tmp`, outside the library): unpacked into the inbox folder."""
+    if not receiving(db):
+        raise ReceiveError("Kurator does not take sessions from Ballistic Foley Lab: switch it on in Settings → Recording sessions")
+    folder = inbox_folder(db)
+    if folder is None:
+        raise ReceiveError("Add a library folder in Kurator first: the takes go into the library")
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError as e:
+        raise ReceiveError(f"Can't use {folder}: {e.strerror or e}") from None
+    with tempfile.TemporaryDirectory(prefix="kurator-session-") as d:
+        p = os.path.join(d, zip_stem(name) + ".zip")   # the session folder is named after the zip
+        shutil.move(tmp, p)
+        if not is_session(p):
+            raise ReceiveError("This is not a recording session from Ballistic Foley Lab")
+        r = unpack(db, scanner, p, into=folder, discard="delete")
+    if r is None:
+        return {"folder": None, "files": 0, "skipped": 0, "already": True}
+    return {**r, "already": False}
 
 
 class Unpacker:
