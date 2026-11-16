@@ -876,7 +876,18 @@ SFX Workbench keeps a sound's metadata (Broadcast WAV, iXML, XMP) in what it mak
 result that comes back also gets the keywords of its recording: its subjects, project and status as
 tags (its source stays *SFX Workbench*).
 
-### Recording plans and sessions from a phone (Ballistic Foley Lab)
+### Recording plans and sessions from a phone (Kurator Capture, Ballistic Foley Lab)
+
+[Kurator Capture](https://eigensoundlab.github.io/kurator-capture/) is a phone app (a web app that
+works offline) for the field: sounds, reference photos and textures, each with the plan's shot, quick
+tags, notes and, if asked for, the place. Everything stays on the phone until you save, share or back it
+up. A session comes to Kurator as one zip (Save or Share it into a synced library folder) or as its
+**Google Drive backup**: each session is a folder in *Kurator Capture* in your Drive with the files,
+their `.xmp` sidecars and `kurator-session.json`. With Google Drive for desktop syncing that folder into
+a library folder, Kurator files it where it lies: the new files get their tags and count against the
+plan, and nothing there is moved or changed. Textures come with their source photo and their real size
+(in the sidecar and the list). Plans open in Kurator Capture or in Ballistic (*The phone records with*
+in the plan dialog); a shot can say whether it is a sound, a photo or a texture.
 
 [Ballistic Foley Lab](https://eigensoundlab.github.io/ballistic/) has a **Record** view made for a
 phone: a plan's shots to tick off, quick tags, one big button. Each take is a WAV with its date,

@@ -24,6 +24,12 @@ On the same computer Ballistic Foley Lab can hand a session straight to Kurator:
 (default: "Ballistic Foley Lab" in the first library folder). Only pages from the Ballistic Foley Lab
 address in Settings get an answer from /receive.
 
+Kurator Capture (a phone app for sounds, photos and textures) writes the same kind of session with
+kurator-session.json (format "kurator-session"): any file Kurator can show, each with its .xmp sidecar.
+Its Google Drive backup keeps each session as a folder with the files and that list already in place;
+when Google Drive for desktop syncs it into a library folder, adopt() files it where it is: the new
+files get their tags from their sidecars and count against the plan. Nothing there is moved or changed.
+
 Any other zip is left alone. Settings → Recording sessions turns unpacking off.
 """
 
@@ -43,9 +49,12 @@ from datetime import datetime
 
 from . import plans, xmp
 from .db import Database
+from .handlers import handler_for
 
 MANIFEST = "ballistic-session.json"
 FORMAT = "ballistic-session"
+# the lists a session can carry: Ballistic Foley Lab's and Kurator Capture's (same fields; Capture adds "kind")
+MANIFESTS = {"ballistic-session.json": "ballistic-session", "kurator-session.json": "kurator-session"}
 MAX_FILES = 2000
 MAX_FILE = 2 << 30          # one take: 2 GB
 MAX_TOTAL = 16 << 30        # a session: 16 GB
@@ -64,21 +73,29 @@ def enabled(db: Database) -> bool:
     return bool(db.get_setting("sessions_unpack", True))
 
 
-def _manifest(z: zipfile.ZipFile) -> tuple[dict, bytes] | None:
-    try:
-        info = z.getinfo(MANIFEST)
-    except KeyError:
-        return None
-    if info.file_size > 4 << 20:
-        return None
-    raw = z.read(info)
+def _parse(raw: bytes, fmt: str) -> dict | None:
     try:
         m = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         return None
-    if not isinstance(m, dict) or m.get("format") != FORMAT or m.get("version") != 1 or not isinstance(m.get("files"), list):
+    if not isinstance(m, dict) or m.get("format") != fmt or m.get("version") != 1 or not isinstance(m.get("files"), list):
         return None
-    return m, raw
+    return m
+
+
+def _manifest(z: zipfile.ZipFile) -> tuple[dict, bytes, str] | None:
+    """The session's list in a zip: (list, its bytes, its file name), or None."""
+    for name, fmt in MANIFESTS.items():
+        try:
+            info = z.getinfo(name)
+        except KeyError:
+            continue
+        if info.file_size > 4 << 20:
+            return None
+        raw = z.read(info)
+        m = _parse(raw, fmt)
+        return (m, raw, name) if m is not None else None
+    return None
 
 
 def is_session(path: str) -> bool:
@@ -89,13 +106,18 @@ def is_session(path: str) -> bool:
         return False
 
 
+def _media(name: str) -> bool:
+    """A file Kurator shows (a sound, a picture...): what a session may bring besides sidecars."""
+    return handler_for(os.path.splitext(name)[1].lower()) is not None and not name.lower().endswith(".xmp")
+
+
 def _plain(name) -> str | None:
-    """A file name the list may name: no folders, no tricks, .wav or .xmp."""
+    """A file name the list may name: no folders, no tricks, a file Kurator shows or an .xmp sidecar."""
     if not isinstance(name, str) or not name or name != os.path.basename(name) or "/" in name or "\\" in name:
         return None
     if name in (".", "..") or name.startswith(".") or "\x00" in name:
         return None
-    return name if name.lower().endswith((".wav", ".wav.xmp", ".xmp")) else None
+    return name if name.lower().endswith(".xmp") or _media(name) else None
 
 
 def _free(folder: str) -> str:
@@ -107,10 +129,11 @@ def _free(folder: str) -> str:
 
 
 def _free_wav(path: str) -> str:
-    """A free name for a take ("Take 1 2.wav"), with a free sidecar name too."""
-    stem, k = path[:-4], 2
+    """A free name for a file ("Take 1 2.wav", "Bark 2.jpg"), with a free sidecar name too."""
+    stem, ext = os.path.splitext(path)
+    k = 2
     while True:
-        out = f"{stem} {k}.wav"
+        out = f"{stem} {k}{ext}"
         if not os.path.exists(out) and not os.path.exists(out + ".xmp"):
             return out
         k += 1
@@ -187,7 +210,7 @@ def _unpack(db: Database, scanner, path: str, into: str | None, discard: str | N
         got = _manifest(z)
         if got is None:
             return None
-        m, raw = got
+        m, raw, list_name = got
         key = hashlib.sha256(raw).hexdigest()[:32]
         done = _done(db)
         if key in done:
@@ -199,7 +222,7 @@ def _unpack(db: Database, scanner, path: str, into: str | None, discard: str | N
             if not isinstance(e, dict):
                 continue
             n = _plain(e.get("file"))
-            if not (n and n.lower().endswith(".wav") and n in names and names[n].file_size <= MAX_FILE):
+            if not (n and _media(n) and n in names and names[n].file_size <= MAX_FILE):
                 continue
             sn = _plain(e.get("sidecar"))
             side = names.get(sn) if sn and sn.lower().endswith(".xmp") and names.get(sn) and names[sn].file_size <= MAX_FILE else None
@@ -256,10 +279,10 @@ def _unpack(db: Database, scanner, path: str, into: str | None, discard: str | N
         try:                                          # the latest list of the session (Kurator's own file)
             if not made:
                 raise OSError("nothing new: no folder")
-            tmp = os.path.join(folder, MANIFEST + ".part")
+            tmp = os.path.join(folder, list_name + ".part")
             with open(tmp, "wb") as f:
                 f.write(raw)
-            os.replace(tmp, os.path.join(folder, MANIFEST))
+            os.replace(tmp, os.path.join(folder, list_name))
         except OSError:
             pass
     root = db.root_for(os.path.normpath(folder), "library") if made else None
@@ -283,7 +306,8 @@ def _unpack(db: Database, scanner, path: str, into: str | None, discard: str | N
             plan = None
     by_plan: dict[str, dict[str, list[int]]] = {}
     for dest, e in written.items():
-        if dest in ids and e.get("plan") and e.get("shot"):
+        # a texture's source photo goes with its texture: one take, not two
+        if dest in ids and e.get("plan") and e.get("shot") and e.get("role") != "source":
             by_plan.setdefault(str(e["plan"]), {}).setdefault(str(e["shot"]), []).append(ids[dest])
     for pid, by_shot in by_plan.items():
         plans.add_takes(db, pid, by_shot)
@@ -310,6 +334,83 @@ def _unpack(db: Database, scanner, path: str, into: str | None, discard: str | N
             _inbox.update(n=_inbox["n"] + 1, last=os.path.basename(shown), sounds=len(written), folder=shown)
     return {"folder": shown, "files": len(written), "skipped": skipped, "more": more, "tagged": len(ids), "trashed": trashed,
             "plan": plan.get("name") if plan else None}
+
+
+# ---------------------------------------------------------------- session folders already in place
+def folder_list(folder: str) -> tuple[dict, str] | None:
+    """The session list of a folder whose files are already there (a Kurator Capture backup): (list, path)."""
+    for name, fmt in MANIFESTS.items():
+        path = os.path.join(folder, name)
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) > 4 << 20:
+                continue
+            with open(path, "rb") as f:
+                m = _parse(f.read(), fmt)
+        except OSError:
+            continue
+        if m is not None:
+            return m, path
+    return None
+
+
+def adopt(db: Database, scanner, folder: str) -> dict | None:
+    """File a session's folder where it lies: each file it lists that is there and new here gets its tags
+    from its sidecar and counts against the plan. Nothing is moved, renamed or changed - a backup folder
+    synced from Google Drive stays exactly as the backup made it. None when there is nothing new."""
+    with _unpacking:
+        return _adopt(db, scanner, os.path.normpath(folder))
+
+
+def _adopt(db: Database, scanner, folder: str) -> dict | None:
+    got = folder_list(folder)
+    root = db.root_for(folder, "library")
+    if got is None or root is None:
+        return None
+    m, _ = got
+    done = _done(db)
+    if any(os.path.normpath(v.get("folder") or "") == folder for v in done.values()):
+        return None                                   # a folder Kurator unpacked itself: already filed
+    seen = db.get_setting("sessions_adopted", {})
+    seen = seen if isinstance(seen, dict) else {}
+    had = seen.get(folder) if isinstance(seen.get(folder), dict) else {}
+    new: dict[str, dict] = {}
+    for e in m["files"][:MAX_FILES]:
+        n = _plain(e.get("file")) if isinstance(e, dict) else None
+        if n and _media(n) and n not in had and os.path.isfile(os.path.join(folder, n)):
+            new[os.path.join(folder, n)] = e
+    if not new:
+        return None
+    scanner.walk_folder(root["id"], folder, False)
+    q = ",".join("?" * len(new))
+    ids = {p: fid for fid, p in db.cat.execute(f"SELECT id, path FROM files WHERE path IN ({q})", list(new)).fetchall()}
+    if not ids:
+        return None                                   # not scanned yet (still syncing): the next look files them
+    xmp.import_keywords(db, list(ids.values()))
+    scanner.request_process()
+    plan = m.get("plan") if isinstance(m.get("plan"), dict) else None
+    if plan:
+        try:
+            if plans.get(db, str(plan.get("id"))) is None:
+                plans.save(db, plan)
+        except plans.PlanError:
+            plan = None
+    by_plan: dict[str, dict[str, list[int]]] = {}
+    for p, fid in ids.items():
+        e = new[p]
+        if e.get("plan") and e.get("shot") and e.get("role") != "source":
+            by_plan.setdefault(str(e["plan"]), {}).setdefault(str(e["shot"]), []).append(fid)
+    for pid, by_shot in by_plan.items():
+        plans.add_takes(db, pid, by_shot)
+    now = time.time()
+    had = {**had, **{os.path.basename(p): now for p in ids}}
+    seen[folder] = had
+    if len(seen) > 2000:
+        for k in sorted(seen, key=lambda k: max(seen[k].values() or [0]))[: len(seen) - 2000]:
+            seen.pop(k)
+    db.set_setting("sessions_adopted", seen)
+    with _lock:
+        _inbox.update(n=_inbox["n"] + 1, last=os.path.basename(folder), sounds=len(ids), folder=folder)
+    return {"folder": folder, "files": len(ids), "plan": plan.get("name") if plan else None}
 
 
 # ---------------------------------------------------------------- straight from Ballistic Foley Lab
@@ -358,7 +459,8 @@ def receive(db: Database, scanner, tmp: str, name: str) -> dict:
 
 
 class Unpacker:
-    """Zips seen by the scanner or the folder watcher are checked here, one at a time, off their thread."""
+    """Zips and session lists seen by the scanner or the folder watcher are checked here, one at a time,
+    off their thread."""
 
     def __init__(self, db: Database, scanner):
         self.db = db
@@ -394,7 +496,10 @@ class Unpacker:
             except queue.Empty:
                 return
             try:
-                if os.path.isfile(p) and is_session(p):
+                if os.path.basename(p).lower() in MANIFESTS:
+                    time.sleep(0.5)                       # the files of a backup may still be arriving
+                    adopt(self.db, self.scanner, os.path.dirname(p))
+                elif os.path.isfile(p) and is_session(p):
                     time.sleep(0.5)                       # a sync tool may still be finishing it
                     unpack(self.db, self.scanner, p)
             except Exception as e:  # noqa: BLE001 - one bad zip must not stop the next

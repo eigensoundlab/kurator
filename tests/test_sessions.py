@@ -226,6 +226,105 @@ def test_ballistic_on_this_computer_sends_a_session_straight_to_kurator(env, tmp
     assert r.status_code == 400 and "Settings" in r.json()["detail"]
 
 
+def jpeg_bytes(color=(120, 90, 60), size=(64, 48)) -> bytes:
+    from PIL import Image
+    b = io.BytesIO()
+    Image.new("RGB", size, color).save(b, "JPEG")
+    return b.getvalue()
+
+
+CAPTURE_PLAN = {"id": "plan-castle", "name": "Castle", "project": "Castle", "chips": ["Stone"],
+                "shots": [{"id": "t1", "name": "Granite wall", "tags": ["Surfaces/Stone/Granite"], "takes": 2, "kind": "texture"},
+                          {"id": "p1", "name": "Gate", "tags": ["Places/Gate"], "takes": 1, "kind": "photo"},
+                          {"id": "a1", "name": "Chains", "tags": ["Foley/Chains"], "takes": 1, "kind": "sound"}]}
+
+
+def capture_files(session="cap-ses-1"):
+    """What Kurator Capture writes for a session: [(name, bytes)] and the list (kurator-session.json)."""
+    d = "2026-11-16T10:00:00+01:00"
+    files = [("Granite wall 1.jpg", jpeg_bytes((140, 140, 130))), ("Granite wall 1 source.jpg", jpeg_bytes((90, 90, 80), (120, 90))),
+             ("Gate 1.jpg", jpeg_bytes()), ("Chains 1.wav", wav_bytes())]
+    kw = {"Granite wall 1.jpg": ["Surfaces/Stone/Granite", "Projects/Castle", "Source/Kurator Capture"],
+          "Granite wall 1 source.jpg": ["Surfaces/Stone/Granite", "Projects/Castle", "Source/Kurator Capture"],
+          "Gate 1.jpg": ["Places/Gate", "Projects/Castle", "Source/Kurator Capture"], "Chains 1.wav": ["Foley/Chains", "Projects/Castle", "Source/Kurator Capture"]}
+    out = []
+    for n, data in files:
+        out += [(n, data), (n + ".xmp", xmp_packet(kw[n], d).encode())]
+    entries = [{"file": "Granite wall 1.jpg", "sidecar": "Granite wall 1.jpg.xmp", "kind": "texture", "date": d, "plan": "plan-castle", "shot": "t1", "session": session,
+                "size_m": {"w": 1.2, "h": 1.2}, "source": "Granite wall 1 source.jpg"},
+               {"file": "Granite wall 1 source.jpg", "sidecar": "Granite wall 1 source.jpg.xmp", "kind": "photo", "role": "source", "of": "Granite wall 1.jpg",
+                "date": d, "plan": "plan-castle", "shot": "t1", "session": session},
+               {"file": "Gate 1.jpg", "sidecar": "Gate 1.jpg.xmp", "kind": "photo", "date": d, "plan": "plan-castle", "shot": "p1", "session": session},
+               {"file": "Chains 1.wav", "sidecar": "Chains 1.wav.xmp", "kind": "sound", "date": d, "plan": "plan-castle", "shot": "a1", "session": session}]
+    manifest = {"format": "kurator-session", "version": 1, "app": "Kurator Capture 0.1.0", "session": session, "name": "Castle 2026-11-16 1000",
+                "plan": CAPTURE_PLAN, "files": entries}
+    return out, manifest
+
+
+def test_a_kurator_capture_session_brings_photos_textures_and_sounds(env):
+    db, sc, c, lib, trashed = env
+    files, manifest = capture_files()
+    zp = lib / "Phone" / "Castle 2026-11-16 1000.zip"
+    with zipfile.ZipFile(zp, "w") as z:
+        for n, data in files:
+            z.writestr(n, data)
+        z.writestr("kurator-session.json", json.dumps(manifest))
+    assert sessions.is_session(str(zp))
+    r = sessions.unpack(db, sc, str(zp))
+    folder = lib / "Phone" / "Castle 2026-11-16 1000"
+    assert r["files"] == 4 and r["plan"] == "Castle"
+    assert sorted(os.listdir(folder)) == sorted([n for n, _ in files] + ["kurator-session.json"])
+    assert ("subject", "Surfaces/Stone/Granite") in file_tags(db, "Granite wall 1.jpg")
+    assert ("source", "Kurator Capture") in file_tags(db, "Gate 1.jpg")
+    # the shot kinds came with the plan; the source photo is not a second take of the texture
+    p = plans.get(db, "plan-castle")
+    assert [s["kind"] for s in p["shots"]] == ["texture", "photo", "sound"]
+    assert c.get("/api/plans").json()["plans"][0]["progress"] == {"t1": 1, "p1": 1, "a1": 1}
+    # a shot's kind travels in the link ("m"), and the link can open Kurator Capture
+    assert plans.unpack(plans.pack(p))["shots"][0]["kind"] == "texture"
+    assert c.get("/api/plans").json()["capture"] == plans.CAPTURE_URL
+    # the backup folder Kurator unpacked itself is not filed a second time
+    assert sessions.adopt(db, sc, str(folder)) is None
+
+
+def test_a_backup_folder_synced_into_the_library_is_filed_where_it_lies(env):
+    db, sc, c, lib, trashed = env
+    files, manifest = capture_files("cap-ses-2")
+    folder = lib / "Google Drive" / "Kurator Capture" / "Castle 2026-11-16 1000"
+    folder.mkdir(parents=True)
+    # the backup so far: the texture, its source and the gate (the chains are still uploading)
+    for n, data in files:
+        if not n.startswith("Chains"):
+            (folder / n).write_bytes(data)
+    manifest["files"] = manifest["files"][:3]
+    (folder / "kurator-session.json").write_text(json.dumps(manifest))
+    before = {n: (folder / n).stat().st_mtime_ns for n in os.listdir(folder)}
+    sc.request_scan()
+    assert wait_for(lambda: c.get("/api/state").json()["sessions"]["n"] >= 1 and db.cat.execute("SELECT COUNT(*) FROM file_tags").fetchone()[0] >= 6)
+    assert ("subject", "Surfaces/Stone/Granite") in file_tags(db, "Granite wall 1.jpg")
+    assert ("project", "Castle") in file_tags(db, "Gate 1.jpg")
+    assert {n: (folder / n).stat().st_mtime_ns for n in os.listdir(folder)} == before, "nothing in a backup folder is changed"
+    assert c.get("/api/plans").json()["plans"][0]["progress"] == {"t1": 1, "p1": 1, "a1": 0}
+    # the next backup adds the chains and a longer list: only the new file is filed
+    for n, data in files:
+        if n.startswith("Chains"):
+            (folder / n).write_bytes(data)
+    _, full = capture_files("cap-ses-2")
+    (folder / "kurator-session.json").write_text(json.dumps(full))
+    sc.walk_folder(db.root_for(str(folder), "library")["id"], str(folder), False)
+    r = sessions.adopt(db, sc, str(folder))
+    assert r["files"] == 1
+    assert ("subject", "Foley/Chains") in file_tags(db, "Chains 1.wav")
+    assert c.get("/api/plans").json()["plans"][0]["progress"] == {"t1": 1, "p1": 1, "a1": 1}
+    assert sessions.adopt(db, sc, str(folder)) is None
+    assert sorted(os.listdir(folder)) == sorted([n for n, _ in files] + ["kurator-session.json"])
+    # a folder only browsed is left alone
+    other = lib.parent / "elsewhere"
+    other.mkdir()
+    (other / "kurator-session.json").write_text(json.dumps(full))
+    assert sessions.adopt(db, sc, str(other)) is None
+
+
 def test_keywords_inside_a_wav_without_a_sidecar(tmp_path):
     p = tmp_path / "rec.wav"
     junk = os.urandom(1001)
@@ -252,7 +351,7 @@ def test_plan_links_match_ballistic_and_the_api_keeps_plans(env):
                headers={"origin": BASE})
     assert r.status_code == 200, r.text
     p = r.json()
-    assert p["shots"] == [{"id": "s1", "name": "Pot lid", "tags": ["Objects/Kitchen"], "takes": 99, "ucs": "", "notes": ""}]
+    assert p["shots"] == [{"id": "s1", "name": "Pot lid", "tags": ["Objects/Kitchen"], "takes": 99, "ucs": "", "notes": "", "kind": ""}]
     assert plans.unpack(p["link"].split("#plan=")[1])["name"] == "Kitchen"
     got = c.post("/api/plans/from-link", json={"link": plans.DEFAULT_URL + "#plan=" + BALLISTIC_LINK}, headers={"origin": BASE})
     assert got.status_code == 200 and got.json()["name"] == "Lesní procházka"

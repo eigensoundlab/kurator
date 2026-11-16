@@ -165,6 +165,7 @@ class SettingsIn(BaseModel):
     ballistic_url: str | None = None   # where Ballistic Foley Lab is, for plan links ("": the web app)
     ballistic_receive: bool | None = None   # take sessions Ballistic Foley Lab sends on this computer
     ballistic_inbox: str | None = None      # ... into this library folder ("": the default)
+    capture_url: str | None = None          # where Kurator Capture is, for plan links ("": the web app)
 
 
 class ConnectIn(BaseModel):
@@ -803,7 +804,8 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                       "sfx_links": len(sfxlink.active(db)),
                       "sessions_unpack": sessions.enabled(db), "ballistic_url": plans.address(db), "ballistic_default": plans.DEFAULT_URL,
                       "ballistic_receive": sessions.receiving(db), "ballistic_inbox": sessions.inbox_folder(db) or "",
-                      "ballistic_inbox_set": bool(db.get_setting("ballistic_inbox", None))})
+                      "ballistic_inbox_set": bool(db.get_setting("ballistic_inbox", None)),
+                      "capture_url": plans.capture_address(db), "capture_default": plans.CAPTURE_URL})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
@@ -843,6 +845,12 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             except sfxlink.LinkError:
                 raise HTTPException(400, "Use the web address of Ballistic Foley Lab (https://...) or the path of its offline file") from None
             db.set_setting("ballistic_url", None if u in ("", plans.DEFAULT_URL) else u)
+        if body.capture_url is not None:
+            try:
+                u = sfxlink.check_address(body.capture_url) if body.capture_url.strip() else ""
+            except sfxlink.LinkError:
+                raise HTTPException(400, "Use the web address of Kurator Capture (https://...)") from None
+            db.set_setting("capture_url", None if u in ("", plans.CAPTURE_URL) else u)
         if body.ballistic_receive is not None:
             db.set_setting("ballistic_receive", bool(body.ballistic_receive))
         if body.ballistic_inbox is not None:
@@ -2004,7 +2012,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     # -- recording plans for Ballistic Foley Lab (see plans.py, sessions.py) ---------------
     @app.get("/api/plans")
     def plans_list():
-        return _json({"plans": plans.listing(db), "address": plans.address(db)})
+        return _json({"plans": plans.listing(db), "address": plans.address(db), "capture": plans.capture_address(db)})
 
     @app.post("/api/plans")
     def plans_save(body: dict):
