@@ -8,6 +8,9 @@ compact JSON with short keys, so a plan of a few dozen shots still fits one QR c
 
 Takes come back in recording sessions (sessions.py); each one is counted against its shot, so the plan
 shows what is still missing. A session from a plan Kurator does not know adds the plan.
+
+The same link opens in Kurator Capture (sounds, photos and textures on a phone); a shot may then say
+what it is ("kind": sound, photo or texture; "m" in the link), which Ballistic passes over.
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ import time
 from .db import Database
 
 DEFAULT_URL = "https://eigensoundlab.github.io/ballistic/"
+CAPTURE_URL = "https://eigensoundlab.github.io/kurator-capture/"
+KINDS = {"sound": "s", "photo": "p", "texture": "t"}
 MAX_PLANS = 200
 MAX_SHOTS = 100
 
@@ -61,8 +66,9 @@ def clean(p: dict) -> dict:
             takes = max(1, min(99, int(s.get("takes") or 1)))
         except (TypeError, ValueError):
             takes = 1
+        kind = s.get("kind") if s.get("kind") in KINDS else ""
         shots.append({"id": sid, "name": _str(s["name"], 100), "tags": _tags(s.get("tags")), "takes": takes,
-                      "ucs": re.sub(r"[^A-Za-z]", "", _str(s.get("ucs"), 40))[:20], "notes": _str(s.get("notes"), 300)})
+                      "ucs": re.sub(r"[^A-Za-z]", "", _str(s.get("ucs"), 40))[:20], "notes": _str(s.get("notes"), 300), "kind": kind})
     return {"id": pid, "name": _str(p["name"], 100) or "Plan", "project": _str(p.get("project"), 100),
             "chips": _tags(p.get("chips")), "shots": shots}
 
@@ -85,6 +91,8 @@ def pack(p: dict) -> str:
             x["u"] = s["ucs"]
         if s.get("notes"):
             x["o"] = s["notes"]
+        if s.get("kind") in KINDS:
+            x["m"] = KINDS[s["kind"]]
         o["s"].append(x)
     raw = json.dumps(o, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
@@ -99,11 +107,16 @@ def unpack(s: str) -> dict:
         raise PlanError("Not a plan link")
     return clean({"id": o.get("i"), "name": o.get("n"), "project": o.get("p", ""), "chips": o.get("c", []),
                   "shots": [{"id": x.get("i"), "name": x.get("n"), "tags": x.get("t", []), "takes": x.get("k", 1),
-                             "ucs": x.get("u", ""), "notes": x.get("o", "")} for x in (o.get("s") or []) if isinstance(x, dict)]})
+                             "ucs": x.get("u", ""), "notes": x.get("o", ""),
+                             "kind": {v: k for k, v in KINDS.items()}.get(x.get("m"), "")} for x in (o.get("s") or []) if isinstance(x, dict)]})
 
 
 def address(db: Database) -> str:
     return db.get_setting("ballistic_url", None) or DEFAULT_URL
+
+
+def capture_address(db: Database) -> str:
+    return db.get_setting("capture_url", None) or CAPTURE_URL
 
 
 def link(db: Database, p: dict) -> str:

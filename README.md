@@ -876,7 +876,18 @@ SFX Workbench keeps a sound's metadata (Broadcast WAV, iXML, XMP) in what it mak
 result that comes back also gets the keywords of its recording: its subjects, project and status as
 tags (its source stays *SFX Workbench*).
 
-### Recording plans and sessions from a phone (Ballistic Foley Lab)
+### Recording plans and sessions from a phone (Kurator Capture, Ballistic Foley Lab)
+
+[Kurator Capture](https://eigensoundlab.github.io/kurator-capture/) is a phone app (a web app that
+works offline) for the field: sounds, reference photos and textures, each with the plan's shot, quick
+tags, notes and, if asked for, the place. Everything stays on the phone until you save, share or back it
+up. A session comes to Kurator as one zip (Save or Share it into a synced library folder) or as its
+**Google Drive backup**: each session is a folder in *Kurator Capture* in your Drive with the files,
+their `.xmp` sidecars and `kurator-session.json`. With Google Drive for desktop syncing that folder into
+a library folder, Kurator files it where it lies: the new files get their tags and count against the
+plan, and nothing there is moved or changed. Textures come with their source photo and their real size
+(in the sidecar and the list). Plans open in Kurator Capture or in Ballistic (*The phone records with*
+in the plan dialog); a shot can say whether it is a sound, a photo or a texture.
 
 [Ballistic Foley Lab](https://eigensoundlab.github.io/ballistic/) has a **Record** view made for a
 phone: a plan's shots to tick off, quick tags, one big button. Each take is a WAV with its date,
@@ -896,9 +907,21 @@ project, tags, notes, input device and, if asked for, its place inside (bext, iX
   recording date as its modified time and its keywords as tags in the right groups (subjects,
   *Projects*, *Status*, *Source*), counts the takes against the plan's shots (*Done* in the plan),
   and moves the zip to the system trash. *Recording session unpacked: …* says so.
+- **On this computer:** *Send to Kurator* in Ballistic (Record, or *Send all to Kurator* under Your
+  sounds) hands the session straight over: Ballistic opens Kurator's small **/receive** page in a tab
+  and passes the zip to it, window to window, and that page gives it to Kurator. A web page cannot call
+  Kurator at 127.0.0.1 itself (Safari blocks that, Chrome and Firefox ask for permission), but it can
+  open it. The takes go into the folder in ⚙ Settings → *Recording sessions* (by default *Ballistic
+  Foley Lab* in the first library folder), unpacked and tagged as above. Only pages from Ballistic's
+  address in Settings get an answer. *Open Ballistic Foley Lab* there (or *Open in Ballistic* in a
+  plan) tells Ballistic Kurator's address, which matters when Kurator runs on another port.
+- **More takes of a session** join the folder of its first zip: takes already there are skipped, a
+  different file with a taken name gets a free one (*Take 1 2.wav*). A take Kurator has from the
+  session it was recorded in is not added again when it comes with Your sounds.
 - Only the files the session's list names are unpacked, by their plain names, never over anything,
-  and each session only once (where the zip cannot go to the trash, it stays). Other zips are left
-  alone. ⚙ Settings → *Recording sessions* turns it off and sets Ballistic's address for plan links.
+  and each zip only once (where the zip cannot go to the trash, it stays). Other zips are left
+  alone. ⚙ Settings → *Recording sessions* turns unpacking and receiving off and sets Ballistic's
+  address.
 
 ### Quick destinations (D, then 1–9)
 

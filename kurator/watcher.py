@@ -44,8 +44,9 @@ class _Handler(FileSystemEventHandler):
                 if event.event_type in ("created", "deleted", "moved"):
                     self.w.mark(p, recursive=True)
                     self.w.mark(os.path.dirname(p), recursive=False)
-            elif handler_for(os.path.splitext(p)[1]) is not None or p.lower().endswith(".zip"):
-                # a .zip may be a recording session from Ballistic Foley Lab (sessions.py)
+            elif handler_for(os.path.splitext(p)[1]) is not None or p.lower().endswith(".zip") \
+                    or os.path.basename(p).lower() in ("kurator-session.json", "ballistic-session.json"):
+                # a .zip may be a recording session; a session list, a backup that grew (sessions.py)
                 self.w.mark(os.path.dirname(p), recursive=False)
 
 

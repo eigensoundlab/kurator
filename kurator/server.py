@@ -163,6 +163,9 @@ class SettingsIn(BaseModel):
     sfx_url: str | None = None         # where SFX Workbench is ("": the web app)
     sessions_unpack: bool | None = None   # unpack recording sessions from Ballistic Foley Lab
     ballistic_url: str | None = None   # where Ballistic Foley Lab is, for plan links ("": the web app)
+    ballistic_receive: bool | None = None   # take sessions Ballistic Foley Lab sends on this computer
+    ballistic_inbox: str | None = None      # ... into this library folder ("": the default)
+    capture_url: str | None = None          # where Kurator Capture is, for plan links ("": the web app)
 
 
 class ConnectIn(BaseModel):
@@ -253,8 +256,9 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                 return JSONResponse({"detail": "forbidden origin"}, status_code=403)
         if request.headers.get("sec-fetch-site") == "cross-site" and not (
                 # opening Kurator's page itself from elsewhere (a bookmark, the desktop app's start
-                # page) is harmless: it changes nothing, and everything it then asks is same-site
-                request.method == "GET" and request.url.path == "/" and request.headers.get("sec-fetch-mode") == "navigate"):
+                # page) is harmless: it changes nothing, and everything it then asks is same-site.
+                # /receive is the page Ballistic Foley Lab opens to hand over a session (sessions.py)
+                request.method == "GET" and request.url.path in ("/", "/receive") and request.headers.get("sec-fetch-mode") == "navigate"):
             return JSONResponse({"detail": "cross-site request blocked"}, status_code=403)
         resp = await call_next(request)
         if request.url.path.startswith("/static/"):
@@ -298,6 +302,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     @app.exception_handler(OpError)
     @app.exception_handler(apps.AppError)
     @app.exception_handler(sfxlink.LinkError)
+    @app.exception_handler(sessions.ReceiveError)
     @app.exception_handler(TagError)
     @app.exception_handler(RuleError)
     @app.exception_handler(BackupError)
@@ -797,7 +802,10 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
                       "update_check": db.get_setting("update_check", True),
                       "sfx_url": sfxlink.address(db), "sfx_default": sfxlink.DEFAULT_URL,
                       "sfx_links": len(sfxlink.active(db)),
-                      "sessions_unpack": sessions.enabled(db), "ballistic_url": plans.address(db), "ballistic_default": plans.DEFAULT_URL})
+                      "sessions_unpack": sessions.enabled(db), "ballistic_url": plans.address(db), "ballistic_default": plans.DEFAULT_URL,
+                      "ballistic_receive": sessions.receiving(db), "ballistic_inbox": sessions.inbox_folder(db) or "",
+                      "ballistic_inbox_set": bool(db.get_setting("ballistic_inbox", None)),
+                      "capture_url": plans.capture_address(db), "capture_default": plans.CAPTURE_URL})
 
     @app.put("/api/settings")
     def put_settings(body: SettingsIn):
@@ -837,6 +845,19 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
             except sfxlink.LinkError:
                 raise HTTPException(400, "Use the web address of Ballistic Foley Lab (https://...) or the path of its offline file") from None
             db.set_setting("ballistic_url", None if u in ("", plans.DEFAULT_URL) else u)
+        if body.capture_url is not None:
+            try:
+                u = sfxlink.check_address(body.capture_url) if body.capture_url.strip() else ""
+            except sfxlink.LinkError:
+                raise HTTPException(400, "Use the web address of Kurator Capture (https://...)") from None
+            db.set_setting("capture_url", None if u in ("", plans.CAPTURE_URL) else u)
+        if body.ballistic_receive is not None:
+            db.set_setting("ballistic_receive", bool(body.ballistic_receive))
+        if body.ballistic_inbox is not None:
+            p = body.ballistic_inbox.strip().strip('"')
+            if p and db.root_for(os.path.normpath(p), "library") is None:
+                raise HTTPException(400, "Choose a folder in the library, so the takes show here with their tags")
+            db.set_setting("ballistic_inbox", os.path.normpath(p) if p else None)
         if body.rclone_path is not None:
             p = body.rclone_path.strip().strip('"')
             if p and not os.path.isfile(p):
@@ -1991,7 +2012,7 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
     # -- recording plans for Ballistic Foley Lab (see plans.py, sessions.py) ---------------
     @app.get("/api/plans")
     def plans_list():
-        return _json({"plans": plans.listing(db), "address": plans.address(db)})
+        return _json({"plans": plans.listing(db), "address": plans.address(db), "capture": plans.capture_address(db)})
 
     @app.post("/api/plans")
     def plans_save(body: dict):
@@ -2018,6 +2039,38 @@ def create_app(db: Database, scanner: Scanner, port: int, watcher=None, ai=None)
         except plans.PlanError as e:
             raise HTTPException(400, str(e)) from None
         return _json(p)
+
+    # -- sessions straight from Ballistic Foley Lab on this computer (see sessions.py) ----
+    @app.get("/receive")
+    def receive_page():
+        return FileResponse(os.path.join(static_dir, "receive.html"), headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/ballistic/receive")
+    def ballistic_receive_info():
+        """For the /receive page: which page may hand it sessions, and where they go."""
+        return _json({"origin": sfxlink.origin_of(plans.address(db)), "address": plans.address(db),
+                      "on": sessions.receiving(db), "folder": sessions.inbox_folder(db) or ""})
+
+    @app.post("/api/ballistic/receive")
+    async def ballistic_receive(request: Request, name: str = "session.zip"):
+        """A session zip (the request body) from the /receive page: unpacked into the inbox folder."""
+        import tempfile
+        fd, tmp = tempfile.mkstemp(prefix="kurator-session-", suffix=".zip")
+        size = 0
+        try:
+            with os.fdopen(fd, "wb") as f:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > sessions.MAX_TOTAL:
+                        raise HTTPException(413, "That session is too large to send (16 GB at most)")
+                    f.write(chunk)
+            if not size:
+                raise HTTPException(400, "The session arrived empty")
+            res = await run_in_threadpool(sessions.receive, db, scanner, tmp, name)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        return _json(res)
 
     # -- SFX Workbench: sounds there, results back (see sfxlink.py) -----------------------
     @app.post("/api/sfx/share")

@@ -65,7 +65,8 @@ class Scanner:
         # Held while walking a folder and while Kurator moves files, so they never interleave.
         self.fs_lock = threading.RLock()
         self._last_scan_id = 0
-        # Called with the .zip files a walk comes across (recording sessions, see sessions.py); must not block.
+        # Called with the .zip files and session lists a walk comes across (recording sessions, see
+        # sessions.py); must not block.
         self.on_zips = None
         self.state = {"phase": "idle", "found": 0, "pending": 0, "processed": 0, "errors": 0,
                       "rate": 0.0, "started": None, "finished": None, "version": 0}
@@ -211,7 +212,8 @@ class Scanner:
                     ext = os.path.splitext(e.name)[1].lower()
                     h = handler_for(ext)
                     if h is None:
-                        if ext == ".zip" and self.on_zips is not None:
+                        # a zip may be a recording session; a session list beside its files, a backup (sessions.py)
+                        if self.on_zips is not None and (ext == ".zip" or e.name.lower() in ("kurator-session.json", "ballistic-session.json")):
                             zips.append(e.path)
                         continue
                     st = e.stat(follow_symlinks=False)

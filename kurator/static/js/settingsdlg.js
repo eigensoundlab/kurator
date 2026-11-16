@@ -7,6 +7,7 @@ import { PH_HOME, PH_PAPER, phEnabled, phGridPref, phLib, phSetEnabled, phSetGri
 import { ask, openDialog } from './dialog.js';
 import { openPhLibraryDialog } from './phlibdlg.js';
 import { openPlansDialog } from './plandlg.js';
+import { destField } from './folderpick.js';
 import { el, fmtBytes, fmtNum, prefs, setKids } from './util.js';
 
 export async function openSettingsDialog(app) {
@@ -72,6 +73,24 @@ export async function openSettingsDialog(app) {
     try { await api.saveSettings({ ballistic_url: balUrl.value.trim() }); app.toast('Ballistic Foley Lab address saved'); }
     catch (e) { app.toast(e.message); }
   };
+  const capUrl = el('input', { type: 'text', value: st.capture_url === st.capture_default ? '' : (st.capture_url || ''), spellcheck: 'false', placeholder: st.capture_default || '' });
+  capUrl.onchange = async () => {
+    try { await api.saveSettings({ capture_url: capUrl.value.trim() }); app.toast('Kurator Capture address saved'); }
+    catch (e) { app.toast(e.message); }
+  };
+  const balRecv = el('input', { type: 'checkbox' });
+  balRecv.checked = st.ballistic_receive !== false;
+  balRecv.onchange = async () => {
+    try { await api.saveSettings({ ballistic_receive: balRecv.checked }); app.toast(balRecv.checked ? 'Sessions sent from Ballistic Foley Lab are taken' : 'Sessions sent from Ballistic Foley Lab are refused'); }
+    catch (e) { app.toast(e.message); balRecv.checked = !balRecv.checked; }
+  };
+  const balInbox = el('input', { type: 'text', value: st.ballistic_inbox_set ? st.ballistic_inbox : '', spellcheck: 'false', placeholder: st.ballistic_inbox || 'Add a library folder first' });
+  balInbox.onchange = async () => {
+    try { const r = await api.saveSettings({ ballistic_inbox: balInbox.value.trim() }); balInbox.placeholder = r.ballistic_inbox; app.toast(`Sessions from Ballistic Foley Lab go to ${r.ballistic_inbox}`); }
+    catch (e) { app.toast(e.message, 5000); }
+  };
+  // Ballistic learns where Kurator is from this link (the part after #, never sent to a server)
+  const openBallistic = () => window.open(`${st.ballistic_url || st.ballistic_default}#kurator=${encodeURIComponent(location.origin)}`, '_blank', 'noopener');
   const sfxAsk = el('input', { type: 'checkbox' });
   sfxAsk.checked = prefs.get('sfx.ask', true);
   sfxAsk.onchange = () => prefs.set('sfx.ask', sfxAsk.checked);
@@ -216,10 +235,15 @@ export async function openSettingsDialog(app) {
       el('div', { class: 'p-hint small', text: 'Leave empty for the web app. Your own copy works too: its web address, or the path of the offline file sfx-workbench.html.' }),
       el('label', { class: 'chk' }, sfxAsk, 'Ask where results go before opening SFX Workbench'),
       el('div', { class: 'row' }, sfxEnd, sfxLinks),
-      el('h3', { text: 'Recording sessions (Ballistic Foley Lab)' }),
-      el('div', { class: 'p-hint small', text: 'A session saved in Ballistic Foley Lab\'s Record view is one zip: the takes, their sidecars and a list. Saved into a folder this computer syncs that is in the library, it is unpacked next to itself, tagged (subjects, project, source) and counted against its plan. Other zips are left alone.' }),
-      el('label', { class: 'chk' }, sessUnpack, 'Unpack recording sessions when they arrive in a library folder'),
-      el('label', {}, 'Ballistic Foley Lab address (for plan links)', balUrl),
+      el('h3', { text: 'Recording sessions (Kurator Capture, Ballistic Foley Lab)' }),
+      el('div', { class: 'p-hint small', text: 'A session saved in Kurator Capture or Ballistic Foley Lab\'s Record view is one zip: the files, their sidecars and a list. Saved into a folder this computer syncs that is in the library, it is unpacked next to itself, tagged (subjects, project, source) and counted against its plan. A Kurator Capture backup in Google Drive is already a folder with its list: synced into the library (Google Drive for desktop), it is tagged and counted where it lies, nothing moved. On this computer, Send to Kurator in Ballistic hands a session over directly. More of a session joins its folder; other zips are left alone.' }),
+      el('label', { class: 'chk' }, sessUnpack, 'File recording sessions when they arrive in a library folder'),
+      el('label', {}, 'Kurator Capture address (for plan links)', capUrl),
+      el('label', {}, 'Ballistic Foley Lab address (for plan links, and the only page that may send sessions here)', balUrl),
+      el('label', { class: 'chk' }, balRecv, 'Take sessions sent with Send to Kurator in Ballistic Foley Lab on this computer'),
+      el('label', {}, 'They go to (a library folder; each session gets a folder of its own)', destField(app, balInbox, { title: 'Where sessions from Ballistic Foley Lab go' })),
+      el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Open Ballistic Foley Lab', onclick: openBallistic }),
+        el('span', { class: 'p-hint small', text: 'Opened from here, Ballistic knows where to find Kurator, also when Kurator runs on another port.' })),
       el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Recording plans…', onclick: () => openPlansDialog(app) }),
         el('span', { class: 'p-hint small', text: 'Shots to record for a project, sent to a phone as a link or QR code.' })),
       el('h3', { text: 'Dropping files' }),
