@@ -251,11 +251,11 @@ def capture_files(session="cap-ses-1"):
     for n, data in files:
         out += [(n, data), (n + ".xmp", xmp_packet(kw[n], d).encode())]
     entries = [{"file": "Granite wall 1.jpg", "sidecar": "Granite wall 1.jpg.xmp", "kind": "texture", "date": d, "plan": "plan-castle", "shot": "t1", "session": session,
-                "size_m": {"w": 1.2, "h": 1.2}, "source": "Granite wall 1 source.jpg"},
+                "size_m": {"w": 1.2, "h": 1.2}, "source": "Granite wall 1 source.jpg", "capture": "cap-t1"},
                {"file": "Granite wall 1 source.jpg", "sidecar": "Granite wall 1 source.jpg.xmp", "kind": "photo", "role": "source", "of": "Granite wall 1.jpg",
-                "date": d, "plan": "plan-castle", "shot": "t1", "session": session},
-               {"file": "Gate 1.jpg", "sidecar": "Gate 1.jpg.xmp", "kind": "photo", "date": d, "plan": "plan-castle", "shot": "p1", "session": session},
-               {"file": "Chains 1.wav", "sidecar": "Chains 1.wav.xmp", "kind": "sound", "date": d, "plan": "plan-castle", "shot": "a1", "session": session}]
+                "date": d, "plan": "plan-castle", "shot": "t1", "session": session, "capture": "cap-t1"},
+               {"file": "Gate 1.jpg", "sidecar": "Gate 1.jpg.xmp", "kind": "photo", "date": d, "plan": "plan-castle", "shot": "p1", "session": session, "capture": "cap-p1"},
+               {"file": "Chains 1.wav", "sidecar": "Chains 1.wav.xmp", "kind": "sound", "date": d, "plan": "plan-castle", "shot": "a1", "session": session, "capture": "cap-a1"}]
     manifest = {"format": "kurator-session", "version": 1, "app": "Kurator Capture 0.1.0", "session": session, "name": "Castle 2026-11-16 1000",
                 "plan": CAPTURE_PLAN, "files": entries}
     return out, manifest
@@ -285,6 +285,16 @@ def test_a_kurator_capture_session_brings_photos_textures_and_sounds(env):
     assert c.get("/api/plans").json()["capture"] == plans.CAPTURE_URL
     # the backup folder Kurator unpacked itself is not filed a second time
     assert sessions.adopt(db, sc, str(folder)) is None
+    # the same captures again by another way (their Drive backup synced into the library): filed and tagged,
+    # but each capture counts once
+    other = lib / "Google Drive" / "Kurator Capture" / "Castle 2026-11-16 1000"
+    other.mkdir(parents=True)
+    for n, data in files:
+        (other / n).write_bytes(data)
+    (other / "kurator-session.json").write_text(json.dumps(manifest))
+    sc.walk_folder(db.root_for(str(other), "library")["id"], str(other), False)
+    assert sessions.adopt(db, sc, str(other))["files"] == 4
+    assert c.get("/api/plans").json()["plans"][0]["progress"] == {"t1": 1, "p1": 1, "a1": 1}
 
 
 def test_a_backup_folder_synced_into_the_library_is_filed_where_it_lies(env):

@@ -176,6 +176,32 @@ def _done(db: Database) -> dict:
     return v if isinstance(v, dict) else {}
 
 
+def _count(db: Database, items: list[tuple[str, str, int, str]]) -> None:
+    """Takes against their shots: [(plan id, shot id, file id, capture id or "")]. A capture with an id
+    (Kurator Capture gives each one) counts once, however many ways it arrived - a zip and a backup of
+    the same session, say - while the file it first came as is still here."""
+    caps = db.get_setting("plan_captures", {})
+    caps = caps if isinstance(caps, dict) else {}
+    by_plan: dict[str, dict[str, list[int]]] = {}
+    for pid, sid, fid, cap in items:
+        if cap:
+            old = caps.get(cap)
+            if old and old != fid and db.cat.execute("SELECT 1 FROM files WHERE id = ?", (old,)).fetchone():
+                continue
+            caps[cap] = fid
+        by_plan.setdefault(pid, {}).setdefault(sid, []).append(fid)
+    for pid, by_shot in by_plan.items():
+        plans.add_takes(db, pid, by_shot)
+    if len(caps) > 20000:
+        caps = dict(list(caps.items())[-20000:])
+    db.set_setting("plan_captures", caps)
+
+
+def _cap(e: dict) -> str:
+    c = e.get("capture")
+    return c if isinstance(c, str) and 0 < len(c) <= 100 else ""
+
+
 def _session_id(m: dict) -> str:
     sid = m.get("session")
     return sid if isinstance(sid, str) and 0 < len(sid) <= 100 else ""
@@ -304,13 +330,9 @@ def _unpack(db: Database, scanner, path: str, into: str | None, discard: str | N
                 plans.save(db, plan)
         except plans.PlanError:
             plan = None
-    by_plan: dict[str, dict[str, list[int]]] = {}
-    for dest, e in written.items():
-        # a texture's source photo goes with its texture: one take, not two
-        if dest in ids and e.get("plan") and e.get("shot") and e.get("role") != "source":
-            by_plan.setdefault(str(e["plan"]), {}).setdefault(str(e["shot"]), []).append(ids[dest])
-    for pid, by_shot in by_plan.items():
-        plans.add_takes(db, pid, by_shot)
+    # a texture's source photo goes with its texture: one take, not two
+    _count(db, [(str(e["plan"]), str(e["shot"]), ids[dest], _cap(e)) for dest, e in written.items()
+                if dest in ids and e.get("plan") and e.get("shot") and e.get("role") != "source"])
     # the zip itself: to the trash (or, Kurator's own copy, deleted), remembered either way
     trashed = False
     try:
@@ -394,13 +416,8 @@ def _adopt(db: Database, scanner, folder: str) -> dict | None:
                 plans.save(db, plan)
         except plans.PlanError:
             plan = None
-    by_plan: dict[str, dict[str, list[int]]] = {}
-    for p, fid in ids.items():
-        e = new[p]
-        if e.get("plan") and e.get("shot") and e.get("role") != "source":
-            by_plan.setdefault(str(e["plan"]), {}).setdefault(str(e["shot"]), []).append(fid)
-    for pid, by_shot in by_plan.items():
-        plans.add_takes(db, pid, by_shot)
+    _count(db, [(str(new[p]["plan"]), str(new[p]["shot"]), fid, _cap(new[p])) for p, fid in ids.items()
+                if new[p].get("plan") and new[p].get("shot") and new[p].get("role") != "source"])
     now = time.time()
     had = {**had, **{os.path.basename(p): now for p in ids}}
     seen[folder] = had
