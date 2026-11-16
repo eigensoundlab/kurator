@@ -11,6 +11,14 @@ Full release notes for each version are in [`docs/releases`](docs/releases).
   as tags in the right groups, takes count against the plan's shots, and the zip goes to the system
   trash. Only the files its list names, never over anything, each session once; other zips are left
   alone. ⚙ Settings → *Recording sessions* turns it off.
+- **Sessions straight from Ballistic Foley Lab on this computer.** *Send to Kurator* in Ballistic opens
+  Kurator's `/receive` page and hands it the session (window to window: no browser permission, works
+  in Safari), and the takes land in the library folder chosen in ⚙ Settings → *Recording sessions*,
+  tagged and counted against their plan. Only Ballistic's address in Settings is answered. *Open
+  Ballistic Foley Lab* (Settings) and *Open in Ballistic* (plans) tell Ballistic where Kurator is.
+- **More takes of a session join its folder:** a later zip of the same session (synced or sent) adds
+  only the new takes to the first one's folder; a take already in Kurator is not added twice, and a
+  different file with a taken name gets a free one.
 - **Keywords inside WAV files:** *Import keywords* also reads the XMP of WAV files (the `_PMX` chunk,
   wherever it sits in the file).
 - **SFX Workbench results keep their recording's keywords:** subjects, project and status from the XMP

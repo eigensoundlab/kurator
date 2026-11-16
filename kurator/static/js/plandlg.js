@@ -149,7 +149,8 @@ export async function openPlansDialog(app, { project = '' } = {}) {
           el('label', {}, 'Link for the phone', link),
           el('div', { class: 'row' },
             el('button', { class: 'btn small', type: 'button', text: 'Copy link', onclick: () => navigator.clipboard?.writeText(link.value).then(() => app.toast('Copied the plan link'), () => { link.select(); }) }),
-            el('button', { class: 'btn small', type: 'button', text: 'Open in Ballistic', onclick: () => window.open(link.value, '_blank', 'noopener') }),
+            // on this computer Ballistic also learns where Kurator is, for Send to Kurator
+            el('button', { class: 'btn small', type: 'button', text: 'Open in Ballistic', onclick: () => window.open(`${link.value}&kurator=${encodeURIComponent(location.origin)}`, '_blank', 'noopener') }),
             el('button', { class: 'btn small', type: 'button', text: 'Save plan file', onclick: saveFile })),
           el('div', { class: 'p-hint small', text: 'Kurator unpacks recording sessions that arrive in a library folder (⚙ Settings → Recording sessions). Save the plan before sending it, so the takes count here.' }))),
       msg),
